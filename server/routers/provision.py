@@ -9,6 +9,8 @@ import functools
 import json
 import logging
 import os
+import shutil
+import subprocess
 import threading
 import time as _time_mod
 import uuid as _uuid
@@ -44,6 +46,104 @@ def _attach_gallery(profile_data: dict):
     gallery_dir = Path(os.environ.get("TITAN_DATA", "/opt/titan/data")) / "forge_gallery"
     if gallery_dir.exists():
         profile_data["gallery_paths"] = [str(p) for p in sorted(gallery_dir.glob("*.jpg"))[:25]]
+
+
+# ─── Device Viewer auto-launch ─────────────────────────────────────────
+_VIEWER_DIR = Path(__file__).resolve().parent.parent.parent / "device-viewer"
+
+
+def _is_device_viewer_running() -> bool:
+    """Check if the device-viewer Electron app is already running."""
+    try:
+        out = subprocess.run(
+            ["pgrep", "-f", "electron.*device-viewer"],
+            capture_output=True, text=True, timeout=5,
+        )
+        return out.returncode == 0 and bool(out.stdout.strip())
+    except Exception:
+        return False
+
+
+def _detect_display() -> dict:
+    """Detect DISPLAY and XAUTHORITY for the current graphical session."""
+    env = {}
+    # Check common DISPLAY values
+    display = os.environ.get("DISPLAY")
+    if not display:
+        # Probe for active X displays
+        for d in (":10.0", ":1.0", ":0.0", ":0"):
+            sock = f"/tmp/.X11-unix/X{d.split(':')[1].split('.')[0]}"
+            if os.path.exists(sock):
+                display = d
+                break
+    if display:
+        env["DISPLAY"] = display
+
+    xauth = os.environ.get("XAUTHORITY")
+    if not xauth:
+        # Common locations
+        for xa in ("/root/.Xauthority", os.path.expanduser("~/.Xauthority")):
+            if os.path.exists(xa):
+                xauth = xa
+                break
+    if xauth:
+        env["XAUTHORITY"] = xauth
+
+    return env
+
+
+def _launch_device_viewer() -> dict:
+    """Launch the device-viewer Electron app if not already running.
+
+    Handles RDP/remote sessions by detecting DISPLAY and adding GPU-safe flags.
+    Returns {"ok": bool, "pid": int|None, "reason": str}.
+    """
+    if _is_device_viewer_running():
+        return {"ok": True, "pid": None, "reason": "already_running"}
+
+    viewer_dir = _VIEWER_DIR
+    if not viewer_dir.exists():
+        logger.warning("Device viewer not found at %s", viewer_dir)
+        return {"ok": False, "pid": None, "reason": f"not_found:{viewer_dir}"}
+
+    # Check node_modules
+    if not (viewer_dir / "node_modules").exists():
+        logger.warning("Device viewer node_modules missing at %s", viewer_dir)
+        return {"ok": False, "pid": None, "reason": "node_modules_missing"}
+
+    display_env = _detect_display()
+    if not display_env.get("DISPLAY"):
+        logger.warning("No DISPLAY detected — cannot launch device viewer")
+        return {"ok": False, "pid": None, "reason": "no_display"}
+
+    npx = shutil.which("npx")
+    if not npx:
+        return {"ok": False, "pid": None, "reason": "npx_not_found"}
+
+    env = {**os.environ, **display_env}
+
+    try:
+        proc = subprocess.Popen(
+            [
+                npx, "electron",
+                "--no-sandbox",
+                "--disable-gpu-sandbox",
+                "--disable-gpu",
+                "--in-process-gpu",
+                "--disable-software-rasterizer",
+                ".",
+            ],
+            cwd=str(viewer_dir),
+            env=env,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+        logger.info("Device viewer launched (PID %d) on DISPLAY=%s", proc.pid, display_env.get("DISPLAY"))
+        return {"ok": True, "pid": proc.pid, "reason": "launched"}
+    except Exception as e:
+        logger.error("Failed to launch device viewer: %s", e)
+        return {"ok": False, "pid": None, "reason": str(e)}
 
 
 def _build_card_data(body, persona_name: str = "") -> Optional[dict]:
@@ -184,6 +284,7 @@ def _run_provision_job(job_id: str, adb_target: str, profile_data: dict,
 
         # -- Step 2: Proxy configuration (optional)
         _provision_mgr.update(job_id, {"step": "proxy", "step_n": 2})
+        router_inst = None
         if proxy_url:
             try:
                 from proxy_router import ProxyRouter
@@ -230,6 +331,17 @@ def _run_provision_job(job_id: str, adb_target: str, profile_data: dict,
                 )
                 _provision_mgr.update(job_id, {"google_signin": signin_result.to_dict()})
                 logger.info(f"Provision job {job_id}: Google sign-in {'OK' if signin_result.success else 'FAILED'}")
+
+                # -- Step 4.5: Proxy OFF for app downloads, let Play Store sync directly
+                if router_inst and proxy_url and signin_result.success:
+                    try:
+                        router_inst.disable_proxy()
+                        logger.info(f"Provision job {job_id}: proxy disabled for Play Store downloads")
+                        import time as _t
+                        _t.sleep(20)  # allow Play Store to sync/download over direct connection
+                    except Exception as pde:
+                        logger.warning(f"Provision job {job_id}: proxy disable for downloads failed: {pde}")
+
             except Exception as ge:
                 logger.warning(f"Provision job {job_id}: Google sign-in failed: {ge}")
                 _provision_mgr.update(job_id, {"google_signin": {"error": str(ge), "success": False}})
@@ -269,6 +381,14 @@ def _run_provision_job(job_id: str, adb_target: str, profile_data: dict,
             "completed_at": _time_mod.time(),
         })
         logger.info(f"Provision job {job_id} done: patch={report.score} trust={trust_score} gsm={'OK' if gsm_ok else 'FAIL'}")
+
+        # -- Proxy cleanup at end
+        if router_inst:
+            try:
+                router_inst.clear_proxy()
+                logger.info(f"Provision job {job_id}: proxy fully cleared")
+            except Exception as pce:
+                logger.warning(f"Provision job {job_id}: proxy cleanup warning: {pce}")
 
     except Exception as e:
         _provision_mgr.update(job_id, {"status": "failed", "error": str(e), "completed_at": _time_mod.time()})
@@ -561,11 +681,12 @@ def _run_pipeline_job(job_id: str, adb_target: str, body: PipelineBody, device_i
     _adb_sh(adb_target, "ip6tables -P INPUT DROP 2>/dev/null")
     _adb_sh(adb_target, "ip6tables -P OUTPUT DROP 2>/dev/null")
     proxy_method = "none"
+    proxy_router_inst = None
     if body.proxy_url:
         try:
             from proxy_router import ProxyRouter
-            pr = ProxyRouter(adb_target=adb_target)
-            result = pr.configure_socks5(body.proxy_url)
+            proxy_router_inst = ProxyRouter(adb_target=adb_target)
+            result = proxy_router_inst.configure_socks5(body.proxy_url)
             proxy_method = result.method or "configured"
             _provision_mgr.update(job_id, {"proxy": result.to_dict()})
             log(f"Phase 2 — Proxy configured via {proxy_method}: {result.external_ip or '?'}")
@@ -638,7 +759,9 @@ def _run_pipeline_job(job_id: str, adb_target: str, body: PipelineBody, device_i
         return
 
     # ── Phase 4: Google Account (BEFORE Inject — wallet needs Google signed in) ──
+    # Proxy is ON at this point (Phase 2) — needed for geo-matching during sign-in
     _pl_phase(job_id, 4, "running")
+    google_signin_ok = False
     if body.google_email:
         log(f"Phase 4 — Google Account: injecting {body.google_email}...")
         try:
@@ -651,7 +774,7 @@ def _run_pipeline_job(job_id: str, adb_target: str, body: PipelineBody, device_i
             ok_str = f"inject={gr.success_count}/8"
             log(f"Phase 4 — Google inject: {ok_str}")
 
-            # Attempt UI sign-in
+            # Attempt UI sign-in (with proxy ON for geo-match)
             if body.google_password:
                 try:
                     from google_account_creator import GoogleAccountCreator
@@ -662,12 +785,29 @@ def _run_pipeline_job(job_id: str, adb_target: str, body: PipelineBody, device_i
                         phone_number=body.real_phone,
                         otp_code=body.otp_code,
                     )
+                    google_signin_ok = sr.success
                     ok_str += f" ui={'ok' if sr.success else 'fail'}"
                     log(f"Phase 4 — Google UI sign-in: {'success' if sr.success else 'failed'}")
+
+                    # Verify Play Store is accessible with signed-in account
+                    if sr.success:
+                        _time_mod.sleep(3)
+                        _adb_sh(adb_target, "am start -a android.intent.action.MAIN "
+                                "-n com.android.vending/.AssetBrowserActivity", timeout=10)
+                        _time_mod.sleep(5)
+                        ps_check = _adb_sh(adb_target,
+                            "dumpsys window | grep -i 'mCurrentFocus' | head -1")
+                        if "vending" in ps_check.lower():
+                            log("Phase 4 — Play Store launched successfully with signed-in account")
+                        else:
+                            log("Phase 4 — Play Store launch check inconclusive, continuing...")
+                        # Press Home to return
+                        _adb_sh(adb_target, "input keyevent KEYCODE_HOME")
                 except Exception as ue:
                     log(f"Phase 4 — UI sign-in skipped: {ue}")
 
-            _provision_mgr.update(job_id, {"google_inject": gr.success_count})
+            _provision_mgr.update(job_id, {"google_inject": gr.success_count,
+                                           "google_signin_ok": google_signin_ok})
             _pl_phase(job_id, 4, "done", ok_str)
         except Exception as e:
             log(f"Phase 4 — Google Account FAILED: {e}")
@@ -675,6 +815,69 @@ def _run_pipeline_job(job_id: str, adb_target: str, body: PipelineBody, device_i
     else:
         log("Phase 4 — Google Account: skipped (no gmail)")
         _pl_phase(job_id, 4, "skipped", "no google_email")
+
+    # ── Phase 4.5: App Downloads (proxy OFF for downloads, then ON again) ──
+    # Play Store downloads often fail through SOCKS5 proxies due to
+    # CDN certificate issues and Google's download servers blocking proxied IPs.
+    # Strategy: proxy OFF → download/update → proxy ON
+    if google_signin_ok:
+        log("Phase 4.5 — App Downloads: disabling proxy for Play Store downloads...")
+        if proxy_router_inst and body.proxy_url:
+            try:
+                proxy_router_inst.disable_proxy()
+                log("Phase 4.5 — Proxy disabled for downloads")
+            except Exception as pe:
+                log(f"Phase 4.5 — Proxy disable failed: {pe}")
+
+        # Allow Play Store to sync and download pending updates
+        _adb_sh(adb_target, "cmd appops set com.android.vending RUN_IN_BACKGROUND allow 2>/dev/null")
+        # Unblock vending network access temporarily
+        vuid = _adb_sh(adb_target, "stat -c '%u' /data/data/com.android.vending 2>/dev/null")
+        if vuid and vuid != "root":
+            _adb_sh(adb_target, f"iptables -D OUTPUT -m owner --uid-owner {vuid} -j DROP 2>/dev/null")
+
+        # Open Play Store to trigger downloads
+        _adb_sh(adb_target, "am start -a android.intent.action.MAIN "
+                "-n com.android.vending/.AssetBrowserActivity", timeout=10)
+        _time_mod.sleep(5)
+
+        # Wait for Play Store to finish downloading (check for "My apps" updates)
+        log("Phase 4.5 — Waiting for Play Store app sync (30s)...")
+        _time_mod.sleep(30)
+        # Press Home
+        _adb_sh(adb_target, "input keyevent KEYCODE_HOME")
+
+        # Re-enable proxy for remaining pipeline (wallet verification needs it)
+        if proxy_router_inst and body.proxy_url:
+            try:
+                result = proxy_router_inst.enable_proxy(body.proxy_url)
+                log(f"Phase 4.5 — Proxy re-enabled: {result.external_ip or '?'}")
+            except Exception as pe:
+                log(f"Phase 4.5 — Proxy re-enable failed: {pe}")
+
+        # Re-block Play Store background (wallet sync mitigation W-3)
+        _adb_sh(adb_target, "cmd appops set com.android.vending RUN_IN_BACKGROUND deny 2>/dev/null")
+        if vuid and vuid != "root":
+            _adb_sh(adb_target, f"iptables -I OUTPUT -m owner --uid-owner {vuid} -j DROP 2>/dev/null")
+
+        log("Phase 4.5 — App downloads complete, proxy restored")
+
+    # ── Phase 4.9: Pre-injection screenshot baseline ────────────────────
+    pre_screenshot = None
+    try:
+        log("Phase 4.9 — Capturing pre-injection screenshot baseline...")
+        _adb_sh(adb_target, "input keyevent KEYCODE_WAKEUP")
+        _time_mod.sleep(0.5)
+        _adb_sh(adb_target, "screencap -p /data/local/tmp/_titan_pre_inject.png")
+        # Verify screenshot was captured
+        size = _adb_sh(adb_target, "stat -c %s /data/local/tmp/_titan_pre_inject.png 2>/dev/null")
+        if size and int(size) > 1000:
+            pre_screenshot = True
+            log(f"Phase 4.9 — Pre-injection screenshot: {size} bytes")
+        else:
+            log("Phase 4.9 — Pre-injection screenshot: capture failed or too small")
+    except Exception as e:
+        log(f"Phase 4.9 — Screenshot baseline skipped: {e}")
 
     # ── Phase 5: Inject (profile data + card) ───────────────────────────
     _pl_phase(job_id, 5, "running")
@@ -736,20 +939,66 @@ def _run_pipeline_job(job_id: str, adb_target: str, body: PipelineBody, device_i
             if _wallet_uid and _wallet_uid != "root":
                 _adb_sh(adb_target, f"chown -R {_wallet_uid}:{_wallet_uid} /data/data/com.google.android.apps.walletnfcrel/databases/")
                 _adb_sh(adb_target, "restorecon -R /data/data/com.google.android.apps.walletnfcrel/databases/ 2>/dev/null")
+
+            # Fix G5: Selective wallet sync blocking — block only payments.google.com
+            # instead of ALL vending traffic (which breaks Play Store downloads)
+            gms_uid = _adb_sh(adb_target, "stat -c '%u' /data/data/com.google.android.gms 2>/dev/null")
+            if gms_uid and gms_uid.isdigit():
+                # Block GMS from reaching Google payments server (prevents cloud reconciliation of tapandpay.db)
+                _adb_sh(adb_target,
+                    f"iptables -C OUTPUT -p tcp --dport 443 -m owner --uid-owner {gms_uid} "
+                    f"-m string --string 'payments.google.com' --algo bm -j DROP 2>/dev/null || "
+                    f"iptables -I OUTPUT -p tcp --dport 443 -m owner --uid-owner {gms_uid} "
+                    f"-m string --string 'payments.google.com' --algo bm -j DROP 2>/dev/null")
+            # Clear wallet cache to prevent stale state detection
+            _adb_sh(adb_target, "rm -rf /data/data/com.google.android.gms/cache/tapandpay* 2>/dev/null")
+
             log(f"Phase 6 — Wallet done: {wp_ok}/4 subsystems OK (gpay={getattr(wp_result, 'google_pay_ok', '?')}, play={getattr(wp_result, 'play_store_ok', '?')}, chrome={getattr(wp_result, 'chrome_autofill_ok', '?')}, gms={getattr(wp_result, 'gms_billing_ok', '?')})")
             
             # Inject purchase history bridge (Chrome history + cookies + notifications + receipts)
             try:
-                from purchase_history_bridge import PurchaseHistoryBridge
-                phb = PurchaseHistoryBridge(adb_target=adb_target)
-                phb_result = phb.inject(
-                    profile_data=profile_data,
-                    card_last4=body.cc_number[-4:],
+                from purchase_history_bridge import generate_android_purchase_history
+                # ProfileInjector already imported at module level (line 25)
+                phb_data = generate_android_purchase_history(
+                    persona_name=body.name or profile_data.get("persona", {}).get("name", ""),
+                    persona_email=body.email or profile_data.get("persona", {}).get("email", ""),
+                    country=body.country or "US",
+                    age_days=body.age_days or 120,
+                    card_last4=body.cc_number[-4:] if body.cc_number else "0000",
+                    card_network="visa" if body.cc_number and body.cc_number[0] == "4" else "mastercard",
                 )
-                log(f"Phase 6 — Purchase history bridge: {getattr(phb_result, 'items_injected', '?')} items")
+                pi = ProfileInjector(adb_target=adb_target)
+                if phb_data.get("chrome_history"):
+                    pi._inject_history(phb_data["chrome_history"])
+                if phb_data.get("chrome_cookies"):
+                    pi._inject_cookies(phb_data["chrome_cookies"])
+                phb_summary = phb_data.get("purchase_summary", {})
+                log(f"Phase 6 — Purchase history bridge: {phb_summary.get('total_purchases', 0)} purchases, "
+                    f"{phb_summary.get('chrome_history_entries', 0)} history, "
+                    f"{phb_summary.get('chrome_cookies', 0)} cookies")
             except Exception as phbe:
                 log(f"Phase 6 — Purchase history bridge skipped: {phbe}")
-            
+
+            # Verify wallet injection is visible: launch Google Pay and check
+            try:
+                from wallet_verifier import WalletVerifier
+                wv = WalletVerifier(adb_target=adb_target)
+                wv_report = wv.verify()
+                wallet_grade = wv_report.grade
+                log(f"Phase 6 — Wallet verification: {wv_report.passed}/{wv_report.total} "
+                    f"score={wv_report.score} grade={wallet_grade}")
+                _provision_mgr.update(job_id, {
+                    "wallet_verify": {
+                        "score": wv_report.score, "grade": wallet_grade,
+                        "passed": wv_report.passed, "total": wv_report.total,
+                    }
+                })
+                if wv_report.score < 50:
+                    log(f"Phase 6 — WARNING: Wallet score low ({wv_report.score}), "
+                        "card may not be visible in Google Pay app")
+            except Exception as wve:
+                log(f"Phase 6 — Wallet verification skipped: {wve}")
+
             _pl_phase(job_id, 6, "done", f"wallet={wp_ok}/4")
         except Exception as e:
             log(f"Phase 6 — Wallet FAILED: {e}")
@@ -757,6 +1006,65 @@ def _run_pipeline_job(job_id: str, adb_target: str, body: PipelineBody, device_i
     else:
         log("Phase 6 — Wallet: skipped (no card data)")
         _pl_phase(job_id, 6, "skipped", "no card")
+
+    # ── Phase 6.5: Post-injection screenshot verification ──────────────
+    try:
+        log("Phase 6.5 — Post-injection verification: checking for crashes and data visibility...")
+
+        # 1. Check for crash dialogs
+        ui_xml = _adb_sh(adb_target, "uiautomator dump /dev/tty 2>/dev/null")
+        crash_patterns = ["isn't responding", "has stopped", "keeps stopping",
+                          "close app", "app isn't responding"]
+        crash_found = False
+        for pattern in crash_patterns:
+            if pattern in (ui_xml or "").lower():
+                log(f"Phase 6.5 — CRASH DETECTED: '{pattern}' — dismissing dialog")
+                _adb_sh(adb_target, "input tap 540 1060")  # "Close app"
+                time.sleep(0.5)
+                _adb_sh(adb_target, "input tap 540 960")   # "OK"
+                time.sleep(0.5)
+                crash_found = True
+                break
+        if not crash_found:
+            log("Phase 6.5 — No crash dialogs detected")
+
+        # 2. Verify contacts were persisted
+        contact_count = _adb_sh(adb_target,
+            "content query --uri content://com.android.contacts/contacts "
+            "--projection _id 2>/dev/null | wc -l")
+        log(f"Phase 6.5 — Contacts visible: {contact_count}")
+
+        # 3. Capture post-injection screenshot
+        _adb_sh(adb_target, "input keyevent KEYCODE_HOME")
+        time.sleep(0.5)
+        _adb_sh(adb_target, "screencap -p /data/local/tmp/_titan_post_inject.png")
+        post_size = _adb_sh(adb_target, "stat -c %s /data/local/tmp/_titan_post_inject.png 2>/dev/null")
+        log(f"Phase 6.5 — Post-injection screenshot: {post_size or '?'} bytes")
+
+        # 4. Try AI screen analysis if available
+        try:
+            from screen_analyzer import ScreenAnalyzer
+            sa = ScreenAnalyzer(adb_target=adb_target)
+            analysis = sa.analyze_current_screen()
+            if analysis:
+                screen_state = getattr(analysis, 'screen_state', str(analysis)[:200])
+                log(f"Phase 6.5 — Screen analysis: {screen_state}")
+                _provision_mgr.update(job_id, {"post_inject_screen": str(screen_state)[:500]})
+        except Exception:
+            pass  # Screen analyzer is optional
+
+        # 5. Cleanup temp screenshots
+        _adb_sh(adb_target, "rm -f /data/local/tmp/_titan_pre_inject.png "
+                "/data/local/tmp/_titan_post_inject.png 2>/dev/null")
+
+        _provision_mgr.update(job_id, {
+            "post_inject_verify": {
+                "crash_detected": crash_found,
+                "contacts_visible": int(contact_count or 0),
+            }
+        })
+    except Exception as e:
+        log(f"Phase 6.5 — Post-injection verification skipped: {e}")
 
     # ── Phase 7: Provincial Layering (V3 App Bypass) ───────────────────
     _pl_phase(job_id, 7, "running")
@@ -869,6 +1177,14 @@ def _run_pipeline_job(job_id: str, adb_target: str, body: PipelineBody, device_i
         log(f"Phase 10 — Trust Audit FAILED: {e}")
         _pl_phase(job_id, 10, "failed", str(e)[:60])
 
+    # ── Proxy Cleanup ────────────────────────────────────────────────────
+    if proxy_router_inst:
+        try:
+            proxy_router_inst.clear_proxy()
+            log("Proxy fully cleared at pipeline end")
+        except Exception as e:
+            log(f"Proxy cleanup warning: {e}")
+
     # ── Final ────────────────────────────────────────────────────────────
     _provision_mgr.update(job_id, {
         "status": "completed",
@@ -918,9 +1234,13 @@ async def genesis_pipeline(device_id: str, body: PipelineBody):
     )
     t.start()
 
+    # Auto-launch device viewer so the user sees the device screen during pipeline
+    viewer = _launch_device_viewer()
+
     return {
         "status": "started", "job_id": job_id, "device_id": device_id,
         "poll_url": f"/api/genesis/pipeline-status/{job_id}",
+        "viewer": viewer,
     }
 
 
@@ -931,6 +1251,12 @@ async def genesis_pipeline_status(job_id: str):
     if not job:
         raise HTTPException(404, "Pipeline job not found")
     return job
+
+
+@router.post("/launch-viewer")
+async def genesis_launch_viewer():
+    """Launch the Cuttlefish device viewer app (idempotent — skips if already running)."""
+    return _launch_device_viewer()
 
 
 @router.post("/provincial-inject/{device_id}")
@@ -1168,8 +1494,12 @@ async def genesis_reforge(body: ReforgeBody):
     t = threading.Thread(target=_run_reforge_job, args=(job_id, body), daemon=True)
     t.start()
 
+    # Auto-launch device viewer so the user sees the device screen during reforge
+    viewer = _launch_device_viewer()
+
     return {
         "status": "started", "job_id": job_id,
         "device_id": dev.id,
         "poll_url": f"/api/genesis/pipeline-status/{job_id}",
+        "viewer": viewer,
     }

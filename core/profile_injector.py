@@ -61,18 +61,39 @@ def _fix_file_ownership(target: str, remote_path: str, package: str):
 
     This function:
       1. Dynamically resolves the app's UID via stat
-      2. Sets correct chown <uid>:<uid>
+      2. Sets correct chown <uid>:<uid> with retry
       3. Sets chmod 660 (owner+group rw)
       4. Runs restorecon to fix SELinux context labels
+      5. Verifies ownership was applied correctly
     """
     uid = _adb_shell(target,
         f"stat -c %U /data/data/{package} 2>/dev/null || "
         f"ls -ld /data/data/{package} | awk '{{print $3}}'").strip()
-    if uid:
+    if not uid:
+        logger.warning(f"  Could not resolve UID for {package}")
+        return
+
+    # Flush filesystem before ownership change
+    _adb_shell(target, "sync")
+
+    # Retry chown up to 3 times
+    for attempt in range(3):
         _adb_shell(target, f"chown {uid}:{uid} {remote_path}")
-    _adb_shell(target, f"chmod 660 {remote_path}")
-    parent_dir = remote_path.rsplit("/", 1)[0] if "/" in remote_path else remote_path
-    _adb_shell(target, f"restorecon -R {parent_dir} 2>/dev/null")
+        _adb_shell(target, f"chmod 660 {remote_path}")
+        parent_dir = remote_path.rsplit("/", 1)[0] if "/" in remote_path else remote_path
+        _adb_shell(target, f"restorecon -R {parent_dir} 2>/dev/null")
+
+        # Verify ownership was applied
+        actual_uid = _adb_shell(target, f"stat -c %U {remote_path} 2>/dev/null").strip()
+        if actual_uid == uid:
+            if attempt > 0:
+                logger.info(f"  Ownership fix succeeded on attempt {attempt + 1}")
+            return
+        logger.warning(f"  Ownership verify failed (attempt {attempt + 1}): "
+                       f"expected={uid} actual={actual_uid}")
+        time.sleep(0.5)
+
+    logger.error(f"  Ownership fix failed after 3 attempts for {remote_path}")
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -139,6 +160,32 @@ class ProfileInjector:
         self.CHROME_DATA = self._browser_data
         logger.info(f"Browser resolved: {self._browser_pkg} → {self._browser_data}")
 
+    def _push_db_with_fallback(self, local_path: str, remote_path: str, package: str) -> bool:
+        """Push a SQLite DB to device with fallback to on-device cp.
+
+        Tier 1: adb push + fix ownership (standard)
+        Tier 2: Push to /data/local/tmp/ then on-device cp (avoids direct push permission issues)
+        """
+        # Tier 1: direct push
+        if _adb_push(self.target, local_path, remote_path):
+            _fix_file_ownership(self.target, remote_path, package)
+            return True
+
+        # Tier 2: push to temp then cp on-device
+        logger.warning(f"  Direct push failed for {remote_path}, trying tmp+cp fallback")
+        tmp_remote = f"/data/local/tmp/_titan_inject_{os.path.basename(remote_path)}"
+        if _adb_push(self.target, local_path, tmp_remote):
+            _adb_shell(self.target, f"cp {tmp_remote} {remote_path}")
+            _adb_shell(self.target, f"rm {tmp_remote}")
+            _fix_file_ownership(self.target, remote_path, package)
+            # Verify the file exists and has content
+            size = _adb_shell(self.target, f"stat -c %s {remote_path} 2>/dev/null").strip()
+            if size and int(size) > 0:
+                return True
+
+        logger.error(f"  All push methods failed for {remote_path}")
+        return False
+
     def inject_full_profile(self, profile: Dict[str, Any],
                              card_data: Optional[Dict] = None,
                              ) -> InjectionResult:
@@ -196,6 +243,9 @@ class ProfileInjector:
         if card_data:
             self._inject_payment_history(profile, card_data)
 
+        # ── Phase 5.5.2: Purchase visibility sentinels (Play Store, GPay, Chrome) ──
+        self._inject_purchase_visibility_sentinels(profile, card_data)
+
         # ── Phase 5.6: WiFi saved networks ──
         self._inject_wifi_networks(profile.get("wifi_networks", []))
 
@@ -218,8 +268,47 @@ class ProfileInjector:
         # ── Phase 7: Backdate filesystem timestamps ──
         self._backdate_timestamps(profile)
 
+        # ── Phase 7.5: Post-injection crash detection ──
+        self._dismiss_crashes_and_restart(profile)
+
         logger.info(f"Injection complete: {self.result.to_dict()}")
         return self.result
+
+    def _dismiss_crashes_and_restart(self, profile: Dict[str, Any]):
+        """Dismiss any crash dialogs and restart key apps to verify data loads."""
+        crash_patterns = [
+            "isn't responding", "has stopped", "keeps stopping",
+            "close app", "app isn't responding",
+        ]
+        # Check for crash dialogs via UIAutomator
+        ui_xml = _adb_shell(self.target, "uiautomator dump /dev/tty 2>/dev/null")
+        for pattern in crash_patterns:
+            if pattern in ui_xml.lower():
+                logger.warning(f"  Crash dialog detected: '{pattern}'")
+                # Try tapping dismiss buttons
+                _adb_shell(self.target,
+                    "input tap 540 1060 2>/dev/null")  # "Close app" button
+                time.sleep(0.5)
+                _adb_shell(self.target,
+                    "input tap 540 960 2>/dev/null")   # "OK" button
+                time.sleep(0.5)
+                break
+
+        # Force-stop all key apps and restart contacts to verify
+        for pkg in [self._browser_pkg, "com.google.android.gms",
+                    "com.android.vending"]:
+            _adb_shell(self.target, f"am force-stop {pkg}")
+        time.sleep(1)
+
+        # Verify contacts provider didn't crash-clear the DB
+        count = _adb_shell(self.target,
+            "content query --uri content://com.android.contacts/contacts "
+            "--projection _id 2>/dev/null | wc -l").strip()
+        if count and int(count) < self.result.contacts_injected // 2:
+            logger.warning(f"  Post-injection contact count dropped: {count} vs {self.result.contacts_injected}")
+            self.result.errors.append(
+                f"contacts_lost: only {count} visible after restart "
+                f"(injected {self.result.contacts_injected})")
 
     # ─── ENSURE APP DATA DIRS ────────────────────────────────────────────
 
@@ -490,6 +579,138 @@ class ProfileInjector:
             logger.debug("purchase_history_bridge not available — skipping")
         except Exception as e:
             self.result.errors.append(f"purchase_history: {e}")
+
+    def _inject_purchase_visibility_sentinels(self, profile: Dict[str, Any],
+                                               card_data: Optional[Dict] = None):
+        """Inject sentinels that make purchase data visible in Play Store, Google Pay, and Chrome.
+
+        Problem: Even after injecting purchase DBs, Play Store / Google Pay
+        show empty because they check cloud sync state and local config flags.
+
+        Fix: Write the local config/pref files that tell apps to show cached data
+        instead of fetching from (empty) cloud state.
+        """
+        email = profile.get("persona_email", "")
+        name = profile.get("persona_name", "")
+
+        # 1. Play Store: finsky prefs to enable local library view
+        finsky_prefs = (
+            '<?xml version="1.0" encoding="utf-8"?>\n'
+            '<map>\n'
+            f'  <string name="account_name">{email}</string>\n'
+            '  <boolean name="setup_complete" value="true" />\n'
+            '  <boolean name="has_accepted_tos" value="true" />\n'
+            '  <boolean name="local_library_enabled" value="true" />\n'
+            '  <boolean name="purchase_history_available" value="true" />\n'
+            '  <int name="last_sync_time" value="0" />\n'
+            '</map>\n'
+        )
+        try:
+            with tempfile.NamedTemporaryFile(mode="w", suffix=".xml", delete=False) as f:
+                f.write(finsky_prefs)
+                finsky_path = f.name
+            remote = "/data/data/com.android.vending/shared_prefs/finsky.xml"
+            if _adb_push(self.target, finsky_path, remote):
+                _fix_file_ownership(self.target, remote, "com.android.vending")
+            os.unlink(finsky_path)
+            logger.info("  Purchase visibility: finsky.xml written")
+        except Exception as e:
+            logger.warning(f"  finsky.xml failed: {e}")
+
+        # 2. Play Store: localappstate.db with purchase entries
+        purchases = profile.get("play_purchases", [])
+        if purchases:
+            try:
+                with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as tmp:
+                    tmp_path = tmp.name
+
+                remote_las = "/data/data/com.android.vending/databases/localappstate.db"
+                ok, _ = _adb(self.target, f"pull {remote_las} {tmp_path}", timeout=10)
+                if not ok:
+                    conn = sqlite3.connect(tmp_path)
+                    conn.execute("""CREATE TABLE IF NOT EXISTS appstate (
+                        package_name TEXT PRIMARY KEY,
+                        auto_update INTEGER DEFAULT 1,
+                        desired_version INTEGER DEFAULT 0,
+                        download_uri TEXT DEFAULT '',
+                        first_download_ms INTEGER DEFAULT 0,
+                        account TEXT DEFAULT '',
+                        title TEXT DEFAULT '',
+                        last_notified_version INTEGER DEFAULT 0,
+                        last_update_timestamp_ms INTEGER DEFAULT 0,
+                        installed INTEGER DEFAULT 1)""")
+                    conn.commit()
+                else:
+                    conn = sqlite3.connect(tmp_path)
+
+                c = conn.cursor()
+                now_ms = int(time.time() * 1000)
+                for p in purchases:
+                    pkg = p.get("package", "")
+                    if not pkg:
+                        continue
+                    age_ms = random.randint(86400_000, profile.get("age_days", 90) * 86400_000)
+                    c.execute(
+                        "INSERT OR REPLACE INTO appstate "
+                        "(package_name, first_download_ms, account, title, "
+                        "last_update_timestamp_ms, installed) "
+                        "VALUES (?, ?, ?, ?, ?, 1)",
+                        (pkg, now_ms - age_ms, email,
+                         p.get("title", pkg.rsplit(".", 1)[-1]),
+                         now_ms - random.randint(0, age_ms // 2)))
+                conn.commit()
+                conn.close()
+                self._push_db_with_fallback(tmp_path, remote_las, "com.android.vending")
+                os.unlink(tmp_path)
+                logger.info(f"  Purchase visibility: {len(purchases)} apps in localappstate.db")
+            except Exception as e:
+                logger.warning(f"  localappstate.db failed: {e}")
+
+        # 3. Google Pay: COIN.xml prefs with card visibility
+        if card_data:
+            last4 = card_data.get("number", "")[-4:] if card_data.get("number") else "0000"
+            coin_prefs = (
+                '<?xml version="1.0" encoding="utf-8"?>\n'
+                '<map>\n'
+                f'  <string name="user_email">{email}</string>\n'
+                f'  <string name="user_name">{name}</string>\n'
+                '  <boolean name="setup_complete" value="true" />\n'
+                '  <boolean name="has_payment_methods" value="true" />\n'
+                f'  <string name="default_card_last4">{last4}</string>\n'
+                '  <boolean name="tap_to_pay_enabled" value="true" />\n'
+                '</map>\n'
+            )
+            try:
+                with tempfile.NamedTemporaryFile(mode="w", suffix=".xml", delete=False) as f:
+                    f.write(coin_prefs)
+                    coin_path = f.name
+                remote = "/data/data/com.google.android.apps.walletnfcrel/shared_prefs/COIN.xml"
+                if _adb_push(self.target, coin_path, remote):
+                    _fix_file_ownership(self.target, remote,
+                                        "com.google.android.apps.walletnfcrel")
+                os.unlink(coin_path)
+                logger.info("  Purchase visibility: COIN.xml written")
+            except Exception as e:
+                logger.warning(f"  COIN.xml failed: {e}")
+
+        # 4. Chrome: Local State with payment/autofill enabled
+        try:
+            local_state = json.dumps({
+                "autofill": {"credit_card_enabled": True, "enabled": True},
+                "payments": {"can_make_payment": {"enabled": True}},
+                "profile": {"name": name},
+                "signin": {"allowed": True},
+            })
+            with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
+                f.write(local_state)
+                ls_path = f.name
+            remote = f"/data/data/{self._browser_pkg}/app_chrome/Local State"
+            if _adb_push(self.target, ls_path, remote):
+                _fix_file_ownership(self.target, remote, self._browser_pkg)
+            os.unlink(ls_path)
+            logger.info("  Purchase visibility: Chrome Local State written")
+        except Exception as e:
+            logger.warning(f"  Chrome Local State failed: {e}")
 
     # ─── MAPS HISTORY ────────────────────────────────────────────
 
@@ -835,13 +1056,13 @@ class ProfileInjector:
             conn.commit()
             conn.close()
 
-            # Push back to device
-            if _adb_push(self.target, tmp_path, f"{self.CHROME_DATA}/Cookies"):
-                _fix_file_ownership(self.target, f"{self.CHROME_DATA}/Cookies", self._browser_pkg)
+            # Push back to device with fallback
+            remote_cookies = f"{self.CHROME_DATA}/Cookies"
+            if self._push_db_with_fallback(tmp_path, remote_cookies, self._browser_pkg):
                 self.result.cookies_injected = count
                 logger.info(f"  Cookies: {count} injected")
             else:
-                self.result.errors.append("Failed to push cookies DB")
+                self.result.errors.append("Failed to push cookies DB (all methods)")
 
             os.unlink(tmp_path)
 
@@ -918,8 +1139,8 @@ class ProfileInjector:
             conn.commit()
             conn.close()
 
-            if _adb_push(self.target, tmp_path, f"{self.CHROME_DATA}/History"):
-                _fix_file_ownership(self.target, f"{self.CHROME_DATA}/History", self._browser_pkg)
+            remote_history = f"{self.CHROME_DATA}/History"
+            if self._push_db_with_fallback(tmp_path, remote_history, self._browser_pkg):
                 self.result.history_injected = count
                 logger.info(f"  History: {count} URLs injected")
 
@@ -970,9 +1191,8 @@ class ProfileInjector:
             ls_base = f"{self.CHROME_DATA}/Local Storage/leveldb"
             _adb_shell(self.target, f"mkdir -p {ls_base}")
             # Push as a companion DB that Chrome migration can pick up
-            if _adb_push(self.target, tmp_path, f"{self.CHROME_DATA}/Local Storage/localstorage.db"):
-                _fix_file_ownership(self.target, f"{self.CHROME_DATA}/Local Storage/localstorage.db",
-                                    self._browser_pkg)
+            remote_ls = f"{self.CHROME_DATA}/Local Storage/localstorage.db"
+            self._push_db_with_fallback(tmp_path, remote_ls, self._browser_pkg)
 
             os.unlink(tmp_path)
 
@@ -1082,10 +1302,15 @@ class ProfileInjector:
             conn.close()
 
             if _adb_push(self.target, tmp_path, REMOTE_DB):
-                _adb_shell(self.target,
-                    f"chown radio:radio {REMOTE_DB} 2>/dev/null; "
-                    f"chmod 660 {REMOTE_DB}; "
-                    f"restorecon {REMOTE_DB} 2>/dev/null")
+                _fix_file_ownership(self.target, REMOTE_DB, "com.android.providers.contacts")
+            else:
+                # Fallback: on-device sqlite3 batch
+                logger.warning("  Contacts: ADB push failed, trying on-device sqlite3")
+                count = self._inject_contacts_ondevice_sqlite(contacts, REMOTE_DB)
+                if count == 0:
+                    # Fallback tier 2: content providers (no root needed)
+                    logger.warning("  Contacts: on-device sqlite3 failed, trying content providers")
+                    count = self._inject_contacts_content_provider(contacts)
 
             os.unlink(tmp_path)
 
@@ -1102,10 +1327,101 @@ class ProfileInjector:
             self.result.contacts_injected = 0
             logger.warning(f"  Contacts injection failed: {e}")
 
-    # ─── CALL LOGS ────────────────────────────────────────────────────
+    def _inject_contacts_ondevice_sqlite(self, contacts: List[Dict], remote_db: str) -> int:
+        """Tier 2 fallback: Run sqlite3 commands directly on-device via ADB shell."""
+        try:
+            sql_lines = ["BEGIN TRANSACTION;"]
+            for i, c in enumerate(contacts):
+                name = c.get("name", "").replace("'", "''")
+                phone = c.get("phone", "").replace("'", "''")
+                email = c.get("email", "").replace("'", "''")
+                if not name:
+                    continue
+                rid = i + 1
+                sql_lines.append(
+                    f"INSERT OR IGNORE INTO raw_contacts(_id, display_name, version) "
+                    f"VALUES({rid}, '{name}', 1);")
+                sql_lines.append(
+                    f"INSERT INTO data(raw_contact_id, mimetype_id, data1) "
+                    f"SELECT {rid}, _id, '{name}' FROM mimetypes "
+                    f"WHERE mimetype='vnd.android.cursor.item/name';")
+                if phone:
+                    sql_lines.append(
+                        f"INSERT INTO data(raw_contact_id, mimetype_id, data1, data2) "
+                        f"SELECT {rid}, _id, '{phone}', '2' FROM mimetypes "
+                        f"WHERE mimetype='vnd.android.cursor.item/phone_v2';")
+                if email:
+                    sql_lines.append(
+                        f"INSERT INTO data(raw_contact_id, mimetype_id, data1, data2) "
+                        f"SELECT {rid}, _id, '{email}', '1' FROM mimetypes "
+                        f"WHERE mimetype='vnd.android.cursor.item/email_v2';")
+            sql_lines.append("COMMIT;")
+
+            # Write SQL to temp file on device
+            sql_script = "\n".join(sql_lines)
+            with tempfile.NamedTemporaryFile(mode="w", suffix=".sql", delete=False) as sf:
+                sf.write(sql_script)
+                sf_path = sf.name
+            _adb_push(self.target, sf_path, "/data/local/tmp/_contacts.sql")
+            os.unlink(sf_path)
+
+            out = _adb_shell(self.target,
+                f"sqlite3 {remote_db} < /data/local/tmp/_contacts.sql 2>&1")
+            _adb_shell(self.target, "rm /data/local/tmp/_contacts.sql")
+
+            if "Error" in out:
+                logger.warning(f"  On-device sqlite3 error: {out[:200]}")
+                return 0
+            count = len([c for c in contacts if c.get("name")])
+            logger.info(f"  Contacts: {count} injected (on-device sqlite3)")
+            return count
+        except Exception as e:
+            logger.warning(f"  On-device sqlite3 fallback failed: {e}")
+            return 0
+
+    def _inject_contacts_content_provider(self, contacts: List[Dict]) -> int:
+        """Tier 3 fallback: Use Android content providers (no root needed)."""
+        count = 0
+        for c in contacts:
+            name = c.get("name", "")
+            phone = c.get("phone", "")
+            if not name:
+                continue
+            # Insert raw_contact via content provider
+            out = _adb_shell(self.target,
+                "content insert --uri content://com.android.contacts/raw_contacts "
+                "--bind account_type:s: --bind account_name:s:")
+            # Extract raw_contact_id
+            raw_id = None
+            if "raw_contacts/" in out:
+                raw_id = out.rsplit("/", 1)[-1].strip()
+            if not raw_id:
+                continue
+            # Insert name
+            esc_name = name.replace("'", "'\\''")
+            _adb_shell(self.target,
+                f"content insert --uri content://com.android.contacts/data "
+                f"--bind raw_contact_id:i:{raw_id} "
+                f"--bind mimetype:s:vnd.android.cursor.item/name "
+                f"--bind data1:s:'{esc_name}'")
+            # Insert phone
+            if phone:
+                esc_phone = phone.replace("'", "'\\''")
+                _adb_shell(self.target,
+                    f"content insert --uri content://com.android.contacts/data "
+                    f"--bind raw_contact_id:i:{raw_id} "
+                    f"--bind mimetype:s:vnd.android.cursor.item/phone_v2 "
+                    f"--bind data1:s:'{esc_phone}' --bind data2:i:2")
+            count += 1
+            if count >= 50:  # Cap content-provider injections (slow)
+                break
+        logger.info(f"  Contacts: {count} injected (content provider fallback)")
+        return count
+
+    # ─── CALL LOGS ─────────────────────────────────────────────────────
 
     def _inject_call_logs(self, logs: List[Dict]):
-        """Inject call history via SQLite batch (replaces slow per-entry ADB commands)."""
+        """Inject call history logs into the contacts calllog.db via SQLite."""
         if not logs:
             return
 
@@ -1154,8 +1470,7 @@ class ProfileInjector:
             conn.close()
 
             if _adb_push(self.target, tmp_path, REMOTE_DB):
-                _adb_shell(self.target,
-                    f"chown radio:radio {REMOTE_DB} 2>/dev/null; chmod 660 {REMOTE_DB}")
+                _fix_file_ownership(self.target, REMOTE_DB, "com.android.providers.contacts")
 
             os.unlink(tmp_path)
             self.result.call_logs_injected = count
@@ -1218,8 +1533,7 @@ class ProfileInjector:
             conn.close()
 
             if _adb_push(self.target, tmp_path, REMOTE_DB):
-                _adb_shell(self.target,
-                    f"chown radio:radio {REMOTE_DB} && chmod 660 {REMOTE_DB}")
+                _fix_file_ownership(self.target, REMOTE_DB, "com.android.providers.telephony")
 
             os.unlink(tmp_path)
             self.result.sms_injected = count

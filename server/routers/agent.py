@@ -98,11 +98,31 @@ async def agent_analyze_screen(device_id: str):
     return agent.analyze_screen()
 
 
+@router.get("/memory/{device_id}")
+async def agent_session_memory(device_id: str):
+    """Get the agent's session memory — failure vectors, resolved patterns, screen history."""
+    agent = _get_agent(device_id)
+    return agent.get_session_memory()
+
+
 @router.get("/templates")
 async def agent_templates():
     from device_agent import TASK_TEMPLATES
-    return {"templates": {k: {"params": v["params"], "prompt": v["prompt"]}
-                          for k, v in TASK_TEMPLATES.items()}}
+    return {"templates": {k: {
+        "params": v["params"], "prompt": v["prompt"],
+        "realism": v.get("realism", "unknown"),
+        "category": v.get("category", ""),
+    } for k, v in TASK_TEMPLATES.items()}}
+
+
+@router.get("/templates/achievable")
+async def agent_achievable_templates():
+    """Return only templates tagged as 'achievable' — guaranteed to work without OTP/CAPTCHA."""
+    from device_agent import TASK_TEMPLATES
+    achievable = {k: {"params": v["params"], "prompt": v["prompt"], "category": v.get("category", "")}
+                  for k, v in TASK_TEMPLATES.items()
+                  if v.get("realism") == "achievable"}
+    return {"templates": achievable, "count": len(achievable)}
 
 
 @router.get("/capabilities")

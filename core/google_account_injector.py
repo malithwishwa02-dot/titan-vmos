@@ -220,6 +220,26 @@ class GoogleAccountInjector:
                 )
             """)
 
+            # grants table — required by AccountManagerService.onBootPhase()
+            c.execute("""
+                CREATE TABLE IF NOT EXISTS grants (
+                    accounts_id INTEGER NOT NULL,
+                    auth_token_type TEXT NOT NULL DEFAULT '',
+                    uid INTEGER NOT NULL,
+                    UNIQUE (accounts_id, auth_token_type, uid)
+                )
+            """)
+
+            # shared_accounts table — required by ContentService boot phase 550
+            c.execute("""
+                CREATE TABLE IF NOT EXISTS shared_accounts (
+                    _id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name TEXT NOT NULL,
+                    type TEXT NOT NULL,
+                    UNIQUE(name, type)
+                )
+            """)
+
             # Set correct user_version so Android doesn't call onCreate()
             c.execute("PRAGMA user_version = 10")
 
@@ -318,6 +338,64 @@ class GoogleAccountInjector:
                     previous_name TEXT,
                     last_password_entry_time_millis_epoch INTEGER DEFAULT 0,
                     UNIQUE(name,type)
+                )
+            """)
+
+            # grants — required by AccountManagerService for visibility queries
+            c.execute("""
+                CREATE TABLE IF NOT EXISTS grants (
+                    accounts_id INTEGER NOT NULL,
+                    auth_token_type TEXT NOT NULL DEFAULT '',
+                    uid INTEGER NOT NULL,
+                    UNIQUE (accounts_id, auth_token_type, uid)
+                )
+            """)
+
+            # visibility — required by AccountsDb.findAllVisibilityValues()
+            c.execute("""
+                CREATE TABLE IF NOT EXISTS visibility (
+                    accounts_id INTEGER NOT NULL,
+                    _package TEXT NOT NULL,
+                    value INTEGER,
+                    UNIQUE (accounts_id, _package)
+                )
+            """)
+
+            # authtokens — may be queried during sync bootstrap
+            c.execute("""
+                CREATE TABLE IF NOT EXISTS authtokens (
+                    _id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    accounts_id INTEGER NOT NULL,
+                    type TEXT NOT NULL DEFAULT '',
+                    authtoken TEXT,
+                    UNIQUE (accounts_id, type)
+                )
+            """)
+
+            # extras — key-value store for account metadata
+            c.execute("""
+                CREATE TABLE IF NOT EXISTS extras (
+                    _id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    accounts_id INTEGER NOT NULL,
+                    key TEXT NOT NULL DEFAULT '',
+                    value TEXT,
+                    UNIQUE (accounts_id, key)
+                )
+            """)
+
+            # shared_accounts + meta — system tables expected by ContentService
+            c.execute("""
+                CREATE TABLE IF NOT EXISTS shared_accounts (
+                    _id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name TEXT NOT NULL,
+                    type TEXT NOT NULL,
+                    UNIQUE(name, type)
+                )
+            """)
+            c.execute("""
+                CREATE TABLE IF NOT EXISTS meta (
+                    key TEXT PRIMARY KEY NOT NULL,
+                    value TEXT
                 )
             """)
 

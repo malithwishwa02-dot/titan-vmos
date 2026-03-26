@@ -159,10 +159,13 @@ class NetworkShield:
         
         results = {"rules_added": 0, "errors": []}
         
-        # Block outbound to telemetry domains (by IP resolution)
-        for domain in self.LEAK_DOMAINS[:10]:  # Limit for safety
-            # Note: Real implementation would resolve domains first
-            pass
+        # Block outbound to telemetry domains by resolving and dropping
+        for domain in self.LEAK_DOMAINS[:10]:
+            clean = domain.lstrip("*.")
+            if self.block_domain(clean):
+                results["rules_added"] += 1
+            else:
+                results["errors"].append(f"Failed to block {clean}")
         
         # Disable IPv6 (leak vector)
         ok, _ = self._run_cmd(["sysctl", "-w", "net.ipv6.conf.all.disable_ipv6=1"])

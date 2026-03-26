@@ -306,11 +306,20 @@ ipcMain.handle('titan:launchCuttlefishApp', () => {
     return { ok: false, error: 'Device Viewer not found at ' + cfDir };
   }
   const display = process.env.DISPLAY || ':10.0';
-  const child = spawn('npx', ['electron', '--no-sandbox', '--disable-gpu-sandbox', '.'], {
+  const xauth = process.env.XAUTHORITY || '/root/.Xauthority';
+  const child = spawn('npx', [
+    'electron',
+    '--no-sandbox',
+    '--disable-gpu-sandbox',
+    '--disable-gpu',
+    '--in-process-gpu',
+    '--disable-software-rasterizer',
+    '.',
+  ], {
     cwd: cfDir,
     detached: true,
     stdio: 'ignore',
-    env: { ...process.env, DISPLAY: display },
+    env: { ...process.env, DISPLAY: display, XAUTHORITY: xauth },
   });
   child.unref();
   console.log('[titan] Launched Cuttlefish Desktop (PID:', child.pid, ')');

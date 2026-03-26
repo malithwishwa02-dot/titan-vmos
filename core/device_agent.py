@@ -49,6 +49,12 @@ DEFAULT_MODEL = os.environ.get("TITAN_AGENT_MODEL", "titan-agent:7b")
 MAX_STEPS = int(os.environ.get("TITAN_AGENT_MAX_STEPS", "50"))
 STEP_TIMEOUT = int(os.environ.get("TITAN_AGENT_STEP_TIMEOUT", "30"))
 
+# ── Failure analysis & retry configuration ─────────────────────────
+MAX_RETRIES_PER_STEP = 3           # Retry a failing action N times before entering analysis
+MAX_ANALYSIS_ROUNDS = 3            # Max LLM analysis rounds per stuck point
+ANALYSIS_COOLDOWN = 2.0            # Seconds between analysis rounds
+DISPLAY_MODE = "rdp"               # Developer on RDP — screen is always visible, never headless
+
 # Trained model preferences — auto-detected at startup
 TRAINED_ACTION_MODEL = os.environ.get("TITAN_TRAINED_ACTION", "titan-agent:7b")
 TRAINED_SPECIALIST_MODEL = os.environ.get("TITAN_SPECIALIST_MODEL", "titan-specialist:7b-v2")
@@ -197,6 +203,29 @@ class AgentAction:
 
 
 @dataclass
+class FailureVector:
+    """Records a single failure event for session memory.
+    The agent NEVER skips failures — it records, analyzes, and learns from each one."""
+    step: int = 0
+    action_type: str = ""
+    action_params: Dict[str, Any] = field(default_factory=dict)
+    screen_summary: str = ""
+    error_reason: str = ""
+    analysis: str = ""
+    recovery_action: str = ""
+    resolved: bool = False
+    timestamp: float = 0.0
+
+    def to_dict(self) -> dict:
+        return {
+            "step": self.step, "action": self.action_type,
+            "params": self.action_params, "screen": self.screen_summary[:150],
+            "error": self.error_reason[:200], "analysis": self.analysis[:200],
+            "recovery": self.recovery_action[:100], "resolved": self.resolved,
+        }
+
+
+@dataclass
 class AgentTask:
     """A running or completed agent task."""
     id: str = ""
@@ -212,6 +241,7 @@ class AgentTask:
     started_at: float = 0.0
     completed_at: float = 0.0
     persona: Dict[str, str] = field(default_factory=dict)  # name, email, phone for form filling
+    failure_vectors: List["FailureVector"] = field(default_factory=list)
 
     def to_dict(self) -> dict:
         return {
@@ -221,6 +251,7 @@ class AgentTask:
             "steps_taken": self.steps_taken, "max_steps": self.max_steps,
             "actions": [a.to_dict() for a in self.actions[-20:]],
             "result": self.result, "error": self.error,
+            "failure_vectors": [fv.to_dict() for fv in self.failure_vectors[-10:]],
             "started_at": self.started_at, "completed_at": self.completed_at,
             "duration": round(self.completed_at - self.started_at, 1) if self.completed_at else 0,
         }
@@ -315,7 +346,8 @@ def _parse_action_json(text: str) -> Optional[Dict]:
 # ACTION PROMPT TEMPLATE
 # ═══════════════════════════════════════════════════════════════════════
 
-_AGENT_SYSTEM_PROMPT = """You are an AI agent controlling an Android phone. Output ONE JSON action per response.
+_AGENT_SYSTEM_PROMPT = """You are an AI agent controlling a REAL Android phone with a VISIBLE DISPLAY (developer monitors via RDP — this is NOT headless).
+The screen is always live and visible. Output ONE JSON action per response.
 
 FORMAT (pick ONE):
 {"action":"tap","x":540,"y":1200,"reason":"tap Sign In"}
@@ -330,7 +362,6 @@ FORMAT (pick ONE):
 {"action":"open_url","url":"https://amazon.com","reason":"navigate"}
 {"action":"wait","seconds":3,"reason":"wait for load"}
 {"action":"done","reason":"task complete"}
-{"action":"error","reason":"cannot proceed"}
 
 RULES (strictly follow):
 1. Output ONLY the JSON object — no text before or after, no markdown, no steps.
@@ -343,16 +374,41 @@ RULES (strictly follow):
 8. After typing text, press enter or tap the submit/search button.
 9. Wait 2-3s after app launches or page navigations.
 10. Say done only when the task goal is clearly achieved.
-11. Say error only if truly stuck after multiple attempts."""
+11. NEVER say error or give up. If something isn't working, try a DIFFERENT approach — scroll, go back, try another element, wait longer, reopen the app. You must EXHAUST all alternatives before reporting stuck.
+12. The display is LIVE (RDP session) — the screen is real, not simulated. Screenshots reflect the actual device state."""
+
+_FAILURE_ANALYSIS_PROMPT = """You are debugging an Android automation task that keeps failing. Analyze the root cause and suggest a DIFFERENT approach.
+
+TASK: {task}
+
+CURRENT SCREEN:
+{screen_context}
+
+RECENT FAILED ACTIONS (these approaches did NOT work):
+{failed_actions}
+
+KNOWN FAILURE PATTERNS FROM THIS SESSION:
+{session_failures}
+
+Analyze:
+1. WHY is the current approach failing? (root cause — be specific)
+2. What is the ACTUAL state of the screen vs what was expected?
+3. What COMPLETELY DIFFERENT approach should be tried?
+4. Can this task still be completed, or is it genuinely impossible?
+
+Respond with ONLY this JSON:
+{{"analysis": "root cause explanation", "recovery_action": "specific different action to try", "can_recover": true, "new_approach": "detailed step description"}}"""
 
 _STEP_PROMPT = """TASK: {task}
 
 {persona_context}
 
-STEP {step}/{max_steps}
+STEP {step}/{max_steps} | DISPLAY: LIVE (RDP visible — not headless)
 
 CURRENT SCREEN:
 {screen_context}
+
+{failure_context}
 
 PREVIOUS ACTIONS:
 {action_history}
@@ -370,209 +426,249 @@ TASK_TEMPLATES = {
         "prompt": "Open the Google Play Store and search for '{app_name}'. Install the app and wait for installation to complete. Once installed, go back to Play Store home.",
         "params": ["app_name"],
         "category": "install",
+        "realism": "achievable",
     },
     "install_batch": {
         "prompt": "Open Google Play Store and install the following apps one by one: {app_list}. For each app: search by name, tap Install, wait for installation to finish, then go back to Play Store for the next one. Skip any app that requires payment.",
         "params": ["app_list"],
         "category": "install",
+        "realism": "achievable",
     },
     # ── SIGN-IN ───────────────────────────────────────────────────────
     "google_signin": {
-        "prompt": "Open Settings, go to Accounts, and add a Google account. Use email {email} and password {password}. Complete any verification steps. Accept all terms.",
+        "prompt": "Open Settings, go to Accounts, and add a Google account. Use email {email} and password {password}. If Google shows verification (SMS, phone prompt, CAPTCHA), complete it if possible. Accept all terms. NOTE: If stuck on a verification screen you cannot bypass, report done with what was accomplished so far.",
         "params": ["email", "password"],
         "category": "sign_in",
+        "realism": "requires_otp",
     },
     "chrome_signin": {
         "prompt": "Open Google Chrome. Tap the profile icon or go to Settings > Sign in. Sign in with Google account {email} and password {password}. Enable sync if prompted.",
         "params": ["email", "password"],
         "category": "sign_in",
+        "realism": "requires_otp",
     },
     "login_app": {
         "prompt": "Open {app_name} app and log in with email {email} and password {password}. Complete any verification or setup steps that appear.",
         "params": ["app_name", "email", "password"],
         "category": "sign_in",
+        "realism": "requires_otp",
     },
     "paypal_signin": {
         "prompt": "Open PayPal app. Tap 'Log In'. Enter email {email} and password {password}. Complete any security verification. Skip any promotional screens.",
         "params": ["email", "password"],
         "category": "sign_in",
+        "realism": "requires_otp",
     },
     "venmo_signin": {
         "prompt": "Open Venmo app. Tap 'Sign In'. Enter phone number or email {email} and password {password}. Complete verification if asked. Skip any setup prompts.",
         "params": ["email", "password"],
         "category": "sign_in",
+        "realism": "requires_otp",
     },
     "cashapp_signin": {
         "prompt": "Open Cash App. Enter phone number or email {email}. Complete the sign-in flow. Verify with code if needed. Skip optional setup steps.",
         "params": ["email"],
         "category": "sign_in",
+        "realism": "requires_otp",
     },
     "bank_app_signin": {
         "prompt": "Open {app_name} banking app. Tap 'Sign In' or 'Log In'. Enter username {email} and password {password}. Complete any security challenge or biometric prompt. Skip marketing screens.",
         "params": ["app_name", "email", "password"],
         "category": "sign_in",
+        "realism": "requires_otp",
     },
     "instagram_signin": {
         "prompt": "Open Instagram. Tap 'Log In'. Enter username {email} and password {password}. If asked to save login info, tap 'Save'. Skip any popups or notifications prompts.",
         "params": ["email", "password"],
         "category": "sign_in",
+        "realism": "requires_otp",
     },
     # ── WALLET ────────────────────────────────────────────────────────
     "wallet_verify": {
         "prompt": "Open Google Wallet (or Google Pay) app. Check if a payment card is visible on the main screen. If a card ending in {card_last4} is shown, the wallet is set up correctly. Take a screenshot showing the card. Then go back to home screen.",
         "params": ["card_last4"],
         "category": "wallet",
+        "realism": "achievable",
     },
     "wallet_add_card_ui": {
-        "prompt": "Open Google Wallet (or Google Pay). Tap 'Add to Wallet' or '+' button. Select 'Payment card' or 'Credit or debit card'. When the camera/scanner appears, tap 'Enter details manually'. Fill in the card details when prompted and accept all terms. Complete any bank verification steps that appear.",
+        "prompt": "Open Google Wallet (or Google Pay). Tap 'Add to Wallet' or '+' button. Select 'Payment card' or 'Credit or debit card'. When the camera/scanner appears, tap 'Enter details manually'. Fill in the card details when prompted and accept all terms. NOTE: Bank verification (SMS OTP) will require manual intervention — if a verification screen appears that the agent cannot proceed past, report done with what was accomplished.",
         "params": [],
         "category": "wallet",
+        "realism": "requires_otp",
     },
     "play_store_add_payment": {
         "prompt": "Open Google Play Store. Tap your profile icon (top right). Tap 'Payments & subscriptions'. Tap 'Payment methods'. Tap 'Add payment method' or 'Add credit or debit card'. Follow the prompts to add a card. Accept any terms.",
         "params": [],
         "category": "wallet",
+        "realism": "requires_payment",
     },
     # ── AGING / WARMUP ────────────────────────────────────────────────
     "warmup_device": {
         "prompt": "Open Chrome and browse naturally for 5 minutes. Visit Google, YouTube, and 3 other popular websites. Scroll through content on each site. This is to warm up the device with realistic usage.",
         "params": [],
         "category": "aging",
+        "realism": "achievable",
     },
     "warmup_youtube": {
         "prompt": "Open YouTube app. Search for '{query}' or browse the home feed. Watch at least 2 videos for 30 seconds each, scrolling the feed between videos. Like one video.",
         "params": ["query"],
         "category": "aging",
+        "realism": "achievable",
     },
     "warmup_maps": {
         "prompt": "Open Google Maps. Search for '{location}'. Explore the area, check a restaurant or business listing, look at reviews. Then get directions from current location to that place.",
         "params": ["location"],
         "category": "aging",
+        "realism": "achievable",
     },
     "warmup_social": {
         "prompt": "Open {app_name}. Scroll through the main feed for 2-3 minutes. View 3-4 posts. Like one post. Go to the Explore/Discover tab and browse briefly.",
         "params": ["app_name"],
         "category": "aging",
+        "realism": "achievable",
     },
     "gmail_compose": {
         "prompt": "Open Gmail. Compose a new email to {to_email} with subject '{subject}' and body '{body}'. Send the email.",
         "params": ["to_email", "subject", "body"],
         "category": "aging",
+        "realism": "achievable",
     },
     "settings_tweak": {
         "prompt": "Open Settings. Change the display brightness to about 60%. Go to Sounds and set the ring volume to medium. Go to Display and check the current wallpaper. Go back to home screen.",
         "params": [],
         "category": "aging",
+        "realism": "achievable",
     },
     # ── BROWSE ────────────────────────────────────────────────────────
     "browse_url": {
         "prompt": "Open the web browser and navigate to {url}. Wait for the page to load completely.",
         "params": ["url"],
         "category": "browse",
+        "realism": "achievable",
     },
     "browse_site": {
         "prompt": "Open the web browser and visit {url}. Scroll through the page, click 2-3 links, and spend a moment on each page.",
         "params": ["url"],
         "category": "browse",
+        "realism": "achievable",
     },
     "search_google": {
         "prompt": "Open the web browser, go to google.com, and search for '{query}'. Click on the first organic result and scroll through the page.",
         "params": ["query"],
         "category": "browse",
+        "realism": "achievable",
     },
     "browse_amazon": {
         "prompt": "Open Amazon app or amazon.com. Search for '{product_query}', view product details, add one item to cart, and return to home.",
         "params": ["product_query"],
         "category": "browse",
+        "realism": "achievable",
     },
     "open_app": {
         "prompt": "Launch app {package}, wait for it to open, and navigate around the main screen for a few actions.",
         "params": ["package"],
         "category": "install",
+        "realism": "achievable",
     },
     "check_gmail": {
         "prompt": "Open Gmail app. Refresh inbox, open the top email, and confirm content is visible.",
         "params": [],
         "category": "aging",
+        "realism": "achievable",
     },
     "take_photo": {
         "prompt": "Open Camera app, take a photo, and return to home screen.",
         "params": [],
         "category": "aging",
+        "realism": "achievable",
     },
     "youtube_video": {
         "prompt": "Open YouTube app. Search for '{query}' and play the first result for 30 seconds.",
         "params": ["query"],
         "category": "aging",
+        "realism": "achievable",
     },
     "login_facebook": {
         "prompt": "Open Facebook app. Tap 'Log In'. Enter email {email} and password {password}. Complete any verification and dismiss optional prompts.",
         "params": ["email", "password"],
         "category": "sign_in",
+        "realism": "requires_captcha",
     },
     "create_account": {
-        "prompt": "Go to {url} and create a new account. Use the persona details provided. Fill in all required fields and submit the registration form.",
+        "prompt": "Go to {url} and create a new account. Use the persona details provided. Fill in all required fields and submit the registration form. NOTE: If a CAPTCHA appears, try to solve it. If email verification is required, report done with current progress.",
         "params": ["url"],
         "category": "sign_in",
+        "realism": "requires_captcha",
     },
     # ── SOCIAL SIGN-INS ──────────────────────────────────────────────
     "facebook_signin": {
         "prompt": "Open Facebook app. Tap 'Log In'. Enter email {email} and password {password}. Tap 'Log In' button. If asked to save login, tap 'OK'. Skip any 'Find Friends' or notification prompts.",
         "params": ["email", "password"],
         "category": "sign_in",
+        "realism": "requires_captcha",
     },
     "tiktok_signin": {
         "prompt": "Open TikTok app. Tap 'Profile' tab at bottom. Tap 'Log in'. Choose 'Use phone/email/username'. Enter email {email} and password {password}. Complete any CAPTCHA or verification. Skip onboarding prompts.",
         "params": ["email", "password"],
         "category": "sign_in",
+        "realism": "requires_captcha",
     },
     "whatsapp_setup": {
-        "prompt": "Open WhatsApp. Enter phone number {phone} when prompted. Verify with SMS code if possible, otherwise wait. Enter display name {name} when asked. Skip backup restoration. Allow contacts access if prompted.",
+        "prompt": "Open WhatsApp. Enter phone number {phone} when prompted. Verify with SMS code if possible, otherwise wait. Enter display name {name} when asked. Skip backup restoration. Allow contacts access if prompted. NOTE: SMS verification requires real phone number — if stuck on verification, report done with what was accomplished.",
         "params": ["phone", "name"],
         "category": "sign_in",
+        "realism": "requires_otp",
     },
     "telegram_signin": {
         "prompt": "Open Telegram app. Enter phone number {phone}. Wait for SMS verification code. Enter the code if received. Set display name to {name} if prompted. Skip optional profile photo.",
         "params": ["phone", "name"],
         "category": "sign_in",
+        "realism": "requires_otp",
     },
     "snapchat_signin": {
         "prompt": "Open Snapchat app. Tap 'Log In'. Enter username or email {email} and password {password}. Complete any verification. Skip 'Add Friends' and notification prompts.",
         "params": ["email", "password"],
         "category": "sign_in",
+        "realism": "requires_otp",
     },
     "twitter_signin": {
         "prompt": "Open X (Twitter) app. Tap 'Sign in'. Enter email or username {email}. Enter password {password} on next screen. Skip any 'Turn on notifications' or suggestions prompts.",
         "params": ["email", "password"],
         "category": "sign_in",
+        "realism": "requires_otp",
     },
     # ── CRYPTO / COMMERCE ────────────────────────────────────────────
     "crypto_signin": {
         "prompt": "Open {app_name} app. Tap 'Sign In' or 'Log In'. Enter email {email} and password {password}. Complete 2FA or email verification if prompted. Skip any promotional screens or tutorials.",
         "params": ["app_name", "email", "password"],
         "category": "sign_in",
+        "realism": "requires_otp",
     },
     "amazon_signin": {
         "prompt": "Open Amazon Shopping app. Tap 'Sign In'. Enter email {email} and password {password}. Complete any CAPTCHA or OTP verification. Skip 'Turn on notifications'. Browse home page briefly.",
         "params": ["email", "password"],
         "category": "sign_in",
+        "realism": "requires_captcha",
     },
     # ── PLAY STORE / APP MANAGEMENT ──────────────────────────────────
     "play_purchase": {
-        "prompt": "Open Google Play Store. Search for '{app_name}'. If it has an in-app purchase or paid version, tap 'Buy' or 'Install' (paid). Complete the purchase using the saved payment method. Accept any confirmations.",
+        "prompt": "Open Google Play Store. Search for '{app_name}'. If it has an in-app purchase or paid version, tap 'Buy' or 'Install' (paid). Complete the purchase using the saved payment method. Accept any confirmations. NOTE: Requires valid payment method already configured in Play Store.",
         "params": ["app_name"],
         "category": "install",
+        "realism": "requires_payment",
     },
     "app_update": {
         "prompt": "Open Google Play Store. Tap your profile icon (top right). Tap 'Manage apps & device'. Tap 'Updates available'. Update {app_name} if listed, or tap 'Update all'. Wait for updates to finish.",
         "params": ["app_name"],
         "category": "install",
+        "realism": "achievable",
     },
     # ── NOTIFICATION / PERMISSION HANDLING ───────────────────────────
     "handle_permissions": {
         "prompt": "A dialog or permission prompt is visible on screen. If it asks to allow notifications, tap 'Allow'. If it asks for location/camera/contacts permission, tap 'Allow' or 'While using the app'. If it shows a promotional popup, dismiss it by tapping 'No thanks', 'Skip', 'Not now', or the X button. Return to the app's main screen.",
         "params": [],
         "category": "aging",
+        "realism": "achievable",
     },
 }
 
@@ -603,7 +699,14 @@ class DeviceAgent:
         self._threads: Dict[str, threading.Thread] = {}
         self._stop_flags: Dict[str, threading.Event] = {}
         self._current_traj: Optional[TrajectoryLogger] = None
-        logger.info(f"DeviceAgent init: action={self.model}, vision={self.vision_model}")
+        # ── Session memory: persists across tasks within this agent instance ──
+        self._session_memory: Dict[str, Any] = {
+            "failures": [],          # All FailureVector dicts from all tasks
+            "screens_visited": [],   # Screen summaries for context
+            "resolved_patterns": [], # Patterns that were fixed (learn from)
+            "display_mode": DISPLAY_MODE,
+        }
+        logger.info(f"DeviceAgent init: action={self.model}, vision={self.vision_model}, display={DISPLAY_MODE}")
 
     # ─── PUBLIC API ───────────────────────────────────────────────────
 
@@ -651,118 +754,397 @@ class DeviceAgent:
         self._stop_flags[task_id] = stop_flag
 
         thread = threading.Thread(target=self._run_task, args=(task_id,), daemon=True)
-        def _run_task(self, task_id: str):
-            """Main see→think→act loop. Runs in background thread."""
-            task = self._tasks[task_id]
-            stop = self._stop_flags[task_id]
+        self._threads[task_id] = thread
+        thread.start()
+        logger.info(f"Task {task_id} started: model={task_model}, prompt={final_prompt[:80]}...")
+        return task_id
 
-            task.status = "running"
-            task.started_at = time.time()
+    # ─── PUBLIC API ───────────────────────────────────────────────────
 
-            # ── Trajectory logging ──
-            traj = TrajectoryLogger(task_id=task_id, device_id=task.device_id)
-            traj.set_metadata(
-                prompt=task.prompt, model=task.model, persona=task.persona,
-                device_type="cuttlefish",
-            )
-            self._current_traj = traj
+    def get_task(self, task_id: str) -> Optional[AgentTask]:
+        return self._tasks.get(task_id)
 
-            # Allow small/free models and local Titan models to run without forced stop
-            small_free_models = ["gpt-4.1", "gpt-4", "chatgpt", "gpt-3.5", "phi-2", "mistral",
-                                 "qwen2.5:7b", "llama3.1:8b", "fast-uncensored", "lightning-roleplay"]
-            model_name = (task.model or "").lower()
-            unlimited_steps = any(m in model_name for m in small_free_models)
+    def stop_task(self, task_id: str) -> bool:
+        if task_id in self._stop_flags:
+            self._stop_flags[task_id].set()
+            return True
+        return False
 
-            try:
-                step = 1
-                while True:
-                    if stop.is_set():
-                        task.status = "stopped"
-                        break
+    def list_tasks(self) -> List[dict]:
+        return [t.to_dict() for t in self._tasks.values()]
 
-                    action = self._execute_step(task, step)
-                    task.actions.append(action)
-                    task.steps_taken = step
+    def analyze_screen(self) -> dict:
+        screen = self.analyzer.capture_and_analyze(use_ui_dump=True, use_ocr=True)
+        return {
+            "description": screen.description,
+            "elements": len(screen.elements),
+            "app": getattr(screen, "current_app", "unknown"),
+            "text": (screen.all_text[:500] if screen.all_text else ""),
+        }
 
-                    if action.action_type == "done":
-                        task.status = "completed"
-                        task.result = action.reasoning
-                        break
-                    elif action.action_type == "error":
-                        task.status = "failed"
-                        task.error = action.reasoning
-                        break
+    def get_session_memory(self) -> Dict[str, Any]:
+        """Return the agent's session memory (failure vectors, screens, patterns)."""
+        return {
+            "total_failures": len(self._session_memory["failures"]),
+            "resolved_patterns": len(self._session_memory["resolved_patterns"]),
+            "screens_visited": len(self._session_memory["screens_visited"]),
+            "display_mode": self._session_memory["display_mode"],
+            "recent_failures": self._session_memory["failures"][-10:],
+            "resolved": self._session_memory["resolved_patterns"][-10:],
+        }
 
-                    # Post-action delay for UI transitions to settle
-                    import random as _rnd
-                    time.sleep(_rnd.uniform(1.5, 2.5))
+    # ─── MAIN LOOP ────────────────────────────────────────────────────
 
-                    # Prevent infinite loops — if last 5 actions are identical, stop (unless unlimited)
-                    if not unlimited_steps and len(task.actions) >= 5:
-                        recent = [a.action_type + str(a.params) for a in task.actions[-5:]]
-                        if len(set(recent)) == 1:
+    def _run_task(self, task_id: str):
+        """Main see→think→act loop with NEVER-SKIP failure analysis.
+        Runs in background thread. On failure: stop, analyze WHY, patch approach, retry.
+        Only gives up after exhausting MAX_ANALYSIS_ROUNDS of LLM diagnosis."""
+        task = self._tasks[task_id]
+        stop = self._stop_flags[task_id]
+
+        task.status = "running"
+        task.started_at = time.time()
+
+        # ── Trajectory logging ──
+        traj = TrajectoryLogger(task_id=task_id, device_id=task.device_id)
+        traj.set_metadata(
+            prompt=task.prompt, model=task.model, persona=task.persona,
+            device_type="cuttlefish",
+        )
+        self._current_traj = traj
+
+        import random as _rnd
+
+        # ── Failure tracking state ──
+        consecutive_failures = 0
+        analysis_rounds_used = 0
+        failure_context = ""         # Injected into prompt after analysis
+        task_failures: List[FailureVector] = []
+
+        try:
+            step = 1
+            while True:
+                if stop.is_set():
+                    task.status = "stopped"
+                    break
+
+                # ── SEE → THINK → ACT (with failure context injected) ──
+                action = self._execute_step(task, step, failure_context)
+                task.actions.append(action)
+                task.steps_taken = step
+
+                # ── Record screen in session memory ──
+                if action.screen_summary:
+                    self._session_memory["screens_visited"].append({
+                        "step": step, "task_id": task_id,
+                        "screen": action.screen_summary[:200],
+                        "time": time.time(),
+                    })
+                    # Cap screen memory at 100 entries
+                    if len(self._session_memory["screens_visited"]) > 100:
+                        self._session_memory["screens_visited"] = \
+                            self._session_memory["screens_visited"][-50:]
+
+                # ── TASK COMPLETE ──
+                if action.action_type == "done":
+                    task.status = "completed"
+                    task.result = action.reasoning
+                    # Mark any pending failure vectors as resolved
+                    for fv in task_failures:
+                        if not fv.resolved:
+                            fv.resolved = True
+                    break
+
+                # ── FAILURE DETECTION ──
+                is_failure = (action.action_type == "error" or not action.success)
+
+                if is_failure:
+                    consecutive_failures += 1
+                    fv = FailureVector(
+                        step=step,
+                        action_type=action.action_type,
+                        action_params=action.params,
+                        screen_summary=action.screen_summary,
+                        error_reason=action.reasoning,
+                        timestamp=time.time(),
+                    )
+                    task_failures.append(fv)
+                    task.failure_vectors.append(fv)
+                    self._session_memory["failures"].append(fv.to_dict())
+
+                    logger.warning(
+                        f"Task {task_id} step {step}: FAILURE #{consecutive_failures} — "
+                        f"{action.action_type}: {action.reasoning[:80]}"
+                    )
+
+                    # ── ANALYSIS MODE: triggered after MAX_RETRIES_PER_STEP consecutive failures ──
+                    if consecutive_failures >= MAX_RETRIES_PER_STEP:
+                        analysis_rounds_used += 1
+
+                        if analysis_rounds_used > MAX_ANALYSIS_ROUNDS:
                             task.status = "failed"
-                            task.error = "Stuck in loop — same action repeated 5 times"
+                            task.error = (
+                                f"Exhausted {MAX_ANALYSIS_ROUNDS} analysis rounds at step {step}. "
+                                f"Last failure: {action.reasoning[:200]}"
+                            )
+                            logger.error(
+                                f"Task {task_id}: GIVING UP after {MAX_ANALYSIS_ROUNDS} analysis rounds "
+                                f"({len(task_failures)} total failures)"
+                            )
                             break
-                    # Detect oscillating patterns (A→B→A→B→A) (unless unlimited)
-                    if not unlimited_steps and len(task.actions) >= 6:
-                        last6 = [a.action_type + str(a.params) for a in task.actions[-6:]]
-                        if (last6[0] == last6[2] == last6[4] and
-                                last6[1] == last6[3] == last6[5] and
-                                last6[0] != last6[1]):
+
+                        logger.warning(
+                            f"Task {task_id}: entering ANALYSIS round {analysis_rounds_used}/"
+                            f"{MAX_ANALYSIS_ROUNDS} after {consecutive_failures} consecutive failures"
+                        )
+
+                        # ── STOP AND ANALYZE: ask LLM why it's failing ──
+                        analysis = self._analyze_failure(task, task_failures)
+
+                        # Record analysis in failure vectors
+                        for recent_fv in task_failures[-consecutive_failures:]:
+                            recent_fv.analysis = analysis.get("analysis", "")
+                            recent_fv.recovery_action = analysis.get("recovery_action", "")
+
+                        if not analysis.get("can_recover", True):
                             task.status = "failed"
-                            task.error = "Stuck in oscillating loop — alternating 2 actions"
+                            task.error = (
+                                f"Analysis determined unrecoverable: "
+                                f"{analysis.get('analysis', 'unknown')[:200]}"
+                            )
+                            logger.error(f"Task {task_id}: analysis says UNRECOVERABLE")
                             break
 
-                    # Step limit for normal models
-                    if not unlimited_steps:
-                        if step >= task.max_steps:
-                            task.status = "completed"
-                            task.result = f"Max steps ({task.max_steps}) reached"
-                            break
-                    # For small/free models, allow up to 10,000 steps (practically unlimited)
-                    else:
-                        if step >= 10000:
-                            task.status = "completed"
-                            task.result = f"Max steps (10000) reached for small/free model"
-                            break
+                        # ── BUILD PATCHED CONTEXT for next step ──
+                        failure_context = self._build_failure_context(
+                            task_failures, analysis
+                        )
+                        consecutive_failures = 0  # Reset for new round
 
+                        # Record resolved pattern if analysis succeeded
+                        self._session_memory["resolved_patterns"].append({
+                            "task_id": task_id, "step": step,
+                            "pattern": analysis.get("analysis", "")[:200],
+                            "fix": analysis.get("new_approach", "")[:200],
+                            "time": time.time(),
+                        })
+
+                        time.sleep(ANALYSIS_COOLDOWN)
+                        step += 1
+                        continue  # Retry with patched context
+
+                    # Simple retry — wait a bit and try again
+                    time.sleep(_rnd.uniform(1.0, 2.0))
                     step += 1
+                    continue
 
-            except Exception as e:
-                task.status = "failed"
-                task.error = str(e)
-                logger.exception(f"Task {task_id} failed")
+                # ── SUCCESS — reset failure counters ──
+                consecutive_failures = 0
+                analysis_rounds_used = 0
+                # Keep accumulated failure context as passive memory
+                if task_failures:
+                    failure_context = self._build_failure_context(task_failures)
+                else:
+                    failure_context = ""
 
-            task.completed_at = time.time()
-            traj.finalize(status=task.status, total_steps=task.steps_taken)
-            self._current_traj = None
-            logger.info(f"Task {task_id} finished: {task.status} ({task.steps_taken} steps, "
-                         f"{task.completed_at - task.started_at:.1f}s)")
+                # ── LOOP DETECTION → triggers analysis, not immediate failure ──
+                if len(task.actions) >= 5:
+                    recent = [a.action_type + str(a.params) for a in task.actions[-5:]]
+                    if len(set(recent)) == 1:
+                        logger.warning(f"Task {task_id}: loop detected (same action 5x), analyzing...")
+                        analysis_rounds_used += 1
+                        if analysis_rounds_used > MAX_ANALYSIS_ROUNDS:
+                            task.status = "failed"
+                            task.error = "Stuck in loop — analysis exhausted"
+                            break
+                        analysis = self._analyze_failure(task, task_failures)
+                        failure_context = self._build_failure_context(task_failures, analysis)
+                        consecutive_failures = 0
+                        time.sleep(ANALYSIS_COOLDOWN)
 
-    def _execute_step(self, task: AgentTask, step: int) -> AgentAction:
-        """Single see→think→act iteration."""
+                # Oscillation detection → analysis
+                if len(task.actions) >= 6:
+                    last6 = [a.action_type + str(a.params) for a in task.actions[-6:]]
+                    if (last6[0] == last6[2] == last6[4] and
+                            last6[1] == last6[3] == last6[5] and
+                            last6[0] != last6[1]):
+                        logger.warning(f"Task {task_id}: oscillation detected, analyzing...")
+                        analysis_rounds_used += 1
+                        if analysis_rounds_used > MAX_ANALYSIS_ROUNDS:
+                            task.status = "failed"
+                            task.error = "Stuck in oscillating loop — analysis exhausted"
+                            break
+                        analysis = self._analyze_failure(task, task_failures)
+                        failure_context = self._build_failure_context(task_failures, analysis)
+                        consecutive_failures = 0
+                        time.sleep(ANALYSIS_COOLDOWN)
+
+                # Step limit
+                if step >= task.max_steps:
+                    task.status = "completed"
+                    task.result = f"Max steps ({task.max_steps}) reached"
+                    break
+
+                # Post-action delay for UI transitions
+                time.sleep(_rnd.uniform(1.5, 2.5))
+                step += 1
+
+        except Exception as e:
+            task.status = "failed"
+            task.error = str(e)
+            logger.exception(f"Task {task_id} crashed")
+
+        task.completed_at = time.time()
+        task.failure_vectors = task_failures
+        traj.finalize(status=task.status, total_steps=task.steps_taken)
+        self._current_traj = None
+        logger.info(
+            f"Task {task_id} finished: {task.status} ({task.steps_taken} steps, "
+            f"{task.completed_at - task.started_at:.1f}s, "
+            f"{len(task_failures)} failures, {analysis_rounds_used} analysis rounds)"
+        )
+
+    def _analyze_failure(self, task: AgentTask,
+                         failures: List[FailureVector],
+                         analysis_override: Dict = None) -> Dict:
+        """Use LLM to diagnose WHY the task keeps failing and suggest a different approach.
+        This is the 'stop and think' mode — the agent pauses, reviews all evidence,
+        and formulates a recovery plan before retrying."""
+        # Build failed actions summary
+        failed_lines = []
+        for fv in failures[-6:]:
+            failed_lines.append(
+                f"  Step {fv.step}: {fv.action_type}({json.dumps(fv.action_params)[:80]}) "
+                f"→ FAILED: {fv.error_reason[:100]}"
+            )
+        failed_actions_text = "\n".join(failed_lines) if failed_lines else "  (none)"
+
+        # Build session failure memory
+        session_fails = self._session_memory.get("failures", [])[-10:]
+        session_lines = []
+        for sf in session_fails:
+            session_lines.append(
+                f"  [{sf.get('action', '?')}] {sf.get('error', '?')[:80]} "
+                f"→ resolved: {sf.get('resolved', False)}"
+            )
+        session_text = "\n".join(session_lines) if session_lines else "  (no prior session failures)"
+
+        # Get current screen state for analysis
+        try:
+            screen = self.analyzer.capture_and_analyze(use_ui_dump=True, use_ocr=True)
+            screen_context = screen.to_llm_context()
+        except Exception:
+            screen_context = "(screen capture failed during analysis)"
+
+        prompt = _FAILURE_ANALYSIS_PROMPT.format(
+            task=task.prompt,
+            screen_context=screen_context,
+            failed_actions=failed_actions_text,
+            session_failures=session_text,
+        )
+
+        llm_response = _query_ollama(
+            prompt, model=task.model, ollama_url=self.ollama_url,
+            temperature=0.4, max_tokens=512,
+        )
+
+        # Parse analysis JSON
+        if llm_response:
+            parsed = _parse_action_json(llm_response)
+            if parsed and "analysis" in parsed:
+                logger.info(
+                    f"Failure analysis: {parsed.get('analysis', '')[:120]} | "
+                    f"Recovery: {parsed.get('recovery_action', '')[:80]} | "
+                    f"Can recover: {parsed.get('can_recover', True)}"
+                )
+                return parsed
+
+        # Fallback if LLM analysis fails
+        return {
+            "analysis": "LLM analysis unavailable — will retry with fresh context",
+            "recovery_action": "try a completely different UI path",
+            "can_recover": True,
+            "new_approach": "take a fresh screenshot, identify what's actually on screen, and try an alternative action",
+        }
+
+    def _build_failure_context(self, failures: List[FailureVector],
+                               analysis: Dict = None) -> str:
+        """Build failure context string to inject into the step prompt.
+        This teaches the agent what NOT to do and what to try instead."""
+        if not failures:
+            return ""
+
+        lines = ["FAILURE MEMORY (do NOT repeat these failed approaches):"]
+        for fv in failures[-5:]:
+            lines.append(
+                f"  ✗ {fv.action_type}({json.dumps(fv.action_params)[:60]}) FAILED: {fv.error_reason[:80]}"
+            )
+
+        if analysis:
+            lines.append(f"\nANALYSIS: {analysis.get('analysis', '')[:200]}")
+            lines.append(f"TRY INSTEAD: {analysis.get('new_approach', analysis.get('recovery_action', ''))[:200]}")
+
+        # Include any resolved patterns from session memory
+        resolved = self._session_memory.get("resolved_patterns", [])[-3:]
+        if resolved:
+            lines.append("\nPREVIOUSLY RESOLVED ISSUES (learned from earlier):")
+            for rp in resolved:
+                lines.append(f"  ✓ {rp.get('pattern', '')[:80]} → fixed by: {rp.get('fix', '')[:80]}")
+
+        return "\n".join(lines)
+
+    def _execute_step(self, task: AgentTask, step: int,
+                      failure_context: str = "") -> AgentAction:
+        """Single see→think→act iteration. Failure context from analysis is injected into prompt."""
         action = AgentAction(step=step, timestamp=time.time())
         vision_used = False
         vision_desc_text = ""
 
-        # 1. SEE — capture and analyze screen
-        screen = self.analyzer.capture_and_analyze(
-            use_ui_dump=True,
-            use_ocr=(step % 3 == 1),  # OCR every 3rd step for speed
-        )
+        # 1. SEE — capture and analyze screen (retry up to 3 times)
+        screen = None
+        for _capture_attempt in range(3):
+            screen = self.analyzer.capture_and_analyze(
+                use_ui_dump=True,
+                use_ocr=(step % 3 == 1),  # OCR every 3rd step for speed
+            )
+            if not screen.error:
+                break
+            logger.warning(f"Screen capture attempt {_capture_attempt + 1}/3 failed: {screen.error}")
+            time.sleep(1.0 * (_capture_attempt + 1))
+
         action.screen_summary = screen.description[:200]
 
         if screen.error:
             action.action_type = "error"
-            action.reasoning = f"Screen capture failed: {screen.error}"
+            action.reasoning = f"Screen capture failed after 3 attempts: {screen.error}"
             return action
 
         # 1b. AUTO-DISMISS — handle crash/ANR dialogs before LLM query
         _crash_patterns = ["isn't responding", "has stopped", "keeps stopping",
                            "close app", "app isn't responding"]
+        # 1c. AUTO-DISMISS — handle permission prompts automatically
+        _permission_patterns = ["allow .* to access", "allow .* to send",
+                                "allow .* to make", "allow .* to take"]
+        _permission_buttons = ["allow", "while using the app", "only this time",
+                               "allow all the time"]
+
         if screen.all_text:
             _lower_text = screen.all_text.lower()
+
+            # Handle permission dialogs first (very common in real-world usage)
+            import re as _re
+            for _ppat in _permission_patterns:
+                if _re.search(_ppat, _lower_text):
+                    for el in screen.elements:
+                        if el.text and el.text.lower().strip() in _permission_buttons:
+                            self.touch.tap(el.center[0], el.center[1])
+                            action.action_type = "grant_permission"
+                            action.reasoning = f"Auto-granted permission: tapped '{el.text}'"
+                            action.success = True
+                            logger.info(f"Step {step}: auto-granted permission dialog")
+                            return action
+
+            # Handle crash/ANR dialogs
             for _pat in _crash_patterns:
                 if _pat in _lower_text:
                     # Try to dismiss: tap "Close app" or "Wait" or "OK"
@@ -775,7 +1157,7 @@ class DeviceAgent:
                             logger.info(f"Step {step}: auto-dismissed crash/ANR dialog")
                             return action
                     # Fallback: press Back to dismiss
-                    self.touch.press_back()
+                    self.touch.back()
                     action.action_type = "dismiss_dialog"
                     action.reasoning = f"Auto-dismissed crash dialog via BACK key: '{_pat}'"
                     action.success = True
@@ -834,21 +1216,41 @@ class DeviceAgent:
             step=step,
             max_steps=task.max_steps,
             screen_context=screen_context,
+            failure_context=failure_context if failure_context else "(no prior failures)",
             action_history=action_history,
         )
 
-        llm_response = _query_ollama(prompt, model=task.model, ollama_url=self.ollama_url)
+        # 2b. QUERY LLM — retry on empty/unparseable responses
+        llm_response = ""
+        parsed = None
+        for _llm_attempt in range(3):
+            llm_response = _query_ollama(prompt, model=task.model, ollama_url=self.ollama_url)
+            if not llm_response:
+                logger.warning(f"Step {step}: LLM attempt {_llm_attempt + 1}/3 returned empty")
+                time.sleep(1.5)
+                continue
+            parsed = _parse_action_json(llm_response)
+            if parsed:
+                break
+            # LLM responded but JSON parse failed — retry with stripped prompt
+            logger.warning(
+                f"Step {step}: LLM attempt {_llm_attempt + 1}/3 unparseable: "
+                f"{llm_response[:100]}"
+            )
+            # On retry, append a stronger formatting hint
+            if _llm_attempt < 2:
+                prompt += '\n\nIMPORTANT: Output ONLY raw JSON like {"action":"tap","x":540,"y":1200,"reason":"tap button"}. No markdown, no text.'
+                time.sleep(1.0)
 
         if not llm_response:
             action.action_type = "error"
-            action.reasoning = "LLM returned empty response"
+            action.reasoning = "LLM returned empty response after 3 retries"
             return action
 
         # 3. Parse action
-        parsed = _parse_action_json(llm_response)
         if not parsed:
             action.action_type = "error"
-            action.reasoning = f"Could not parse LLM response: {llm_response[:200]}"
+            action.reasoning = f"Could not parse LLM response after 3 retries: {llm_response[:200]}"
             return action
 
         action.action_type = parsed.get("action", "error")

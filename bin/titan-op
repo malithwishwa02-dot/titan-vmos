@@ -412,6 +412,20 @@ def cmd_genesis(args):
             body["archetype"] = args.archetype
         if args.occupation:
             body["occupation"] = args.occupation
+        # Address fields
+        for fld in ("street", "city", "state", "zip", "dob", "ssn"):
+            val = getattr(args, fld, None)
+            if val:
+                body[fld] = val
+        # CC fields (stored in profile for later pipeline use)
+        if getattr(args, "cc_number", None):
+            body["cc_number"] = args.cc_number
+        if getattr(args, "cc_exp", None):
+            body["cc_exp"] = args.cc_exp
+        if getattr(args, "cc_cvv", None):
+            body["cc_cvv"] = args.cc_cvv
+        if getattr(args, "cardholder", None):
+            body["cc_cardholder"] = args.cardholder
 
         info("Forging profile...")
         r = api_post("/api/genesis/create", body)
@@ -478,22 +492,61 @@ def cmd_genesis(args):
     elif sub == "provision":
         header("FULL PROVISION PIPELINE")
         body = {
-            "country": args.country or "US",
-            "age_days": int(args.age_days or 90),
+            "country": getattr(args, "country", "US") or "US",
+            "age_days": int(getattr(args, "age_days", 90) or 90),
         }
-        if args.carrier:
+        # Identity fields
+        for fld in ("name", "email", "phone", "dob", "ssn", "gender", "occupation"):
+            val = getattr(args, fld, None)
+            if val:
+                body[fld] = val
+        # Address fields
+        for fld in ("street", "city", "state", "zip"):
+            val = getattr(args, fld, None)
+            if val:
+                body[fld] = val
+        # Device config
+        if getattr(args, "carrier", None):
             body["carrier"] = args.carrier
-        if args.name:
-            body["name"] = args.name
-        if args.proxy:
-            body["proxy"] = args.proxy
+        if getattr(args, "device_model", None):
+            body["device_model"] = args.device_model
+        if getattr(args, "location", None):
+            body["location"] = args.location
+        # Network
+        if getattr(args, "proxy", None):
+            body["proxy_url"] = args.proxy
+        # Google sign-in
+        if getattr(args, "google_email", None):
+            body["google_email"] = args.google_email
+        if getattr(args, "google_password", None):
+            body["google_password"] = args.google_password
+        if getattr(args, "real_phone", None):
+            body["real_phone"] = args.real_phone
+        if getattr(args, "otp_code", None):
+            body["otp_code"] = args.otp_code
+        # Card data
+        if getattr(args, "cc_number", None):
+            body["cc_number"] = args.cc_number
+        if getattr(args, "cc_exp", None):
+            body["cc_exp"] = args.cc_exp
+        if getattr(args, "cc_cvv", None):
+            body["cc_cvv"] = args.cc_cvv
+        if getattr(args, "cardholder", None):
+            body["cc_holder"] = args.cardholder
+        # Options
+        if getattr(args, "lockdown", False):
+            body["lockdown"] = True
+        if getattr(args, "skip_wipe", False):
+            body["skip_wipe"] = True
+        if getattr(args, "skip_patch", False):
+            body["skip_patch"] = True
 
-        info(f"Starting full provision on {did}...")
-        r = api_post(f"/api/genesis/full-provision/{did}", body, timeout=600)
+        info(f"Starting full pipeline on {did}...")
+        r = api_post(f"/api/genesis/pipeline/{did}", body, timeout=600)
         if "job_id" in r:
-            poll_job(f"/api/genesis/provision-status/{r['job_id']}", interval=5, timeout=900)
+            poll_job(f"/api/genesis/pipeline-status/{r['job_id']}", interval=5, timeout=900)
         else:
-            ok("Provision complete")
+            ok("Pipeline complete")
             dump_json(r)
 
     elif sub == "reforge":
@@ -1227,6 +1280,18 @@ def build_parser():
     forge.add_argument("--age-days", default="90")
     forge.add_argument("--archetype", help="professional|student|night_shift|retiree|gamer")
     forge.add_argument("--occupation", help="Occupation for life-path")
+    # Address fields
+    forge.add_argument("--street", help="Street address")
+    forge.add_argument("--city", help="City")
+    forge.add_argument("--state", help="State (2-letter)")
+    forge.add_argument("--zip", help="ZIP code")
+    forge.add_argument("--dob", help="Date of birth (MM/DD/YYYY)")
+    forge.add_argument("--ssn", help="SSN")
+    # Card data (embedded in profile)
+    forge.add_argument("--cc-number", help="Credit card number")
+    forge.add_argument("--cc-exp", help="Expiry MM/YYYY")
+    forge.add_argument("--cc-cvv", help="CVV")
+    forge.add_argument("--cardholder", help="Cardholder name")
 
     sf = gen_sub.add_parser("smartforge", help="Auto-generate optimal profile")
     sf.add_argument("--country", default="US")
@@ -1245,11 +1310,41 @@ def build_parser():
     inj.add_argument("--cardholder", help="Cardholder name")
 
     prov = gen_sub.add_parser("provision", help="Full provision pipeline")
-    prov.add_argument("--country", default="US")
-    prov.add_argument("--carrier", help="Carrier")
+    # Identity
     prov.add_argument("--name", help="Persona name")
+    prov.add_argument("--email", help="Email")
+    prov.add_argument("--phone", help="Phone")
+    prov.add_argument("--dob", help="Date of birth (MM/DD/YYYY)")
+    prov.add_argument("--ssn", help="SSN")
+    prov.add_argument("--gender", help="M or F")
+    prov.add_argument("--occupation", help="Occupation")
+    # Address
+    prov.add_argument("--street", help="Street address")
+    prov.add_argument("--city", help="City")
+    prov.add_argument("--state", help="State (2-letter)")
+    prov.add_argument("--zip", help="ZIP code")
+    prov.add_argument("--country", default="US")
+    # Device config
+    prov.add_argument("--carrier", help="Carrier")
+    prov.add_argument("--device-model", help="Device model preset")
+    prov.add_argument("--location", help="Location (city code)")
     prov.add_argument("--age-days", default="90")
-    prov.add_argument("--proxy", help="SOCKS5 proxy")
+    # Network
+    prov.add_argument("--proxy", help="SOCKS5 proxy URL")
+    # Google sign-in
+    prov.add_argument("--google-email", help="Google account email")
+    prov.add_argument("--google-password", help="Google account password")
+    prov.add_argument("--real-phone", help="Real phone for OTP")
+    prov.add_argument("--otp-code", help="Pre-provided OTP code")
+    # Card data
+    prov.add_argument("--cc-number", help="Credit card number")
+    prov.add_argument("--cc-exp", help="Expiry MM/YYYY")
+    prov.add_argument("--cc-cvv", help="CVV")
+    prov.add_argument("--cardholder", help="Cardholder name")
+    # Options
+    prov.add_argument("--lockdown", action="store_true", help="Lock down after provision")
+    prov.add_argument("--skip-wipe", action="store_true", help="Skip device wipe")
+    prov.add_argument("--skip-patch", action="store_true", help="Skip stealth patching")
 
     ref = gen_sub.add_parser("reforge", help="Re-forge device identity")
     ref.add_argument("--model", help="Device model")
