@@ -14,15 +14,10 @@ from typing import Optional
 SERVER_DIR = Path(__file__).parent
 PROJECT_ROOT = SERVER_DIR.parent
 CORE_DIR = PROJECT_ROOT / "core"
-OPT_TITAN_CORE = Path("/opt/titan/core")
-# WORKSPACE core must come BEFORE system /opt/titan/core (reverse order for insert(0))
-for _p in [str(OPT_TITAN_CORE), str(CORE_DIR), str(PROJECT_ROOT), str(SERVER_DIR)]:
+# V13: only use workspace core/server, not /opt/titan/core (legacy V11.3)
+for _p in [str(CORE_DIR), str(PROJECT_ROOT), str(SERVER_DIR)]:
     if _p not in sys.path:
         sys.path.insert(0, _p)
-V11_CORE = os.environ.get("PYTHONPATH", "").split(":")
-for p in V11_CORE:
-    if p and p not in sys.path and p:
-        sys.path.insert(0, p)
 
 # Load .env BEFORE any middleware or config reads os.environ
 from dotenv import load_dotenv
@@ -111,19 +106,18 @@ set_device_manager(dm)
 # ─── Register Routers ─────────────────────────────────────────────────
 from routers import devices, stealth, genesis, provision, agent, intel, network
 from routers import cerberus, targets, kyc, admin, dashboard, settings
-from routers import bundles, ai, ws, training, viewer
-from routers import vmos
+from routers import bundles, ai, ws, training, viewer, vmos, vmos_genesis
 
 # Initialize routers that need the device manager (legacy pattern, kept for compat)
-for mod in [devices, stealth, genesis, provision, agent, kyc, admin, dashboard, bundles, ws, ai, training]:
+for mod in [devices, stealth, genesis, provision, agent, kyc, admin, dashboard, bundles, ws, ai, training, vmos_genesis]:
     mod.init(dm)
 
-# Initialize VMOS router with credentials from environment
+# Initialize VMOS Cloud router with credentials from environment
 vmos.init()
 
 # Include all routers
 for r in [devices, stealth, genesis, provision, agent, intel, network, cerberus,
-          targets, kyc, admin, dashboard, settings, bundles, ai, ws, training, viewer, vmos]:
+          targets, kyc, admin, dashboard, settings, bundles, ai, ws, training, viewer, vmos, vmos_genesis]:
     app.include_router(r.router)
 
 

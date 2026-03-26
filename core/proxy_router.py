@@ -350,33 +350,84 @@ redsocks {{
         return ""
 
     def clear_proxy(self) -> bool:
-        """Remove all proxy configuration."""
+        """Remove all proxy configuration (tun2socks, redsocks, settings, iptables)."""
         logger.info("Clearing proxy configuration...")
-        
+        _ensure_adb_root(self.target)
+
         cmds = [
+            # Kill proxy daemons
+            "killall tun2socks 2>/dev/null",
+            "killall redsocks 2>/dev/null",
+            # Remove TUN interface and routing rules
+            "ip link delete tun0 2>/dev/null",
+            "ip rule del fwmark 0x1 table 100 2>/dev/null",
+            "ip route flush table 100 2>/dev/null",
+            # Flush iptables proxy rules
+            "iptables -t mangle -F OUTPUT 2>/dev/null",
+            "iptables -t nat -F OUTPUT 2>/dev/null",
+            "iptables -t nat -F PREROUTING 2>/dev/null",
+            # Clear Android global proxy settings
             "settings delete global http_proxy",
             "settings delete global global_http_proxy_host",
             "settings delete global global_http_proxy_port",
             "settings delete global global_http_proxy_username",
             "settings delete global global_http_proxy_password",
-            "killall redsocks 2>/dev/null",
-            "iptables -t nat -F OUTPUT 2>/dev/null",
-            "iptables -t nat -F PREROUTING 2>/dev/null",
+            # Clear setprop-based proxy
+            "setprop net.gprs.http-proxy ''",
+            "setprop net.http.proxy ''",
         ]
-        
+
         for cmd in cmds:
             self._sh(cmd)
-        
+
+        logger.info("Proxy cleared: tun2socks, redsocks, iptables, global settings")
         return True
+
+    def disable_proxy(self) -> bool:
+        """Disable proxy temporarily (keep config for re-enable).
+
+        Stops traffic routing but preserves tun2socks binary and redsocks config
+        so enable_proxy() can bring it back without re-downloading.
+        """
+        logger.info("Disabling proxy (temporary)...")
+        _ensure_adb_root(self.target)
+
+        cmds = [
+            "killall tun2socks 2>/dev/null",
+            "killall redsocks 2>/dev/null",
+            "ip link set tun0 down 2>/dev/null",
+            "ip rule del fwmark 0x1 table 100 2>/dev/null",
+            "ip route flush table 100 2>/dev/null",
+            "iptables -t mangle -F OUTPUT 2>/dev/null",
+            "iptables -t nat -F OUTPUT 2>/dev/null",
+            "iptables -t nat -F PREROUTING 2>/dev/null",
+            "settings delete global http_proxy",
+            "settings delete global global_http_proxy_host",
+            "settings delete global global_http_proxy_port",
+        ]
+        for cmd in cmds:
+            self._sh(cmd)
+
+        logger.info("Proxy disabled — direct connectivity restored")
+        return True
+
+    def enable_proxy(self, proxy_url: str) -> ProxyResult:
+        """Re-enable proxy with given URL. Alias for configure_socks5()."""
+        return self.configure_socks5(proxy_url)
 
     def get_status(self) -> dict:
         """Get current proxy status."""
         _, http_proxy = self._sh("settings get global http_proxy")
         _, external_ip = self._sh("curl -s --connect-timeout 5 https://api.ipify.org 2>/dev/null")
         _, redsocks_running = self._sh("pgrep redsocks")
-        
+        _, tun2socks_running = self._sh("pgrep tun2socks")
+        _, tun_up = self._sh("ip link show tun0 2>/dev/null | grep -c UP")
+
         return {
             "http_proxy": http_proxy.strip() if http_proxy else "",
             "external_ip": external_ip.strip() if external_ip else "",
             "redsocks_running": bool(redsocks_running.strip()),
+            "tun2socks_running": bool(tun2socks_running.strip()),
+            "tun_interface_up": tun_up.strip() == "1" if tun_up else False,
+            "proxy_active": bool(tun2socks_running.strip()) or bool(redsocks_running.strip()),
         }

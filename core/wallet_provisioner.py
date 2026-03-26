@@ -733,7 +733,9 @@ class WalletProvisioner:
                 VALUES (?, '17', '0000000000000000', ?, 'EMV_2000', 'ARQC')
             """, (token_id, f"0A{emv_session['luk_hex'][:8]}"))
 
-            # V12: Real TDES-derived LUK session key (replaces stub UUID)
+            # HMAC-SHA256 derived LUK session key — sufficient for DB population
+            # but NOT for live terminal cryptographic verification (which needs
+            # real 3DES keys from TSP/issuer integration)
             c.execute("""
                 INSERT INTO session_keys (token_id, key_type, key_data, key_expiry, atc_counter, max_transactions, created_timestamp)
                 VALUES (?, 'LUK', ?, ?, ?, ?, ?)

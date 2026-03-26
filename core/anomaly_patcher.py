@@ -2392,6 +2392,23 @@ class AnomalyPatcher:
         self._record("persist_init_script", True, "/system/etc/init.d/99-titan-patch.sh")
         self._record("persist_install_recovery", True, "install-recovery.sh hook")
 
+        # ── iptables-save/restore persistence (G3 fix) ──
+        # Fallback for when init.d scripts don't execute: save the current
+        # iptables ruleset and restore it on boot via /data/local.prop hook.
+        self._sh("iptables-save > /data/local/tmp/iptables-rules.v4 2>/dev/null", timeout=10)
+        self._sh("ip6tables-save > /data/local/tmp/iptables-rules.v6 2>/dev/null", timeout=10)
+        # Write a minimal restore script that runs before init.d (via local.prop trigger)
+        self._sh(
+            "printf '#!/system/bin/sh\\n"
+            "iptables-restore < /data/local/tmp/iptables-rules.v4 2>/dev/null\\n"
+            "ip6tables-restore < /data/local/tmp/iptables-rules.v6 2>/dev/null\\n' "
+            "> /data/adb/post-fs-data.d/iptables-restore.sh && "
+            "chmod 755 /data/adb/post-fs-data.d/iptables-restore.sh",
+            timeout=10,
+        )
+        self._sh("mkdir -p /data/adb/post-fs-data.d", timeout=5)
+        self._record("persist_iptables", True, "iptables-save + restore scripts")
+
     # ─── PHASE 25: OEM / BRAND-SPECIFIC SYSTEM PROPERTIES ───────────
 
     def _patch_oem_props(self, preset: DevicePreset):
@@ -2576,8 +2593,18 @@ class AnomalyPatcher:
         A fresh Cuttlefish device has: max brightness, no keyboard set, dev
         options visible, and animation scales at 1.0. Real devices have been
         personalized. These settings are inspected by fingerprinting SDKs.
+
+        BLACK SCREEN PREVENTION: On Cuttlefish desktop deployment the native
+        framebuffer is fixed by launch_cvd. Calling `wm size` or `wm density`
+        with values that differ from the physical display causes SurfaceFlinger
+        to render a black frame. We detect this early and skip the override,
+        resetting any stale values from prior runs.
         """
         logger.info("Phase 26: Default system configuration")
+
+        # ── Pre-flight: ensure screen is awake (prevents one-time black screen) ──
+        self._sh("input keyevent KEYCODE_WAKEUP 2>/dev/null", timeout=5)
+        self._sh("svc power stayon true 2>/dev/null", timeout=5)
 
         brand = preset.brand.lower()
 
