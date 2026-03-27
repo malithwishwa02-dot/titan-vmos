@@ -323,11 +323,11 @@
     if (result.ok) {
       setupBtn.classList.add('hidden');
       launchBtn.classList.remove('hidden');
-      appendLog('\\n✓ Setup complete! Click "Launch Console" to start.');
+      appendLog('\n✓ Setup complete! Click "Launch Console" to start.');
     } else {
       setupBtn.textContent = 'Retry Setup';
       setupBtn.disabled = false;
-      appendLog('\\n✗ Setup failed: ' + result.error);
+      appendLog('\n✗ Setup failed: ' + result.error);
     }
   });
 

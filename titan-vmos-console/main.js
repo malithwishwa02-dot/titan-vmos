@@ -6,7 +6,7 @@
  */
 
 const { app, BrowserWindow, Menu, Tray, ipcMain, shell, dialog } = require('electron');
-const { spawn, execSync } = require('child_process');
+const { spawn, execSync, execFileSync } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 const http = require('http');
@@ -85,12 +85,13 @@ function findPython() {
   const allowedPythonCmds = ['python3', 'python'];
   for (const cmd of allowedPythonCmds) {
     try {
-      // Use 'which' to find the absolute path to validate
-      const whichResult = execSync(`which ${cmd} 2>/dev/null`, { timeout: 5000 }).toString().trim();
+      // Use execFileSync with explicit arguments to avoid shell injection
+      const whichResult = execFileSync('/usr/bin/which', [cmd], { timeout: 5000 }).toString().trim();
       if (!whichResult || !whichResult.startsWith('/')) {
         continue;  // Skip if not an absolute path
       }
-      const ver = execSync(`${cmd} --version 2>&1`, { timeout: 5000 }).toString().trim();
+      // Use the absolute path for version check
+      const ver = execFileSync(whichResult, ['--version'], { timeout: 5000 }).toString().trim();
       const match = ver.match(/Python\s+(\d+)\.(\d+)/);
       if (match && (parseInt(match[1]) > 3 || (parseInt(match[1]) === 3 && parseInt(match[2]) >= 10))) {
         return { cmd, version: ver, path: whichResult };
@@ -299,12 +300,28 @@ ipcMain.handle('setup:saveVmosCredentials', async (event, credentials) => {
       envContent = fs.readFileSync(envPath, 'utf-8');
     }
 
+    // Validate and sanitize credentials to prevent env injection
+    const sanitizeEnvValue = (val) => {
+      if (typeof val !== 'string') return '';
+      // Remove newlines, quotes, and special characters that could break .env format
+      return val.replace(/[\n\r"'\\`$]/g, '').trim();
+    };
+
+    const apiKey = sanitizeEnvValue(credentials.apiKey || '');
+    const apiSecret = sanitizeEnvValue(credentials.apiSecret || '');
+    const apiHost = sanitizeEnvValue(credentials.apiHost || 'api.vmoscloud.com');
+
+    // Validate API key format (alphanumeric with common special chars)
+    if (apiKey && !/^[A-Za-z0-9_\-]{8,64}$/.test(apiKey)) {
+      return { ok: false, error: 'Invalid API key format' };
+    }
+
     // Update or add VMOS credentials
     const lines = envContent.split('\n');
     const updates = {
-      'VMOS_API_KEY': credentials.apiKey || '',
-      'VMOS_API_SECRET': credentials.apiSecret || '',
-      'VMOS_API_HOST': credentials.apiHost || 'api.vmoscloud.com',
+      'VMOS_API_KEY': apiKey,
+      'VMOS_API_SECRET': apiSecret,
+      'VMOS_API_HOST': apiHost,
     };
 
     for (const [key, value] of Object.entries(updates)) {
