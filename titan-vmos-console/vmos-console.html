@@ -1,0 +1,715 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Titan V13.0 — VMOS Pro Cloud Console</title>
+<script src="./assets/tailwind.js"></script>
+<script defer src="./assets/alpine.min.js"></script>
+<style>
+  :root{--accent:#a855f7;--bg:#0a0e17;--card:#111827;--card2:#1e293b;--green:#22c55e;--red:#ef4444;--yellow:#eab308;--purple:#a855f7;--cyan:#00d4ff;--orange:#f97316}
+  body{background:var(--bg);color:#e2e8f0;font-family:'Inter',system-ui,sans-serif}
+  .scrollbar-thin::-webkit-scrollbar{width:6px} .scrollbar-thin::-webkit-scrollbar-thumb{background:#334155;border-radius:3px}
+  .glow{box-shadow:0 0 20px rgba(168,85,247,0.15)}
+  .pulse-dot{animation:pulse 2s infinite} @keyframes pulse{0%,100%{opacity:1}50%{opacity:0.4}}
+  .sidebar-item{transition:all .15s} .sidebar-item:hover{background:#1e293b}
+  .sidebar-item.active{background:#1e293b;border-left:3px solid var(--accent)}
+  .tab-btn{transition:all .15s;border-bottom:2px solid transparent}
+  .tab-btn.active{color:var(--accent);border-bottom:2px solid var(--accent)}
+  .device-card{transition:all .2s;cursor:pointer} .device-card:hover{border-color:var(--accent);transform:translateY(-2px)}
+  .btn-primary{background:linear-gradient(135deg,#7c3aed,#a855f7)} .btn-primary:hover{background:linear-gradient(135deg,#6d28d9,#9333ea)}
+  .btn-green{background:linear-gradient(135deg,#16a34a,#22c55e)} .btn-green:hover{background:linear-gradient(135deg,#15803d,#16a34a)}
+  .btn-cyan{background:linear-gradient(135deg,#0891b2,#06b6d4)} .btn-cyan:hover{background:linear-gradient(135deg,#0e7490,#0891b2)}
+  .btn-danger{background:linear-gradient(135deg,#dc2626,#ef4444)}
+  .btn-secondary{background:#374151} .btn-secondary:hover{background:#4b5563}
+  .score-ring{width:48px;height:48px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px}
+  .inp{width:100%;background:#1e293b;border:1px solid #374151;border-radius:.5rem;padding:.5rem .75rem;font-size:.875rem;color:#fff}
+  .inp:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 2px rgba(168,85,247,.15)}
+  .inp-sm{padding:.375rem .5rem;font-size:.75rem}
+  .lbl{display:block;font-size:.6875rem;color:#9ca3af;margin-bottom:.25rem}
+  .grp{background:var(--card);border:1px solid #1f2937;border-radius:.75rem;padding:1rem}
+  .grp-title{font-size:.75rem;font-weight:600;margin-bottom:.75rem;text-transform:uppercase;color:#9ca3af}
+  .log-area{font-family:'JetBrains Mono','Consolas',monospace;font-size:11px;background:#0f172a;color:#94a3b8;border:1px solid #1e293b;border-radius:.5rem;padding:.75rem;white-space:pre-wrap;overflow-y:auto;max-height:300px}
+  [x-cloak]{display:none!important}
+</style>
+</head>
+<body class="h-screen flex overflow-hidden" x-data="vmosConsole()" x-init="init()">
+
+<!-- SIDEBAR -->
+<aside class="w-56 flex-shrink-0 bg-[#0d1117] border-r border-gray-800 flex flex-col h-full" role="navigation">
+  <div class="p-4 border-b border-gray-800">
+    <div class="flex items-center gap-2">
+      <div class="w-8 h-8 rounded-lg bg-gradient-to-br from-purple-500 to-purple-600 flex items-center justify-center text-white font-bold text-sm">V</div>
+      <div><div class="text-sm font-bold text-purple-400">TITAN VMOS</div><div class="text-[10px] text-gray-500">Cloud Console V13.0</div></div>
+    </div>
+  </div>
+  <nav class="flex-1 overflow-y-auto scrollbar-thin py-2">
+    <template x-for="item in navItems" :key="item.key">
+      <button class="sidebar-item w-full text-left px-4 py-2.5 flex items-center gap-3 text-sm"
+        :class="section===item.key?'active text-purple-400':'text-gray-400'" @click="section=item.key">
+        <span x-text="item.icon" class="text-base w-5 text-center"></span><span x-text="item.label"></span>
+        <span x-show="item.badge" x-text="item.badge" class="ml-auto text-[10px] bg-purple-900 text-purple-300 px-1.5 py-0.5 rounded-full"></span>
+      </button>
+    </template>
+  </nav>
+  <div class="p-3 border-t border-gray-800 text-[11px] text-gray-500">
+    <div class="flex justify-between"><span>Cloud Instances</span><span class="text-purple-400" x-text="instances.length"></span></div>
+    <div class="flex justify-between"><span>Active Jobs</span><span class="text-green-400" x-text="activeJobs"></span></div>
+    <div class="flex justify-between"><span>API Status</span><span :class="apiConnected?'text-green-400':'text-red-400'" x-text="apiConnected?'●':'○'"></span></div>
+  </div>
+</aside>
+
+<main class="flex-1 flex flex-col overflow-hidden">
+<header class="h-12 border-b border-gray-800 flex items-center justify-between px-4 bg-[#0d1117]/80 backdrop-blur">
+  <div class="flex items-center gap-2">
+    <span class="text-gray-400 text-sm font-semibold" x-text="currentNav?.label||''"></span>
+    <span class="text-gray-600">—</span>
+    <span class="text-gray-500 text-xs" x-text="currentNav?.desc||''"></span>
+  </div>
+  <div class="flex items-center gap-3">
+    <button @click="refreshInstances()" class="px-3 py-1 text-xs bg-gray-700 hover:bg-gray-600 rounded text-gray-300">↻ Refresh</button>
+    <span class="text-[11px] text-gray-500" x-text="new Date().toLocaleTimeString()"></span>
+  </div>
+</header>
+
+<div class="flex-1 overflow-y-auto scrollbar-thin p-4">
+
+<!-- DASHBOARD -->
+<div x-show="section==='dashboard'" x-cloak>
+  <div class="grid grid-cols-4 gap-4 mb-6">
+    <div class="grp"><div class="text-xs text-gray-500 mb-1">Cloud Instances</div><div class="text-2xl font-bold text-purple-400" x-text="instances.length"></div></div>
+    <div class="grp"><div class="text-xs text-gray-500 mb-1">Running</div><div class="text-2xl font-bold text-green-400" x-text="instances.filter(i=>i.status==='running').length"></div></div>
+    <div class="grp"><div class="text-xs text-gray-500 mb-1">Stopped</div><div class="text-2xl font-bold text-yellow-400" x-text="instances.filter(i=>i.status==='stopped').length"></div></div>
+    <div class="grp"><div class="text-xs text-gray-500 mb-1">Active Jobs</div><div class="text-2xl font-bold text-cyan-400" x-text="activeJobs"></div></div>
+  </div>
+
+  <!-- Quick Actions -->
+  <h3 class="text-sm font-semibold text-gray-400 mb-3">QUICK ACTIONS</h3>
+  <div class="grid grid-cols-4 gap-3 mb-6">
+    <button @click="section='instances'" class="grp hover:border-purple-500 text-left">
+      <div class="text-xl mb-2">📱</div>
+      <div class="text-sm font-medium text-white">Manage Instances</div>
+      <div class="text-xs text-gray-500">View and control cloud devices</div>
+    </button>
+    <button @click="section='genesis'" class="grp hover:border-purple-500 text-left">
+      <div class="text-xl mb-2">🧬</div>
+      <div class="text-sm font-medium text-white">Genesis Pipeline</div>
+      <div class="text-xs text-gray-500">Identity injection & stealth</div>
+    </button>
+    <button @click="section='shell'" class="grp hover:border-purple-500 text-left">
+      <div class="text-xl mb-2">⌨️</div>
+      <div class="text-sm font-medium text-white">Shell Commands</div>
+      <div class="text-xs text-gray-500">Execute ADB shell remotely</div>
+    </button>
+    <button @click="section='settings'" class="grp hover:border-purple-500 text-left">
+      <div class="text-xl mb-2">⚙️</div>
+      <div class="text-sm font-medium text-white">Settings</div>
+      <div class="text-xs text-gray-500">API credentials & config</div>
+    </button>
+  </div>
+
+  <!-- Recent Jobs -->
+  <h3 class="text-sm font-semibold text-gray-400 mb-3">RECENT GENESIS JOBS</h3>
+  <div class="grp">
+    <template x-if="jobs.length === 0">
+      <div class="text-center text-gray-500 py-4">No recent jobs. Start a Genesis pipeline to see jobs here.</div>
+    </template>
+    <template x-for="job in jobs.slice(0, 5)" :key="job.job_id">
+      <div class="flex items-center justify-between py-2 border-b border-gray-800 last:border-0">
+        <div class="flex items-center gap-3">
+          <span class="w-2 h-2 rounded-full" :class="job.status==='completed'?'bg-green-500':job.status==='running'?'bg-yellow-500 pulse-dot':'bg-red-500'"></span>
+          <div>
+            <div class="text-sm text-white" x-text="job.pad_code || job.job_id"></div>
+            <div class="text-xs text-gray-500" x-text="job.persona || job.email || 'Unknown'"></div>
+          </div>
+        </div>
+        <div class="text-xs text-gray-500" x-text="job.status"></div>
+      </div>
+    </template>
+  </div>
+</div>
+
+<!-- INSTANCES -->
+<div x-show="section==='instances'" x-cloak>
+  <div class="flex justify-between items-center mb-4">
+    <h2 class="text-lg font-semibold text-white">VMOS Cloud Instances</h2>
+    <button @click="refreshInstances()" class="btn-primary px-4 py-2 rounded-lg text-sm">↻ Refresh List</button>
+  </div>
+
+  <template x-if="instances.length === 0">
+    <div class="grp text-center py-8">
+      <div class="text-4xl mb-3">📱</div>
+      <div class="text-gray-400 mb-2">No instances found</div>
+      <div class="text-sm text-gray-500">Make sure your VMOS API credentials are configured correctly.</div>
+    </div>
+  </template>
+
+  <div class="grid grid-cols-2 gap-4">
+    <template x-for="inst in instances" :key="inst.pad_code">
+      <div class="grp device-card" :class="selectedInstance?.pad_code===inst.pad_code?'border-purple-500':''">
+        <div class="flex items-center justify-between mb-3">
+          <div class="flex items-center gap-2">
+            <span class="text-[10px] px-2 py-1 rounded font-medium" :class="inst.status==='running'?'bg-green-900 text-green-400':'bg-gray-700 text-gray-400'" x-text="inst.status"></span>
+            <span class="text-sm font-semibold text-white" x-text="inst.device_name || inst.pad_code"></span>
+          </div>
+          <span class="text-xs text-gray-500 font-mono" x-text="inst.pad_code"></span>
+        </div>
+        <div class="grid grid-cols-2 gap-2 text-xs text-gray-400 mb-3">
+          <div>Android: <span class="text-white" x-text="inst.android_version || 'N/A'"></span></div>
+          <div>ROM: <span class="text-white" x-text="inst.rom_version || 'N/A'"></span></div>
+          <div>Resolution: <span class="text-white" x-text="inst.resolution || 'N/A'"></span></div>
+          <div>Level: <span class="text-white" x-text="inst.device_level || 'N/A'"></span></div>
+        </div>
+        <div class="flex gap-2">
+          <button @click="selectInstance(inst)" class="flex-1 px-3 py-1.5 bg-purple-900/50 text-purple-400 rounded text-xs hover:bg-purple-900">Select</button>
+          <button @click="instanceAction(inst.pad_code, 'start')" x-show="inst.status!=='running'" class="px-3 py-1.5 bg-green-900/50 text-green-400 rounded text-xs hover:bg-green-900">Start</button>
+          <button @click="instanceAction(inst.pad_code, 'stop')" x-show="inst.status==='running'" class="px-3 py-1.5 bg-yellow-900/50 text-yellow-400 rounded text-xs hover:bg-yellow-900">Stop</button>
+          <button @click="instanceAction(inst.pad_code, 'restart')" class="px-3 py-1.5 bg-cyan-900/50 text-cyan-400 rounded text-xs hover:bg-cyan-900">Restart</button>
+          <button @click="takeScreenshot(inst.pad_code)" class="px-3 py-1.5 bg-gray-700 text-gray-300 rounded text-xs hover:bg-gray-600">📷</button>
+        </div>
+      </div>
+    </template>
+  </div>
+</div>
+
+<!-- GENESIS PIPELINE -->
+<div x-show="section==='genesis'" x-cloak>
+  <h2 class="text-lg font-semibold text-white mb-4">Genesis Pipeline — Identity Injection</h2>
+
+  <div class="grid grid-cols-3 gap-4">
+    <!-- Left: Config Form -->
+    <div class="col-span-2 grp">
+      <div class="grp-title">Pipeline Configuration</div>
+
+      <div class="grid grid-cols-2 gap-4 mb-4">
+        <div>
+          <label class="lbl">Target Instance (Pad Code)</label>
+          <select class="inp" x-model="genesis.pad_code">
+            <option value="">Select instance...</option>
+            <template x-for="inst in instances" :key="inst.pad_code">
+              <option :value="inst.pad_code" x-text="inst.device_name + ' (' + inst.pad_code + ')'"></option>
+            </template>
+          </select>
+        </div>
+        <div>
+          <label class="lbl">Device Model Preset</label>
+          <select class="inp" x-model="genesis.device_model">
+            <option value="samsung_s24">Samsung Galaxy S24</option>
+            <option value="samsung_s23">Samsung Galaxy S23</option>
+            <option value="pixel_8">Google Pixel 8</option>
+            <option value="pixel_7">Google Pixel 7</option>
+            <option value="oneplus_12">OnePlus 12</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="grp-title">Identity Information</div>
+      <div class="grid grid-cols-3 gap-3 mb-4">
+        <div><label class="lbl">Full Name</label><input class="inp inp-sm" x-model="genesis.name" placeholder="John Smith"></div>
+        <div><label class="lbl">Email</label><input class="inp inp-sm" x-model="genesis.email" placeholder="john@example.com"></div>
+        <div><label class="lbl">Phone</label><input class="inp inp-sm" x-model="genesis.phone" placeholder="+1 555 123 4567"></div>
+        <div><label class="lbl">Date of Birth</label><input class="inp inp-sm" x-model="genesis.dob" placeholder="1990-05-15"></div>
+        <div><label class="lbl">SSN (optional)</label><input class="inp inp-sm" x-model="genesis.ssn" placeholder="XXX-XX-XXXX"></div>
+        <div><label class="lbl">Gender</label>
+          <select class="inp inp-sm" x-model="genesis.gender">
+            <option value="M">Male</option>
+            <option value="F">Female</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="grp-title">Address</div>
+      <div class="grid grid-cols-3 gap-3 mb-4">
+        <div class="col-span-2"><label class="lbl">Street</label><input class="inp inp-sm" x-model="genesis.street" placeholder="123 Main St"></div>
+        <div><label class="lbl">City</label><input class="inp inp-sm" x-model="genesis.city" placeholder="Los Angeles"></div>
+        <div><label class="lbl">State</label><input class="inp inp-sm" x-model="genesis.state" placeholder="CA"></div>
+        <div><label class="lbl">ZIP</label><input class="inp inp-sm" x-model="genesis.zip" placeholder="90001"></div>
+        <div><label class="lbl">Country</label><input class="inp inp-sm" x-model="genesis.country" placeholder="US"></div>
+      </div>
+
+      <div class="grp-title">Google Account (optional)</div>
+      <div class="grid grid-cols-2 gap-3 mb-4">
+        <div><label class="lbl">Google Email</label><input class="inp inp-sm" x-model="genesis.google_email" placeholder="user@gmail.com"></div>
+        <div><label class="lbl">Google Password</label><input class="inp inp-sm" type="password" x-model="genesis.google_password"></div>
+      </div>
+
+      <div class="grp-title">Network & Carrier</div>
+      <div class="grid grid-cols-3 gap-3 mb-4">
+        <div><label class="lbl">Carrier</label>
+          <select class="inp inp-sm" x-model="genesis.carrier">
+            <option value="tmobile_us">T-Mobile US</option>
+            <option value="att_us">AT&T US</option>
+            <option value="verizon_us">Verizon US</option>
+            <option value="ee_uk">EE UK</option>
+            <option value="vodafone_uk">Vodafone UK</option>
+          </select>
+        </div>
+        <div><label class="lbl">Location</label>
+          <select class="inp inp-sm" x-model="genesis.location">
+            <option value="la">Los Angeles, CA</option>
+            <option value="nyc">New York, NY</option>
+            <option value="chicago">Chicago, IL</option>
+            <option value="miami">Miami, FL</option>
+            <option value="london">London, UK</option>
+          </select>
+        </div>
+        <div><label class="lbl">Proxy URL</label><input class="inp inp-sm" x-model="genesis.proxy_url" placeholder="socks5://user:pass@host:port"></div>
+      </div>
+
+      <div class="flex gap-3 mt-4">
+        <button @click="startGenesisPipeline()" :disabled="!genesis.pad_code" class="btn-primary px-6 py-2 rounded-lg text-sm disabled:opacity-50">🧬 Start Pipeline</button>
+        <button @click="resetGenesis()" class="btn-secondary px-4 py-2 rounded-lg text-sm">Clear</button>
+      </div>
+    </div>
+
+    <!-- Right: Job Status -->
+    <div class="grp">
+      <div class="grp-title">Pipeline Status</div>
+      <template x-if="!currentJob">
+        <div class="text-center text-gray-500 py-8">
+          <div class="text-3xl mb-2">🧬</div>
+          <div>No active pipeline</div>
+          <div class="text-xs">Configure and start a pipeline</div>
+        </div>
+      </template>
+      <template x-if="currentJob">
+        <div>
+          <div class="flex items-center justify-between mb-3">
+            <span class="text-xs text-gray-400">Job ID: <span class="text-white" x-text="currentJob.job_id"></span></span>
+            <span class="text-xs px-2 py-1 rounded" :class="currentJob.status==='completed'?'bg-green-900 text-green-400':currentJob.status==='running'?'bg-yellow-900 text-yellow-400':'bg-red-900 text-red-400'" x-text="currentJob.status"></span>
+          </div>
+          <div class="space-y-2 max-h-64 overflow-y-auto">
+            <template x-for="phase in currentJob.phases || []" :key="phase.n">
+              <div class="flex items-center gap-2 text-xs p-2 rounded" :class="phase.status==='completed'?'bg-green-900/20':phase.status==='running'?'bg-yellow-900/20':phase.status==='failed'?'bg-red-900/20':'bg-gray-800/50'">
+                <span :class="phase.status==='completed'?'text-green-400':phase.status==='running'?'text-yellow-400':phase.status==='failed'?'text-red-400':'text-gray-500'" x-text="phase.status==='completed'?'✓':phase.status==='running'?'●':phase.status==='failed'?'✗':'○'"></span>
+                <span class="text-gray-300" x-text="phase.name"></span>
+              </div>
+            </template>
+          </div>
+          <template x-if="currentJob.trust_score">
+            <div class="mt-4 text-center">
+              <div class="text-xs text-gray-500 mb-1">Trust Score</div>
+              <div class="text-2xl font-bold" :class="currentJob.trust_score>=90?'text-green-400':currentJob.trust_score>=70?'text-yellow-400':'text-red-400'" x-text="currentJob.trust_score + '%'"></div>
+            </div>
+          </template>
+        </div>
+      </template>
+    </div>
+  </div>
+</div>
+
+<!-- SHELL -->
+<div x-show="section==='shell'" x-cloak>
+  <h2 class="text-lg font-semibold text-white mb-4">Remote Shell</h2>
+
+  <div class="grp mb-4">
+    <div class="flex gap-3 mb-3">
+      <select class="inp" style="max-width: 300px;" x-model="shell.padCode">
+        <option value="">Select instance...</option>
+        <template x-for="inst in instances" :key="inst.pad_code">
+          <option :value="inst.pad_code" x-text="inst.device_name + ' (' + inst.pad_code + ')'"></option>
+        </template>
+      </select>
+      <input class="inp flex-1" x-model="shell.command" placeholder="Enter shell command..." @keyup.enter="executeShell()">
+      <button @click="executeShell()" :disabled="!shell.padCode || !shell.command" class="btn-cyan px-6 py-2 rounded-lg text-sm disabled:opacity-50">Execute</button>
+    </div>
+    <div class="flex gap-2 text-xs">
+      <button @click="shell.command='getprop'" class="px-2 py-1 bg-gray-700 rounded hover:bg-gray-600 text-gray-300">getprop</button>
+      <button @click="shell.command='pm list packages'" class="px-2 py-1 bg-gray-700 rounded hover:bg-gray-600 text-gray-300">list packages</button>
+      <button @click="shell.command='dumpsys battery'" class="px-2 py-1 bg-gray-700 rounded hover:bg-gray-600 text-gray-300">battery info</button>
+      <button @click="shell.command='cat /proc/cpuinfo'" class="px-2 py-1 bg-gray-700 rounded hover:bg-gray-600 text-gray-300">CPU info</button>
+    </div>
+  </div>
+
+  <div class="grp">
+    <div class="grp-title">Output</div>
+    <div class="log-area" style="min-height: 300px;" x-text="shell.output || 'Execute a command to see output...'"></div>
+  </div>
+</div>
+
+<!-- PROPERTIES -->
+<div x-show="section==='properties'" x-cloak>
+  <h2 class="text-lg font-semibold text-white mb-4">Device Properties</h2>
+
+  <div class="grp mb-4">
+    <div class="flex gap-3 items-center mb-4">
+      <select class="inp" style="max-width: 300px;" x-model="props.padCode" @change="loadProperties()">
+        <option value="">Select instance...</option>
+        <template x-for="inst in instances" :key="inst.pad_code">
+          <option :value="inst.pad_code" x-text="inst.device_name + ' (' + inst.pad_code + ')'"></option>
+        </template>
+      </select>
+      <button @click="loadProperties()" :disabled="!props.padCode" class="btn-secondary px-4 py-2 rounded-lg text-sm disabled:opacity-50">Load Properties</button>
+    </div>
+
+    <template x-if="props.data">
+      <div class="grid grid-cols-2 gap-4">
+        <template x-for="(value, key) in props.data" :key="key">
+          <div class="p-3 bg-gray-800/50 rounded-lg">
+            <div class="text-xs text-gray-500 mb-1" x-text="key"></div>
+            <div class="text-sm text-white font-mono" x-text="value"></div>
+          </div>
+        </template>
+      </div>
+    </template>
+    <template x-if="!props.data && props.padCode">
+      <div class="text-center text-gray-500 py-8">Click "Load Properties" to view device properties</div>
+    </template>
+  </div>
+</div>
+
+<!-- SCREENSHOT -->
+<div x-show="section==='screenshot'" x-cloak>
+  <h2 class="text-lg font-semibold text-white mb-4">Screenshot Capture</h2>
+
+  <div class="grp mb-4">
+    <div class="flex gap-3 items-center">
+      <select class="inp" style="max-width: 300px;" x-model="screenshot.padCode">
+        <option value="">Select instance...</option>
+        <template x-for="inst in instances" :key="inst.pad_code">
+          <option :value="inst.pad_code" x-text="inst.device_name + ' (' + inst.pad_code + ')'"></option>
+        </template>
+      </select>
+      <button @click="captureScreenshot()" :disabled="!screenshot.padCode" class="btn-primary px-6 py-2 rounded-lg text-sm disabled:opacity-50">📷 Capture</button>
+    </div>
+  </div>
+
+  <div class="grp">
+    <template x-if="screenshot.imageUrl">
+      <div class="text-center">
+        <img :src="screenshot.imageUrl" class="max-w-full max-h-[500px] mx-auto rounded-lg shadow-lg">
+        <div class="mt-3 text-xs text-gray-500" x-text="'Captured: ' + screenshot.timestamp"></div>
+      </div>
+    </template>
+    <template x-if="!screenshot.imageUrl">
+      <div class="text-center text-gray-500 py-16">
+        <div class="text-4xl mb-3">📷</div>
+        <div>Select an instance and click Capture</div>
+      </div>
+    </template>
+  </div>
+</div>
+
+<!-- SETTINGS -->
+<div x-show="section==='settings'" x-cloak>
+  <h2 class="text-lg font-semibold text-white mb-4">Settings</h2>
+
+  <div class="grp mb-4">
+    <div class="grp-title">VMOS Pro Cloud API Credentials</div>
+    <div class="grid grid-cols-2 gap-4 mb-4">
+      <div>
+        <label class="lbl">API Key (Access Key)</label>
+        <input class="inp" x-model="settings.vmosApiKey" placeholder="Enter API key">
+      </div>
+      <div>
+        <label class="lbl">API Secret</label>
+        <input class="inp" type="password" x-model="settings.vmosApiSecret" placeholder="Enter API secret">
+      </div>
+      <div>
+        <label class="lbl">API Host</label>
+        <input class="inp" x-model="settings.vmosApiHost" placeholder="api.vmoscloud.com">
+      </div>
+    </div>
+    <button @click="saveSettings()" class="btn-primary px-6 py-2 rounded-lg text-sm">Save Credentials</button>
+    <button @click="testConnection()" class="btn-secondary px-4 py-2 rounded-lg text-sm ml-2">Test Connection</button>
+  </div>
+
+  <div class="grp">
+    <div class="grp-title">API Server</div>
+    <div class="grid grid-cols-2 gap-4">
+      <div>
+        <label class="lbl">API Port</label>
+        <input class="inp" x-model="settings.apiPort" readonly>
+      </div>
+      <div>
+        <label class="lbl">API Base URL</label>
+        <input class="inp" :value="'http://127.0.0.1:' + settings.apiPort + '/api'" readonly>
+      </div>
+    </div>
+  </div>
+</div>
+
+</div>
+</main>
+
+<script>
+function vmosConsole() {
+  return {
+    section: 'dashboard',
+    apiConnected: false,
+    instances: [],
+    jobs: [],
+    activeJobs: 0,
+    selectedInstance: null,
+    currentJob: null,
+    jobPollInterval: null,
+
+    navItems: [
+      { key: 'dashboard', label: 'Dashboard', desc: 'Overview & quick actions', icon: '🏠' },
+      { key: 'instances', label: 'Instances', desc: 'Manage cloud devices', icon: '📱' },
+      { key: 'genesis', label: 'Genesis', desc: 'Identity injection pipeline', icon: '🧬' },
+      { key: 'shell', label: 'Shell', desc: 'Remote command execution', icon: '⌨️' },
+      { key: 'properties', label: 'Properties', desc: 'Device properties', icon: '📋' },
+      { key: 'screenshot', label: 'Screenshot', desc: 'Capture device screen', icon: '📷' },
+      { key: 'settings', label: 'Settings', desc: 'API credentials & config', icon: '⚙️' },
+    ],
+
+    genesis: {
+      pad_code: '',
+      device_model: 'samsung_s24',
+      name: '',
+      email: '',
+      phone: '',
+      dob: '',
+      ssn: '',
+      gender: 'M',
+      street: '',
+      city: '',
+      state: '',
+      zip: '',
+      country: 'US',
+      google_email: '',
+      google_password: '',
+      carrier: 'tmobile_us',
+      location: 'la',
+      proxy_url: '',
+    },
+
+    shell: {
+      padCode: '',
+      command: '',
+      output: '',
+    },
+
+    props: {
+      padCode: '',
+      data: null,
+    },
+
+    screenshot: {
+      padCode: '',
+      imageUrl: '',
+      timestamp: '',
+    },
+
+    settings: {
+      vmosApiKey: '',
+      vmosApiSecret: '',
+      vmosApiHost: 'api.vmoscloud.com',
+      apiPort: '8081',
+    },
+
+    get currentNav() {
+      return this.navItems.find(n => n.key === this.section);
+    },
+
+    get apiBase() {
+      return window.titanVMOS?.apiBase || 'http://127.0.0.1:8081/api';
+    },
+
+    async init() {
+      // Load settings from env
+      if (window.titanVMOS) {
+        const env = await window.titanVMOS.getEnv();
+        this.settings.vmosApiKey = env.vmosApiKey || '';
+        this.settings.vmosApiHost = env.vmosApiHost || 'api.vmoscloud.com';
+        this.settings.apiPort = env.apiPort || '8081';
+      }
+
+      // Initial data load
+      await this.refreshInstances();
+      await this.loadJobs();
+      this.apiConnected = true;
+
+      // Poll for job updates
+      setInterval(() => this.loadJobs(), 10000);
+    },
+
+    async api(endpoint, options = {}) {
+      try {
+        const res = await fetch(this.apiBase + endpoint, {
+          ...options,
+          headers: {
+            'Content-Type': 'application/json',
+            ...options.headers,
+          },
+        });
+        if (!res.ok) throw new Error(`API error: ${res.status}`);
+        return await res.json();
+      } catch (err) {
+        console.error('API call failed:', err);
+        throw err;
+      }
+    },
+
+    async refreshInstances() {
+      try {
+        const data = await this.api('/vmos/instances');
+        this.instances = data.instances || data || [];
+      } catch (err) {
+        console.error('Failed to load instances:', err);
+        this.instances = [];
+      }
+    },
+
+    async loadJobs() {
+      try {
+        const data = await this.api('/vmos-genesis/jobs');
+        this.jobs = data.jobs || data || [];
+        this.activeJobs = this.jobs.filter(j => j.status === 'running').length;
+      } catch (err) {
+        console.error('Failed to load jobs:', err);
+      }
+    },
+
+    selectInstance(inst) {
+      this.selectedInstance = inst;
+      this.genesis.pad_code = inst.pad_code;
+      this.shell.padCode = inst.pad_code;
+      this.props.padCode = inst.pad_code;
+      this.screenshot.padCode = inst.pad_code;
+    },
+
+    async instanceAction(padCode, action) {
+      try {
+        await this.api(`/vmos/instances/${padCode}/${action}`, { method: 'POST' });
+        setTimeout(() => this.refreshInstances(), 2000);
+      } catch (err) {
+        alert('Action failed: ' + err.message);
+      }
+    },
+
+    async startGenesisPipeline() {
+      if (!this.genesis.pad_code) return alert('Please select an instance');
+
+      try {
+        const res = await this.api('/vmos-genesis/pipeline', {
+          method: 'POST',
+          body: JSON.stringify(this.genesis),
+        });
+
+        this.currentJob = { job_id: res.job_id, status: 'running', phases: [] };
+
+        // Start polling
+        this.pollJob(res.job_id);
+      } catch (err) {
+        alert('Failed to start pipeline: ' + err.message);
+      }
+    },
+
+    async pollJob(jobId) {
+      const poll = async () => {
+        try {
+          const job = await this.api(`/vmos-genesis/pipeline-status/${jobId}`);
+          this.currentJob = job;
+          
+          if (job.status === 'running') {
+            setTimeout(poll, 2000);
+          } else {
+            await this.loadJobs();
+          }
+        } catch (err) {
+          console.error('Job poll failed:', err);
+        }
+      };
+      poll();
+    },
+
+    resetGenesis() {
+      this.genesis = {
+        pad_code: '',
+        device_model: 'samsung_s24',
+        name: '',
+        email: '',
+        phone: '',
+        dob: '',
+        ssn: '',
+        gender: 'M',
+        street: '',
+        city: '',
+        state: '',
+        zip: '',
+        country: 'US',
+        google_email: '',
+        google_password: '',
+        carrier: 'tmobile_us',
+        location: 'la',
+        proxy_url: '',
+      };
+      this.currentJob = null;
+    },
+
+    async executeShell() {
+      if (!this.shell.padCode || !this.shell.command) return;
+
+      try {
+        const res = await this.api(`/vmos/instances/${this.shell.padCode}/shell`, {
+          method: 'POST',
+          body: JSON.stringify({ command: this.shell.command }),
+        });
+        this.shell.output = res.output || res.result || JSON.stringify(res, null, 2);
+      } catch (err) {
+        this.shell.output = 'Error: ' + err.message;
+      }
+    },
+
+    async loadProperties() {
+      if (!this.props.padCode) return;
+
+      try {
+        const res = await this.api(`/vmos/instances/${this.props.padCode}/properties`);
+        this.props.data = res.properties || res;
+      } catch (err) {
+        alert('Failed to load properties: ' + err.message);
+      }
+    },
+
+    async captureScreenshot() {
+      if (!this.screenshot.padCode) return;
+
+      try {
+        const res = await this.api(`/vmos/instances/${this.screenshot.padCode}/screenshot`, {
+          method: 'POST',
+        });
+        this.screenshot.imageUrl = res.image_url || res.url || '';
+        this.screenshot.timestamp = new Date().toLocaleString();
+      } catch (err) {
+        alert('Failed to capture screenshot: ' + err.message);
+      }
+    },
+
+    async takeScreenshot(padCode) {
+      this.screenshot.padCode = padCode;
+      await this.captureScreenshot();
+      this.section = 'screenshot';
+    },
+
+    async saveSettings() {
+      if (window.titanVMOS) {
+        const result = await window.titanVMOS.saveVmosCredentials({
+          apiKey: this.settings.vmosApiKey,
+          apiSecret: this.settings.vmosApiSecret,
+          apiHost: this.settings.vmosApiHost,
+        });
+        if (result.ok) {
+          alert('Settings saved. Restart the app for changes to take effect.');
+        } else {
+          alert('Failed to save: ' + result.error);
+        }
+      }
+    },
+
+    async testConnection() {
+      try {
+        await this.refreshInstances();
+        alert('Connection successful! Found ' + this.instances.length + ' instances.');
+      } catch (err) {
+        alert('Connection failed: ' + err.message);
+      }
+    },
+  };
+}
+</script>
+
+</body>
+</html>

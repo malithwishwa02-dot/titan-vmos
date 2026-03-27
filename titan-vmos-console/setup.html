@@ -1,0 +1,347 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Titan VMOS Console — Setup</title>
+<style>
+  :root { --accent: #a855f7; --bg: #0a0e17; --card: #111827; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: #e2e8f0;
+    font-family: 'Inter', system-ui, sans-serif;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+  }
+  .container {
+    width: 100%;
+    max-width: 540px;
+    background: var(--card);
+    border: 1px solid #1f2937;
+    border-radius: 16px;
+    padding: 32px;
+  }
+  .logo {
+    width: 64px;
+    height: 64px;
+    background: linear-gradient(135deg, #8b5cf6, #a855f7);
+    border-radius: 16px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 32px;
+    font-weight: 800;
+    color: #fff;
+    margin: 0 auto 16px;
+  }
+  h1 {
+    text-align: center;
+    color: var(--accent);
+    font-size: 22px;
+    margin: 0 0 4px;
+  }
+  .subtitle {
+    text-align: center;
+    color: #64748b;
+    font-size: 13px;
+    margin-bottom: 24px;
+  }
+  .check-item {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 16px;
+    background: #1e293b;
+    border-radius: 8px;
+    margin-bottom: 10px;
+  }
+  .check-icon {
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 14px;
+    flex-shrink: 0;
+  }
+  .check-icon.ok { background: #166534; color: #22c55e; }
+  .check-icon.warn { background: #713f12; color: #eab308; }
+  .check-icon.err { background: #7f1d1d; color: #ef4444; }
+  .check-icon.loading { background: #1e293b; border: 2px solid #374151; border-top-color: var(--accent); animation: spin 0.8s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .check-label { flex: 1; font-size: 13px; }
+  .check-value { font-size: 12px; color: #64748b; }
+
+  .section-title {
+    font-size: 11px;
+    text-transform: uppercase;
+    color: #9ca3af;
+    margin: 20px 0 10px;
+    font-weight: 600;
+  }
+
+  .input-group {
+    margin-bottom: 14px;
+  }
+  .input-group label {
+    display: block;
+    font-size: 11px;
+    color: #9ca3af;
+    margin-bottom: 6px;
+    text-transform: uppercase;
+  }
+  .input-group input {
+    width: 100%;
+    background: #1e293b;
+    border: 1px solid #374151;
+    border-radius: 8px;
+    padding: 10px 14px;
+    font-size: 13px;
+    color: #fff;
+  }
+  .input-group input:focus {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 2px rgba(168, 85, 247, 0.15);
+  }
+  .input-group .hint {
+    font-size: 11px;
+    color: #64748b;
+    margin-top: 4px;
+  }
+
+  .log-area {
+    background: #0f172a;
+    border: 1px solid #1e293b;
+    border-radius: 8px;
+    padding: 12px;
+    font-family: 'JetBrains Mono', 'Consolas', monospace;
+    font-size: 11px;
+    color: #94a3b8;
+    min-height: 100px;
+    max-height: 150px;
+    overflow-y: auto;
+    white-space: pre-wrap;
+    margin-bottom: 16px;
+  }
+
+  .btn {
+    width: 100%;
+    padding: 14px;
+    border: none;
+    border-radius: 8px;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s;
+    margin-top: 8px;
+  }
+  .btn-primary {
+    background: linear-gradient(135deg, #7c3aed, #a855f7);
+    color: #fff;
+  }
+  .btn-primary:hover:not(:disabled) {
+    background: linear-gradient(135deg, #6d28d9, #9333ea);
+  }
+  .btn-primary:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+  .btn-secondary {
+    background: #374151;
+    color: #fff;
+  }
+  .btn-secondary:hover {
+    background: #4b5563;
+  }
+
+  .footer {
+    text-align: center;
+    font-size: 11px;
+    color: #64748b;
+    margin-top: 16px;
+  }
+  .footer a {
+    color: var(--accent);
+    text-decoration: none;
+  }
+  .footer a:hover {
+    text-decoration: underline;
+  }
+
+  .hidden { display: none !important; }
+</style>
+</head>
+<body>
+
+<div class="container" id="setupContainer">
+  <div class="logo">V</div>
+  <h1>Titan VMOS Console</h1>
+  <p class="subtitle">VMOS Pro Cloud Device Console Setup</p>
+
+  <!-- System Checks -->
+  <div id="checksSection">
+    <div class="check-item">
+      <div class="check-icon loading" id="pythonIcon"></div>
+      <span class="check-label">Python 3.10+</span>
+      <span class="check-value" id="pythonValue">Checking...</span>
+    </div>
+    <div class="check-item">
+      <div class="check-icon loading" id="adbIcon"></div>
+      <span class="check-label">ADB (optional)</span>
+      <span class="check-value" id="adbValue">Checking...</span>
+    </div>
+    <div class="check-item">
+      <div class="check-icon loading" id="venvIcon"></div>
+      <span class="check-label">Python Virtual Environment</span>
+      <span class="check-value" id="venvValue">Checking...</span>
+    </div>
+  </div>
+
+  <!-- VMOS Credentials Section -->
+  <div class="section-title">VMOS Pro Cloud Credentials</div>
+  <div class="input-group">
+    <label>API Key (Access Key)</label>
+    <input type="text" id="vmosApiKey" placeholder="Enter your VMOS API key">
+    <p class="hint">Obtain from <a href="#" id="vmosLink1" class="external-link">vmoscloud.com</a></p>
+  </div>
+  <div class="input-group">
+    <label>API Secret</label>
+    <input type="password" id="vmosApiSecret" placeholder="Enter your VMOS API secret">
+  </div>
+  <div class="input-group">
+    <label>API Host (optional)</label>
+    <input type="text" id="vmosApiHost" placeholder="api.vmoscloud.com" value="api.vmoscloud.com">
+  </div>
+
+  <!-- Setup Log -->
+  <div class="section-title" id="logTitle" style="display: none;">Setup Progress</div>
+  <div class="log-area hidden" id="logArea"></div>
+
+  <!-- Actions -->
+  <button class="btn btn-primary" id="setupBtn" disabled>Run Setup</button>
+  <button class="btn btn-secondary hidden" id="launchBtn">Launch Console</button>
+
+  <div class="footer">
+    VMOS Pro Cloud Console • Titan V13.0<br>
+    <a href="#" id="vmosLink2" class="external-link">VMOS Cloud Portal</a>
+  </div>
+</div>
+
+<script>
+  const log = document.getElementById('logArea');
+  const logTitle = document.getElementById('logTitle');
+  const setupBtn = document.getElementById('setupBtn');
+  const launchBtn = document.getElementById('launchBtn');
+
+  let systemInfo = null;
+
+  // Setup external link handlers (CSP-compliant)
+  document.querySelectorAll('.external-link').forEach(link => {
+    link.addEventListener('click', (e) => {
+      e.preventDefault();
+      window.titanVMOS.openExternal('https://www.vmoscloud.com/');
+    });
+  });
+
+  function updateIcon(id, status) {
+    const el = document.getElementById(id);
+    el.className = 'check-icon ' + status;
+    el.textContent = status === 'ok' ? '✓' : status === 'warn' ? '!' : status === 'err' ? '✗' : '';
+  }
+
+  function appendLog(msg) {
+    log.textContent += msg + '\n';
+    log.scrollTop = log.scrollHeight;
+  }
+
+  async function checkSystem() {
+    systemInfo = await window.titanVMOS.getSystemInfo();
+
+    // Python check
+    if (systemInfo.python) {
+      updateIcon('pythonIcon', 'ok');
+      document.getElementById('pythonValue').textContent = systemInfo.python.version;
+    } else {
+      updateIcon('pythonIcon', 'err');
+      document.getElementById('pythonValue').textContent = 'Not found';
+    }
+
+    // ADB check (optional for VMOS)
+    if (systemInfo.adb) {
+      updateIcon('adbIcon', 'ok');
+      document.getElementById('adbValue').textContent = 'Installed';
+    } else {
+      updateIcon('adbIcon', 'warn');
+      document.getElementById('adbValue').textContent = 'Not found (optional)';
+    }
+
+    // Venv check
+    if (systemInfo.venvExists) {
+      updateIcon('venvIcon', 'ok');
+      document.getElementById('venvValue').textContent = 'Ready';
+    } else {
+      updateIcon('venvIcon', 'warn');
+      document.getElementById('venvValue').textContent = 'Will be created';
+    }
+
+    // Enable setup if Python found
+    if (systemInfo.python) {
+      setupBtn.disabled = false;
+    }
+  }
+
+  setupBtn.addEventListener('click', async () => {
+    // Save VMOS credentials first
+    const apiKey = document.getElementById('vmosApiKey').value.trim();
+    const apiSecret = document.getElementById('vmosApiSecret').value.trim();
+    const apiHost = document.getElementById('vmosApiHost').value.trim() || 'api.vmoscloud.com';
+
+    if (apiKey && apiSecret) {
+      await window.titanVMOS.saveVmosCredentials({
+        apiKey,
+        apiSecret,
+        apiHost,
+      });
+    }
+
+    // Show log area
+    logTitle.style.display = 'block';
+    log.classList.remove('hidden');
+    setupBtn.disabled = true;
+    setupBtn.textContent = 'Setting up...';
+
+    const result = await window.titanVMOS.runSetup();
+
+    if (result.ok) {
+      setupBtn.classList.add('hidden');
+      launchBtn.classList.remove('hidden');
+      appendLog('\n✓ Setup complete! Click "Launch Console" to start.');
+    } else {
+      setupBtn.textContent = 'Retry Setup';
+      setupBtn.disabled = false;
+      appendLog('\n✗ Setup failed: ' + result.error);
+    }
+  });
+
+  launchBtn.addEventListener('click', () => {
+    window.titanVMOS.launchConsole();
+  });
+
+  window.titanVMOS.onSetupProgress((msg) => {
+    appendLog(msg);
+  });
+
+  // Run system check on load
+  checkSystem();
+</script>
+
+</body>
+</html>
