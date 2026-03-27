@@ -1,0 +1,112 @@
+{
+  "name": "titan-vmos-console",
+  "version": "13.0.0",
+  "description": "Titan V13.0 VMOS Pro Cloud Console — Standalone Desktop App",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron --no-sandbox --disable-gpu-sandbox .",
+    "build": "electron-builder --linux",
+    "build:deb": "electron-builder --linux deb",
+    "build:appimage": "electron-builder --linux AppImage",
+    "build:win": "electron-builder --win",
+    "build:all": "electron-builder --linux deb AppImage --win nsis"
+  },
+  "author": {
+    "name": "Titan",
+    "email": "dev@titan.local"
+  },
+  "homepage": "https://github.com/titan/titan-vmos-console",
+  "license": "UNLICENSED",
+  "devDependencies": {
+    "electron": "^28.3.3",
+    "electron-builder": "^24.0.0"
+  },
+  "build": {
+    "appId": "com.titan.vmos-console",
+    "productName": "Titan VMOS Console",
+    "directories": {
+      "buildResources": "assets"
+    },
+    "extraResources": [
+      {
+        "from": "../core",
+        "to": "core",
+        "filter": ["**/*.py", "**/*.json", "!__pycache__/**", "!_deprecated/**"]
+      },
+      {
+        "from": "../server",
+        "to": "server",
+        "filter": ["**/*.py", "**/*.txt", "**/*.json", "!__pycache__/**"]
+      },
+      {
+        "from": "../console",
+        "to": "console",
+        "filter": ["**/*", "!**/*.bak"]
+      },
+      {
+        "from": "../scripts",
+        "to": "scripts",
+        "filter": ["**/*.sh", "**/*.py", "!_deprecated/**", "!__pycache__/**"]
+      },
+      {
+        "from": "../.env.example",
+        "to": ".env.example"
+      }
+    ],
+    "linux": {
+      "target": [
+        "AppImage",
+        "deb"
+      ],
+      "category": "Development",
+      "icon": "assets/icon.png",
+      "desktop": {
+        "Name": "Titan VMOS Console",
+        "Comment": "Titan V13.0 VMOS Pro Cloud Console",
+        "Keywords": "titan;android;vmos;cloud;antidetect;console;",
+        "StartupWMClass": "titan-vmos-console",
+        "Version": "13.0.0"
+      }
+    },
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": ["x64"]
+        }
+      ],
+      "icon": "assets/icon.ico",
+      "artifactName": "Titan-VMOS-Console-${version}-Setup.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": true,
+      "allowToChangeInstallationDirectory": true,
+      "installerIcon": "assets/icon.ico",
+      "installerHeaderIcon": "assets/icon.ico",
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Titan VMOS Console"
+    },
+    "deb": {
+      "depends": [
+        "python3 (>= 3.10)",
+        "python3-venv",
+        "python3-pip"
+      ],
+      "afterInstall": "scripts/postinstall.sh",
+      "fpm": ["--name", "titan-vmos-console"]
+    },
+    "appImage": {
+      "artifactName": "Titan-VMOS-Console-${version}-${arch}.AppImage"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "setup.html",
+      "vmos-console.html",
+      "assets/**",
+      "package.json"
+    ]
+  }
+}
