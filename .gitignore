@@ -1,10 +1,26 @@
-
 # Python cache
 __pycache__/
 *.pyc
 *.pyo
 *.pyd
 .Python
+
+# IDE files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Cuttlefish virtual devices (runtime data)
+cuttlefish/
+cuttlefish-desktop/
+
+# Runtime data directories
+data/forge_gallery/
+data/profiles/
+experiments/
+reports/
 
 # Large binary files
 cuttlefish-desktop/dist/**
