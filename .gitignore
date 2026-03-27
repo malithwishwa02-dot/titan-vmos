@@ -35,3 +35,4 @@ device-viewer/node_modules/
 
 # Large database
 data/devices.db
+root/
