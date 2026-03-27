@@ -67,7 +67,7 @@ TEST_PROFILE = {
     "real_phone": "+17078361915",
     
     # Device settings
-    "device_model": "samsung_s24",
+    "device_model": "same_device_modelvmospro",
     "carrier": "tmobile_us",
     "location": "la",
     "age_days": 120,
