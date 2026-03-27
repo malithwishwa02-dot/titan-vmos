@@ -1,0 +1,7 @@
+{
+  "$schema": "https://wails.io/schemas/config.v2.json",
+  "name": "Titan VMOS Pro Standalone",
+  "outputfilename": "titan-vmospro-standalone",
+  "frontend:install": "echo \"frontend bootstrap placeholder\"",
+  "frontend:build": "echo \"frontend build placeholder\""
+}

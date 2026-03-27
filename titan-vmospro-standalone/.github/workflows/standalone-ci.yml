@@ -1,0 +1,47 @@
+name: titan-vmospro-standalone-ci
+
+on:
+  push:
+    paths:
+      - "titan-vmospro-standalone/**"
+  pull_request:
+    paths:
+      - "titan-vmospro-standalone/**"
+
+jobs:
+  test-build-package:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: titan-vmospro-standalone
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+
+      - name: Unit tests
+        run: go test ./...
+
+      - name: Build binaries
+        run: bash scripts/build.sh
+
+      - name: Package deb
+        run: bash scripts/package-deb.sh
+
+      - name: Package windows installer placeholder
+        run: bash scripts/package-windows.sh
+
+      - name: Verify artifacts
+        run: bash scripts/verify-artifacts.sh
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: titan-vmospro-standalone-artifacts
+          path: |
+            titan-vmospro-standalone/dist/*.deb
+            titan-vmospro-standalone/dist/*.exe

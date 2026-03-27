@@ -1,0 +1,9 @@
+Package: titan-vmospro-standalone
+Version: 0.1.0
+Section: utils
+Priority: optional
+Architecture: amd64
+Maintainer: Titan Team <team@example.com>
+Depends: libc6 (>= 2.31)
+Description: Standalone Titan Console + VMOS Pro integration app
+ Isolated desktop app for VMOS Pro Cloud operations and Genesis pipeline orchestration.

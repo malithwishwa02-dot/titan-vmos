@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+install -d -m 0755 /usr/local/bin
+echo "titan-vmospro-standalone installed"
