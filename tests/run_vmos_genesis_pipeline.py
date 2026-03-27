@@ -27,11 +27,13 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "server"))
 from dotenv import load_dotenv
 load_dotenv(Path(__file__).parent.parent / ".env")
 
-# Override with test credentials if not set
-if not os.environ.get("VMOS_CLOUD_AK"):
-    os.environ["VMOS_CLOUD_AK"] = "BPWNWxfXMQsjsREyzIOXmCtndRZO8iVi"
-if not os.environ.get("VMOS_CLOUD_SK"):
-    os.environ["VMOS_CLOUD_SK"] = "Q2SgcSwEfuwoedY0cijp6Mce"
+# Validate required credentials from environment
+if not os.environ.get("VMOS_CLOUD_AK") or not os.environ.get("VMOS_CLOUD_SK"):
+    print("ERROR: VMOS_CLOUD_AK and VMOS_CLOUD_SK must be set in environment or .env file")
+    print("Example:")
+    print("  export VMOS_CLOUD_AK='your-access-key'")
+    print("  export VMOS_CLOUD_SK='your-secret-key'")
+    sys.exit(1)
 
 from vmos_cloud_api import VMOSCloudClient
 from vmos_genesis_engine import VMOSGenesisEngine, PipelineConfig
