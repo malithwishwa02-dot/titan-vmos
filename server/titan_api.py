@@ -112,14 +112,19 @@ set_device_manager(dm)
 from routers import devices, stealth, genesis, provision, agent, intel, network
 from routers import cerberus, targets, kyc, admin, dashboard, settings
 from routers import bundles, ai, ws, training, viewer
+from routers import vmos, vmos_genesis  # VMOS Pro cloud device routers
 
 # Initialize routers that need the device manager (legacy pattern, kept for compat)
 for mod in [devices, stealth, genesis, provision, agent, kyc, admin, dashboard, bundles, ws, ai, training]:
     mod.init(dm)
 
+# Initialize VMOS Genesis router with device manager
+vmos_genesis.init(dm)
+
 # Include all routers
 for r in [devices, stealth, genesis, provision, agent, intel, network, cerberus,
-          targets, kyc, admin, dashboard, settings, bundles, ai, ws, training, viewer]:
+          targets, kyc, admin, dashboard, settings, bundles, ai, ws, training, viewer,
+          vmos, vmos_genesis]:  # Added VMOS routers
     app.include_router(r.router)
 
 
