@@ -376,6 +376,41 @@ GET /api/genesis/vmos/trust/{pad_code}
 
 ## Execution Log — March 27, 2026
 
+### CI Environment Test (06:27 UTC) — Network Restricted
+
+```
+Pipeline Execution: 2026-03-27 06:27 UTC
+Environment: GitHub Actions CI Runner
+Job ID: baacb2b2
+Profile ID: TITAN-374D8EAC
+─────────────────────────────────────────────
+Phase 0 (Wipe):       [○] skipped (--skip-wipe flag)
+Phase 1 (Stealth):    [✗] failed — DNS unreachable (CI network restriction)
+Phase 2 (Network):    [○] skipped — no proxy configured
+Phase 3 (Forge):      [✓] done — profile TITAN-374D8EAC (0.2s)
+Phase 4 (Google):     [✗] failed — DNS unreachable
+Phase 5 (Inject):     [✗] failed — DNS unreachable
+Phase 6 (Wallet):     [✗] failed — DNS unreachable
+Phase 7 (Provincial): [✗] failed — DNS unreachable
+Phase 8 (PostHarden): [✗] failed — DNS unreachable
+Phase 9 (Attestation):[✗] failed — DNS unreachable
+Phase 10 (Trust):     [✗] failed — DNS unreachable
+
+Current Trust Score: 0/100 (Network blocked)
+Grade: N/A
+Note: CI environment does not allow outbound DNS resolution to api.vmoscloud.com
+```
+
+**Workaround**: Run locally with network access:
+```bash
+cd /path/to/Titan-android-v13
+export PYTHONPATH=core:server
+python tests/run_vmos_genesis_pipeline.py --pad ACP2509244LGV1MV --skip-wipe
+python tests/verify_vmos_trust_score.py --pad ACP2509244LGV1MV --detailed
+```
+
+### Previous Local Test (01:44 UTC) — Full Execution
+
 ```
 Pipeline Execution: 2026-03-27 01:44 UTC
 ─────────────────────────────────────────────
