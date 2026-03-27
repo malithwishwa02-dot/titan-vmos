@@ -689,7 +689,33 @@ class VMOSGenesisEngine:
             )
             gsf_ok = await self._sh_ok(gsf_cmd, "GSF_SET", timeout=15)
 
-            ok_str = f"acct={'ok' if acct_ok else 'fail'} gms={'ok' if gms_ok else 'fail'} gsf={'ok' if gsf_ok else 'fail'}"
+            # NEW: Also inject Play Store account data for sign-in detection
+            playstore_ok = False
+            if email:
+                playstore_cmd = (
+                    "mkdir -p /data/data/com.android.vending/shared_prefs 2>/dev/null; "
+                    f"cat > /data/data/com.android.vending/shared_prefs/finsky.xml << 'FINSKYEOF'\n"
+                    f'<?xml version="1.0" encoding="utf-8" standalone="yes" ?>\n'
+                    f"<map>\n"
+                    f'  <string name=\"signed_in_account\">{e_safe}</string>\n'
+                    f'  <boolean name=\"setup_complete\" value=\"true\" />\n'
+                    f'  <boolean name=\"has_consented\" value=\"true\" />\n'
+                    f'  <long name=\"consent_timestamp\" value=\"{(int(time.time()) - cfg.age_days * 86400) * 1000}\" />\n'
+                    f'  <int name=\"onboarding_completed\" value=\"1\" />\n'
+                    f"</map>\n"
+                    f"FINSKYEOF\n"
+                    "chown $(stat -c '%u:%g' /data/data/com.android.vending/ 2>/dev/null) "
+                    "/data/data/com.android.vending/shared_prefs/finsky.xml 2>/dev/null; "
+                    "chmod 660 /data/data/com.android.vending/shared_prefs/finsky.xml 2>/dev/null; "
+                    # Also register in GMS phenotype for app discovery
+                    f"sqlite3 /data/data/com.google.android.gms/databases/phenotype.db "
+                    f"\"INSERT OR REPLACE INTO ApplicationTags (packageName, user, version) "
+                    f"VALUES ('com.android.vending', '{e_safe}', 1);\" 2>/dev/null; "
+                    "echo PLAYSTORE_SET"
+                )
+                playstore_ok = await self._sh_ok(playstore_cmd, "PLAYSTORE_SET", timeout=15)
+
+            ok_str = f"acct={'ok' if acct_ok else 'fail'} gms={'ok' if gms_ok else 'fail'} gsf={'ok' if gsf_ok else 'fail'} playstore={'ok' if playstore_ok else 'fail'}"
             self._set_phase(n, "done" if acct_ok else "warn", ok_str)
             self._log(f"Phase 4 — Google Account: {ok_str}")
 
@@ -1211,11 +1237,12 @@ class VMOSGenesisEngine:
             self._log(f"Phase 9 — Attestation FAILED: {e}")
 
     async def _phase_trust_audit(self, profile: Dict[str, Any]):
-        """Phase 10: Trust score — verify injected data counts."""
+        """Phase 10: Trust score — verify injected data counts with enhanced checks."""
         n = 10
         self._set_phase(n, "running")
-        self._log("Phase 10 — Trust Audit: counting injected data...")
+        self._log("Phase 10 — Trust Audit: comprehensive verification...")
         try:
+            # Enhanced audit with more checks for higher score potential
             audit_cmd = (
                 "echo CONTACTS=$(content query --uri content://com.android.contacts/raw_contacts --projection _id 2>/dev/null | wc -l); "
                 "echo CALLS=$(content query --uri content://call_log/calls --projection _id 2>/dev/null | wc -l); "
@@ -1228,9 +1255,19 @@ class VMOSGenesisEngine:
                 "'SELECT COUNT(*) FROM accounts' 2>/dev/null || echo 0); "
                 "echo USAGE=$(ls /data/system/usagestats/0/daily/ 2>/dev/null | wc -l); "
                 "echo TPAY=$(sqlite3 /data/data/com.google.android.gms/databases/tapandpay.db "
-                "'SELECT COUNT(*) FROM token_metadata' 2>/dev/null || echo 0)"
+                "'SELECT COUNT(*) FROM token_metadata' 2>/dev/null || echo 0); "
+                # Additional checks for 95%+ score
+                "echo PLAYSTORE=$(ls /data/data/com.android.vending/shared_prefs/*.xml 2>/dev/null | wc -l); "
+                "echo GMS_REG=$(test -f /data/data/com.google.android.gms/shared_prefs/device_registration.xml && echo 1 || echo 0); "
+                "echo GSF_ID=$(test -f /data/data/com.google.android.gsf/shared_prefs/gservices.xml && echo 1 || echo 0); "
+                "echo KIWI=$(test -f /data/data/com.kiwibrowser.browser/app_chrome/Default/Preferences && echo 1 || echo 0); "
+                "echo AUTOFILL=$(sqlite3 /data/data/com.android.chrome/app_chrome/Default/'Web Data' "
+                "'SELECT COUNT(*) FROM autofill_profiles' 2>/dev/null || echo 0); "
+                "echo WIFI=$(getprop persist.sys.cloud.wifi.ssid 2>/dev/null || echo ''); "
+                "echo BUILD_TYPE=$(getprop ro.build.type); "
+                "echo VMOS_LEAK=$(getprop ro.vmos.simplest.rom || echo '')"
             )
-            result = await self._sh(audit_cmd, timeout=20)
+            result = await self._sh(audit_cmd, timeout=25)
 
             checks = {}
             for line in (result or "").strip().split("\n"):
@@ -1238,42 +1275,68 @@ class VMOSGenesisEngine:
                     k, v = line.split("=", 1)
                     checks[k.strip()] = v.strip()
 
-            # Compute simple trust score based on data presence
+            # Compute comprehensive trust score (total potential = 100)
             score = 0
+            
+            # Core data injection (50 points)
             if int(checks.get("ACCOUNTS", "0")) > 0:
-                score += 15   # Google Account
+                score += 12   # Google Account
             if int(checks.get("CHROME_COOKIES", "0")) > 0:
-                score += 10   # Chrome Cookies
+                score += 8    # Chrome Cookies
             if int(checks.get("CHROME_HISTORY", "0")) > 0:
-                score += 10   # Chrome History
+                score += 8    # Chrome History
             if int(checks.get("TPAY", "0")) > 0:
-                score += 10   # Wallet
+                score += 8    # Wallet/GPay
             if int(checks.get("CONTACTS", "0")) >= 5:
-                score += 8    # Contacts
+                score += 7    # Contacts (5+ entries)
             if int(checks.get("CALLS", "0")) >= 10:
-                score += 8    # Call Logs
+                score += 7    # Call Logs (10+ entries)
+            
+            # Secondary data (25 points)
             if int(checks.get("SMS", "0")) >= 5:
-                score += 8    # SMS
+                score += 6    # SMS (5+ messages)
             if int(checks.get("USAGE", "0")) > 0:
                 score += 5    # UsageStats
-            # Battery, WiFi, GAID, app aging add some baseline
-            score += 11       # Battery(3) + WiFi(5) + props(3)
+            if int(checks.get("AUTOFILL", "0")) > 0:
+                score += 4    # Chrome Autofill
+            if int(checks.get("PLAYSTORE", "0")) > 3:
+                score += 6    # Play Store prefs (signed in indicator)
+            if int(checks.get("KIWI", "0")) > 0:
+                score += 4    # Kiwi browser configured
+            
+            # Service registration (15 points)
+            if checks.get("GMS_REG") == "1":
+                score += 5    # GMS device registration
+            if checks.get("GSF_ID") == "1":
+                score += 5    # GSF ID registered
+            if checks.get("WIFI"):
+                score += 5    # WiFi configured
+            
+            # Security/Stealth (10 points)
+            if checks.get("BUILD_TYPE") == "user":
+                score += 5    # Correct build type
+            if not checks.get("VMOS_LEAK"):
+                score += 5    # No VMOS detection
+            
             # Cap at 100
             score = min(score, 100)
 
             grade = "F"
             if score >= 95: grade = "A+"
-            elif score >= 85: grade = "A"
+            elif score >= 90: grade = "A"
+            elif score >= 80: grade = "B+"
             elif score >= 70: grade = "B"
-            elif score >= 50: grade = "C"
+            elif score >= 60: grade = "C"
+            elif score >= 50: grade = "D"
 
             self._result.trust_score = score
             self._result.grade = grade
 
-            notes = f"{score}/100 ({grade}) — " + ", ".join(f"{k}={v}" for k, v in checks.items())
+            # Create detailed notes
+            notes = f"{score}/100 ({grade}) — " + ", ".join(f"{k}={v}" for k, v in checks.items() if v)
             self._set_phase(n, "done", notes[:120])
             self._log(f"Phase 10 — Trust Audit: {score}/100 ({grade})")
-            self._log(f"  Data: {json.dumps(checks)}")
+            self._log(f"  Checks: {json.dumps(checks)}")
 
         except Exception as e:
             self._set_phase(n, "failed", str(e)[:80])
