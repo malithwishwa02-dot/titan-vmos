@@ -217,7 +217,11 @@ function showSetupWindow() {
 ipcMain.handle('setup:getInfo', () => {
   const python = findPython();
   let adbFound = false;
-  try { execSync('which adb', { timeout: 3000 }); adbFound = true; } catch (_) {}
+  try {
+    // Use execFileSync to avoid shell injection
+    execFileSync('/usr/bin/which', ['adb'], { timeout: 3000 });
+    adbFound = true;
+  } catch (_) {}
   return {
     python: python ? python : null,
     adb: adbFound,
@@ -263,7 +267,8 @@ ipcMain.handle('setup:run', async (event) => {
     // 3. Create Python virtual environment
     send('Creating Python virtual environment...');
     if (!fs.existsSync(path.join(VENV_DIR, 'bin', 'python3'))) {
-      execSync(`${python.cmd} -m venv "${VENV_DIR}"`, { timeout: 60000 });
+      // Use execFileSync with absolute path from findPython
+      execFileSync(python.path, ['-m', 'venv', VENV_DIR], { timeout: 60000 });
     }
     send('Virtual environment ready');
 
@@ -272,8 +277,8 @@ ipcMain.handle('setup:run', async (event) => {
     const pipCmd = path.join(VENV_DIR, 'bin', 'pip');
     const reqFile = path.join(RESOURCES, 'server', 'requirements.txt');
     if (fs.existsSync(reqFile)) {
-      execSync(`"${pipCmd}" install --upgrade pip -q`, { timeout: 120000 });
-      execSync(`"${pipCmd}" install -r "${reqFile}" -q`, { timeout: 300000 });
+      execFileSync(pipCmd, ['install', '--upgrade', 'pip', '-q'], { timeout: 120000 });
+      execFileSync(pipCmd, ['install', '-r', reqFile, '-q'], { timeout: 300000 });
     }
     send('Dependencies installed');
 
@@ -314,6 +319,16 @@ ipcMain.handle('setup:saveVmosCredentials', async (event, credentials) => {
     // Validate API key format (alphanumeric with common special chars)
     if (apiKey && !/^[A-Za-z0-9_\-]{8,64}$/.test(apiKey)) {
       return { ok: false, error: 'Invalid API key format' };
+    }
+
+    // Validate API secret format (alphanumeric with common special chars)
+    if (apiSecret && !/^[A-Za-z0-9_\-]{8,128}$/.test(apiSecret)) {
+      return { ok: false, error: 'Invalid API secret format' };
+    }
+
+    // Validate API host format
+    if (apiHost && !/^[a-z0-9][a-z0-9\-\.]{0,62}\.[a-z]{2,}$/i.test(apiHost)) {
+      return { ok: false, error: 'Invalid API host format' };
     }
 
     // Update or add VMOS credentials
@@ -488,19 +503,21 @@ async function createMainWindow() {
   // Open external links in the system browser
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     if (!url.startsWith(`http://127.0.0.1:${API_PORT}`)) {
+      // Validate URL before opening
+      try {
+        const parsed = new URL(url);
+        if (!['http:', 'https:'].includes(parsed.protocol)) {
+          console.warn('[titan-vmos] Blocked non-http URL:', url);
+          return { action: 'deny' };
+        }
+      } catch (_) {
+        console.warn('[titan-vmos] Invalid URL blocked:', url);
+        return { action: 'deny' };
+      }
+      
+      // Use shell.openExternal exclusively (no shell fallback)
       shell.openExternal(url).catch((err) => {
         console.warn('[titan-vmos] shell.openExternal failed', err && err.message ? err.message : err);
-        const openCmd = process.platform === 'darwin'
-          ? `open "${url}"`
-          : process.platform === 'win32'
-            ? `start "" "${url}"`
-            : `xdg-open "${url}"`;
-        const { exec } = require('child_process');
-        exec(openCmd, (error) => {
-          if (error) {
-            console.error('[titan-vmos] fallback open command failed', error.message || error);
-          }
-        });
       });
       return { action: 'deny' };
     }
