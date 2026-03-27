@@ -195,7 +195,7 @@ class VMOSGenesisEngine:
     # ── Logging helpers ───────────────────────────────────────────────
 
     def _log(self, msg: str):
-        logger.info("[%s] %s", self.pad, msg)
+        logger.info(f"[{self.pad}] {msg}")
         if self._result:
             self._result.log.append(msg)
             self._result.log = self._result.log[-200:]

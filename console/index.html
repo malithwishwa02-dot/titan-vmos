@@ -2878,7 +2878,6 @@ function titanConsole() {
         const r = await this.api('/genesis/pipeline/'+devId,{method:'POST',body:JSON.stringify(body)});
         this.pipelineJobId = r.job_id;
         this.pipelineLog.push('[00:01] Job started: '+r.job_id);
-        if(r.viewer) this.pipelineLog.push('[00:01] Device viewer: '+r.viewer.reason);
         this._startPipelinePoll(r.job_id);
       } catch(e) {
         this.pipelineLog.push('✗ Failed to start: '+e.message);

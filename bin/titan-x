@@ -259,35 +259,18 @@ cmd_trust_score() {
 cmd_genesis() {
     ensure_venv
     local device="${1:-dev-cvd001}"
-    local config_file="${2:-}"
     PORT="${TITAN_API_PORT:-8080}"
     if [[ -z "${TITAN_API_SECRET:-}" ]]; then
         echo "ERROR: TITAN_API_SECRET environment variable not set"
         return 1
     fi
-
-    # Build JSON payload from config file or empty
-    local payload='{}'
-    if [[ -n "$config_file" ]]; then
-        if [[ ! -f "$config_file" ]]; then
-            echo "ERROR: Config file not found: $config_file"
-            return 1
-        fi
-        # Validate JSON
-        if ! python3 -c "import json; json.load(open('$config_file'))" 2>/dev/null; then
-            echo "ERROR: Invalid JSON in config file: $config_file"
-            return 1
-        fi
-        payload=$(cat "$config_file")
-        echo "Starting Genesis pipeline for device: ${device} (config: ${config_file})"
-    else
-        echo "Starting Genesis pipeline for device: ${device} (default config)"
-    fi
+    echo "Starting Genesis pipeline for device: ${device}"
+    echo "Use the Cuttlefish Desktop app for the full interactive experience."
     echo ""
     response=$(curl -sS -w "\n%{http_code}" -X POST "http://127.0.0.1:${PORT}/api/genesis/pipeline/${device}" \
         -H "Content-Type: application/json" \
         -H "Authorization: Bearer ${TITAN_API_SECRET}" \
-        -d "$payload" 2>&1)
+        -d '{}' 2>&1)
     code=$(echo "$response" | tail -n1)
     body=$(echo "$response" | sed '$d')
     if [[ "$code" == "200" ]]; then
@@ -295,27 +278,7 @@ cmd_genesis() {
         job_id=$(echo "$body" | python3 -c "import sys,json; print(json.load(sys.stdin).get('job_id',''))" 2>/dev/null || true)
         if [[ -n "$job_id" ]]; then
             echo ""
-            echo "Polling pipeline status..."
-            local max_wait=900
-            local interval=5
-            local elapsed=0
-            while [[ $elapsed -lt $max_wait ]]; do
-                sleep $interval
-                elapsed=$((elapsed + interval))
-                local status_resp
-                status_resp=$(curl -sS "http://127.0.0.1:${PORT}/api/genesis/pipeline-status/${job_id}" \
-                    -H "Authorization: Bearer ${TITAN_API_SECRET}" 2>/dev/null)
-                local state
-                state=$(echo "$status_resp" | python3 -c "import sys,json; print(json.load(sys.stdin).get('status','unknown'))" 2>/dev/null || echo "unknown")
-                echo "[${elapsed}s] Status: $state"
-                if [[ "$state" == "completed" || "$state" == "failed" || "$state" == "error" ]]; then
-                    echo ""
-                    echo "$status_resp" | python3 -m json.tool 2>/dev/null || echo "$status_resp"
-                    [[ "$state" == "completed" ]] && return 0 || return 1
-                fi
-            done
-            echo "ERROR: Pipeline timed out after ${max_wait}s"
-            return 1
+            echo "Poll status: curl http://127.0.0.1:${PORT}/api/genesis/pipeline-status/${job_id}"
         fi
     else
         echo "Genesis start failed: HTTP $code"
