@@ -4,6 +4,11 @@
  * Exposes secure IPC bridge to renderer for VMOS Pro cloud operations.
  */
 const { contextBridge, ipcRenderer } = require('electron');
+const path = require('path');
+
+// Determine API base from environment, with fallback
+const API_PORT = process.env.TITAN_API_PORT || '8081';
+const API_BASE = process.env.TITAN_API_BASE || `http://127.0.0.1:${API_PORT}/api`;
 
 contextBridge.exposeInMainWorld('titanVMOS', {
   platform: process.platform,
@@ -11,7 +16,7 @@ contextBridge.exposeInMainWorld('titanVMOS', {
   backend: 'vmos-pro',
   
   // API configuration
-  apiBase: process.env.TITAN_API_BASE || 'http://127.0.0.1:8081/api',
+  apiBase: API_BASE,
   
   // Setup IPC
   getSystemInfo: () => ipcRenderer.invoke('setup:getInfo'),

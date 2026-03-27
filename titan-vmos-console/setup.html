@@ -210,7 +210,7 @@
   <div class="input-group">
     <label>API Key (Access Key)</label>
     <input type="text" id="vmosApiKey" placeholder="Enter your VMOS API key">
-    <p class="hint">Obtain from <a href="#" onclick="window.titanVMOS.openExternal('https://www.vmoscloud.com/')">vmoscloud.com</a></p>
+    <p class="hint">Obtain from <a href="#" id="vmosLink1" class="external-link">vmoscloud.com</a></p>
   </div>
   <div class="input-group">
     <label>API Secret</label>
@@ -231,7 +231,7 @@
 
   <div class="footer">
     VMOS Pro Cloud Console • Titan V13.0<br>
-    <a href="#" onclick="window.titanVMOS.openExternal('https://www.vmoscloud.com/')">VMOS Cloud Portal</a>
+    <a href="#" id="vmosLink2" class="external-link">VMOS Cloud Portal</a>
   </div>
 </div>
 
@@ -242,6 +242,14 @@
   const launchBtn = document.getElementById('launchBtn');
 
   let systemInfo = null;
+
+  // Setup external link handlers (CSP-compliant)
+  document.querySelectorAll('.external-link').forEach(link => {
+    link.addEventListener('click', (e) => {
+      e.preventDefault();
+      window.titanVMOS.openExternal('https://www.vmoscloud.com/');
+    });
+  });
 
   function updateIcon(id, status) {
     const el = document.getElementById(id);

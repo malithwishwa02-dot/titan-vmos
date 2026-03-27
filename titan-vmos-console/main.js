@@ -81,12 +81,19 @@ function loadDotEnv(envPath) {
 }
 
 function findPython() {
-  for (const cmd of ['python3', 'python']) {
+  // Only allow standard Python executable names to prevent path injection
+  const allowedPythonCmds = ['python3', 'python'];
+  for (const cmd of allowedPythonCmds) {
     try {
+      // Use 'which' to find the absolute path to validate
+      const whichResult = execSync(`which ${cmd} 2>/dev/null`, { timeout: 5000 }).toString().trim();
+      if (!whichResult || !whichResult.startsWith('/')) {
+        continue;  // Skip if not an absolute path
+      }
       const ver = execSync(`${cmd} --version 2>&1`, { timeout: 5000 }).toString().trim();
       const match = ver.match(/Python\s+(\d+)\.(\d+)/);
       if (match && (parseInt(match[1]) > 3 || (parseInt(match[1]) === 3 && parseInt(match[2]) >= 10))) {
-        return { cmd, version: ver };
+        return { cmd, version: ver, path: whichResult };
       }
     } catch (_) { /* not found */ }
   }
@@ -141,7 +148,8 @@ function startServer() {
         ...process.env,
         ...projEnv,
         ...dotEnvVars,
-        PYTHONPATH: [SERVER_DIR, CORE_DIR, '/opt/titan/core', '/opt/titan-v13-device/core', '/opt/titan-v13-device/server'].filter(Boolean).join(':'),
+        // Build PYTHONPATH from available directories only
+        PYTHONPATH: [SERVER_DIR, CORE_DIR].filter(d => fs.existsSync(d)).join(':'),
         TITAN_DATA,
         TITAN_API_PORT: String(API_PORT),
         // VMOS Pro specific environment variables
@@ -368,8 +376,7 @@ async function createMainWindow() {
       preload: path.join(__dirname, 'preload.js'),
       nodeIntegration: false,
       contextIsolation: true,
-      webSecurity: false,
-      allowRunningInsecureContent: true,
+      // webSecurity is enabled by default - we load local files only
     },
     show: false,
     autoHideMenuBar: true,
