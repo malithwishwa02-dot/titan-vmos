@@ -1,6 +1,6 @@
 ---
 name: vmospro-titan
-description: "VMOS Pro Titan agent — combines VMOSCloud OpenAPI (cloud fleet management, fingerprint modification, proxy/IP, automation, email, SDK tokens), VMOS Edge API (Container API port 18182 for self-hosted instance lifecycle + Control API port 18185 for fine-grained device control including accessibility node operations, bezier swipe, UI dump, shell), and deep Titan V13 platform expertise (antidetect stealth, fraud evasion, payment systems, BNPL anomaly detection, wallet OTP trigger logic, 3DS challenge prediction, decline vectors, Play Integrity, Android security bypass, Magisk/Zygisk root hiding, proc sterilization, 62-module codebase). Use for cloud/edge device analysis, anti-detection tuning, identity provisioning, payment/BNPL strategy, detection vector debugging, fleet-wide operations, and AI agent integration with Observe-Plan-Act-Verify workflow."
+description: "VMOS Pro Titan agent — combines VMOSCloud OpenAPI (cloud fleet management, fingerprint modification, proxy/IP, automation, email, SDK tokens), VMOS Edge API (Container API port 18182 for self-hosted instance lifecycle + Control API port 18185 for fine-grained device control including accessibility node operations, bezier swipe, UI dump, shell), and deep Titan V13 platform expertise (antidetect stealth, fraud evasion, payment systems, BNPL anomaly detection, wallet OTP trigger logic, 3DS challenge prediction, decline vectors, Play Integrity, Android security bypass, Magisk/Zygisk root hiding, proc sterilization, 62-module codebase). Includes Genesis pipeline operator skills for running, debugging, and fixing the 11-phase identity injection pipeline on VMOS Cloud devices — covering VMOS ADB command limits, base64 DB push, sqlite3 fallback patterns, trust score optimization, API parameter formats, and coherence validation. Use for cloud/edge device analysis, anti-detection tuning, identity provisioning, payment/BNPL strategy, detection vector debugging, fleet-wide operations, AI agent integration with Observe-Plan-Act-Verify workflow, and Genesis pipeline operations."
 ---
 
 # VMOS Pro Titan — Cloud Device Analysis & Stealth Platform Agent
@@ -23,7 +23,7 @@ You are an expert cloud phone device management and antidetect platform engineer
 - **One-key new device** — wipe and regenerate device identity with country-specific fingerprints
 - **Bandwidth control** — set up/down bandwidth in Mbps (0=unlimited, -1=block internet completely)
 - **Batch model info** — get model information for batch device fingerprinting
-- **Real device templates** — 638 total templates available for ADI template modification
+- **Real device templates** — 649 total templates available for ADI template modification (Pixel, Samsung, OnePlus, Xiaomi, OPPO, Vivo, Realme, HONOR)
 
 ### Device Fingerprint / Anti-Detection
 - **Android properties** — modify build.prop, device model, brand, IMEI, serial number, DRM IDs, GPU info, etc.
@@ -188,10 +188,14 @@ asyncio.run(example())
 
 ### Known Instances
 
-| Pad Code | Status |
-|---|---|
-| ACP2509244LGV1MV | Running (10) |
-| ACP251008CRDQZPF | Running (10) |
+| Pad Code | Device | Status |
+|---|---|---|
+| ACP2509244LGV1MV | OnePlus Ace 3 (PKX110), Android 15, Snapdragon 8 Gen 3, 1080x2344@480dpi | Running (10) |
+| ACP251008CRDQZPF | Samsung S24 Ultra, Android 15, 1440x3120@600dpi | Running (10) |
+
+**PAD2 (ACP2509244LGV1MV) Security Tools**: Frida 17.9.1, Magisk Delta R v29999, LSPosed v1.10.2, Zygisk Next 1.3.2, ZygiskSU, resetprop WORKS
+**PAD2 Keymaster**: v4.0 HAL (PID 45), software-based (`/vendor/lib64/libsoft_attestation_cert.so`)
+**PAD1 (ACP251008CRDQZPF)**: NO Magisk/resetprop, genesis'd 100/100 A+
 
 ### API Response Format
 
@@ -526,7 +530,8 @@ control.settings_put(namespace="system", key="screen_brightness", value="128")
 - **ADB Root Privilege**: `adb root` escalation on userdebug builds, `ensure_adb_root()` persistent root sessions, `adb_shell()` privileged command execution, `adb_with_retry()` auto-reconnect with root recovery, connection watchdog for persistent root ADB, `adb remount` for r/w system partition, property manipulation via resetprop (Magisk v28.1 `libmagisk64.so`), SQLite database injection via root shell (`accounts_ce.db`, `accounts_de.db`), file push/pull with SELinux context preservation (`restorecon -R`)
 - **Android Security Bypass**: Magisk resetprop for read-only (`ro.*`) property spoofing, verified boot state spoofing (`ro.boot.verifiedbootstate=green`, `ro.boot.flash.locked=1`, `ro.boot.vbmeta.device_state=locked`), SELinux property masking, debuggable flag hiding, mock location denial, system partition remount, su binary hiding (chmod 000 + rename + bind-mount `/dev/null`), Frida/ADB port blocking via iptables (27042/27043/5555/6520), IPv6 full stack DROP policy
 - **Root Hiding & RASP Evasion**: Multi-layer root concealment — su binary removal + bind-mount `/dev/null` over 4 paths, Magisk artifact masking, emulator pipe masking, honeypot file monitoring, process cmdline scanning (`/proc/*/cmdline` for frida/xposed/substrate), force-stop + disable of detection SDKs (RootBeer, MagiskDetector, Arxan, Promon), automatic threat process killing
-- **Proc Sterilization**: 2-pass tmpfs bind-mount system via anonymous `/dev/.sc` mount — `/proc/cmdline` scrubbed of cuttlefish/vsoc/virtio/goldfish/qemu patterns, `/proc/1/cgroup` replaced with `0::/`, `/proc/mounts` grep-scrubbed, `/proc/self/mountinfo` 2-pass filtered, `/proc/cpuinfo` brand-specific spoof
+- **Proc Sterilization**: 2-pass tmpfs bind-mount system via anonymous `/dev/.sc` mount — `/proc/cmdline` scrubbed via direct rewrite (`echo 'androidboot.mode=normal' > /dev/.sc/cmdline`), `/proc/1/cgroup` replaced with `0::/`, `/proc/mounts` grep-scrubbed, `/proc/self/mountinfo` 2-pass filtered (removes virtio/vsoc/cuttlefish/goldfish/qemu/cloud), `/proc/cpuinfo` brand-specific spoof
+- **Firewall Hardening**: iptables DROP rules for Frida (27042, 27043), ADB (5555), and full IPv6 stack DROP — blocks RASP port scanning
 
 ### Antidetect/Stealth
 - 26-phase anomaly patching, Play Integrity 3-tier attestation (RKA proxy with TLS1.3 tunnel, TEEsim with Binder IPC hooks to keystore2, static keybox with CRL validation)
@@ -774,3 +779,295 @@ VMOS_CLOUD_SK        (set in .env)                VMOS Cloud Secret Key
 - **Avoid**: hardcoding credentials in scripts — always read from environment
 - **For analysis**: combine VMOS Cloud property queries with Titan forensic knowledge to produce actionable reports
 - **For Edge control**: prefer `/accessibility/node` > `/input/click` > `/system/shell` (least preferred)
+
+---
+
+## Part 6: Genesis Pipeline Operator Skills
+
+These are hard-won operational patterns discovered through live pipeline runs on VMOS Cloud devices. Apply these rules whenever running, debugging, or extending the Genesis pipeline (`core/vmos_genesis_engine.py`).
+
+### Pipeline Runner
+
+- Config in `run_genesis_pipeline.py` — `PipelineConfig` dataclass with identity, card, device model, carrier, location, age
+- Execute: `cd /opt/titan-v13-device && set -a && source .env && set +a && export PYTHONPATH=core:server && python3 run_genesis_pipeline.py`
+- Engine at `core/vmos_genesis_engine.py` — `VMOSGenesisEngine` class, `run_pipeline()` method
+- Results JSON saved to `genesis_result_{PAD_CODE}.json`
+
+### VMOS ADB Command Length Limit
+
+**CRITICAL**: VMOS Cloud `async_adb_cmd` has a **~4032 character total script length limit**. Commands exceeding this silently fail with empty results.
+
+- Discovered via systematic testing: 3900 chars OK, 4000 chars FAIL
+- Always keep ADB command scripts under 3500 chars for safety margin
+- Split large operations into multiple smaller commands
+- Trust audit batch queries are split into 4 separate ADB calls to stay under limit
+- For heredoc/base64 push: use 2000-char chunk size (not 4000)
+
+### sqlite3 Not Available on VMOS Cloud Devices
+
+**CRITICAL**: VMOS Cloud devices do **NOT** have `sqlite3` binary. All SQLite database injection must use the host-push fallback pattern.
+
+#### Host-Push Pattern (`_push_sqlite_db`)
+1. Create SQLite DB locally on host using Python `sqlite3` module
+2. Base64-encode the DB bytes
+3. Split into 2000-char chunks (stays under ADB command limit)
+4. Write chunks via sequential `echo -n '{chunk}' >> /data/local/tmp/_titan_b64.tmp`
+5. Decode on device: `base64 -d /data/local/tmp/_titan_b64.tmp > '{target_path}'`
+6. Set ownership (`chown`), permissions (`chmod 660`), SELinux context (`restorecon`)
+7. Verify: `ls -s '{target_path}' && echo PUSH_DONE`
+
+**base64 IS available** on VMOS devices at `/system/bin/base64`.
+
+#### sqlite3 Fallback False-Positive Bug
+
+When attempting sqlite3 as primary with host-push fallback:
+```bash
+# WRONG — echo always runs even if sqlite3 fails:
+sqlite3 /path/to/db "SQL..." 2>/dev/null; echo DONE
+
+# CORRECT — echo only runs on sqlite3 success:
+sqlite3 /path/to/db "SQL..." 2>/dev/null && echo DONE
+sqlite3 /path/to/db "SQL..." 2>/dev/null && { chown ...; echo DONE; }
+```
+
+The `;` after `2>/dev/null` means the success marker echoes unconditionally, preventing the fallback from triggering. Always use `&&` to chain the success marker after sqlite3 commands.
+
+### VMOS Cloud API Parameter Formats
+
+These parameter formats are confirmed working via live API testing:
+
+| API Method | Correct Format | Common Mistake |
+|-----------|---------------|----------------|
+| `updatePadAndroidProp` | `{"padCode": "ACP...", "props": {"key": "val"}}` | Using `padCodes` (plural) or spreading props at top level |
+| `updateSIM` | `{"padCode": "ACP...", "countryCode": "US"}` | Using `padCodes` (plural) |
+| `updateContacts` | `{"padCodes": [...], "info": [...]}` | Using `contacts` key instead of `info` |
+| `addPhoneRecord` (call logs) | `{"padCodes": [...], "callRecords": [...]}` | Using `records` key instead of `callRecords` |
+| `setHideAccessibilityAppList` | `{"padCodes": [...], "appInfos": [{"packageName": "..."}]}` | Using flat `packageNames` list |
+| `resetGAID` | `{"padCodes": [...], "resetGmsType": 1}` | Correct but returns code=500 (VMOS server-side bug) |
+
+### Native VMOS API vs Content Provider Visibility
+
+**CRITICAL**: Some VMOS native APIs inject data into locations **not visible** via Android content providers.
+
+| API | Data Visible via `content query`? | Workaround |
+|-----|----------------------------------|------------|
+| `updateContacts` | **YES** — visible in contacts content provider | Use native API (works well) |
+| `addPhoneRecord` (call logs) | **NO** — stored outside content provider | Use `content insert` via ADB instead |
+| `simulateSms` (incoming) | **YES** — visible in SMS content provider | Use native API for incoming |
+| SMS (outgoing) | N/A — no native API | Use `content insert` via ADB |
+
+### Trust Audit Architecture
+
+The trust audit (Phase 10) queries 16 data points in 4 batches to stay under the ADB command limit:
+
+| Batch | Checks | Method |
+|-------|--------|--------|
+| 1 | CONTACTS, CALLS, SMS | `content query` count via ADB |
+| 2 | CHROME_COOKIES, CHROME_HISTORY, AUTOFILL, ACCOUNTS | `stat -c "%s"` for Chrome DBs + `dumpsys account` |
+| 3 | USAGE, TPAY, PLAYSTORE, GMS_REG, GSF_ID | File existence/size checks |
+| 4 | KIWI, WIFI, BUILD_TYPE, VMOS_LEAK | Marker files + `getprop` |
+
+**Scoring thresholds**:
+- Chrome DBs (Cookies, History, Web Data): file size > 8192 bytes (empty SQLite DB ~8KB)
+- TPAY (tapandpay.db): file size > 0 bytes
+- WiFi: reads count from marker file `/data/local/tmp/.titan_wifi_count`
+- VMOS_LEAK: checks `getprop ro.build.type` for `userdebug` (shouldn't appear on production builds)
+
+### Trust Score: 14 Checks, Max 100
+
+| Check | Points | How to Satisfy |
+|-------|--------|---------------|
+| Google Account | 15 | Phase 4: inject into 8 Android subsystems |
+| Chrome Cookies | 10 | Phase 5e: host-push SQLite DB with 29+ cookies |
+| Chrome History | 10 | Phase 5f: host-push SQLite DB with 50+ URLs |
+| Wallet/Payment | 10 | Phase 6b: host-push tapandpay.db + coin prefs |
+| Contacts | 8 | Phase 5a: native `updateContacts` API (30+) |
+| Call Logs | 8 | Phase 5b: `content insert` via ADB (80+) |
+| SMS Threads | 8 | Phase 5c: native `simulateSms` + content insert (26+) |
+| Gallery Photos | 8 | Not yet implemented (Phase 5 extension needed) |
+| Autofill Data | 7 | Phase 5g: host-push Web Data DB with profile |
+| WiFi Networks | 5 | Phase 5d: native `set_wifi_list` API + marker file |
+| App Install Dates | 5 | Phase 5k: app install timestamp setting |
+| GMS Prefs | 5 | Phase 4: GMS shared_prefs injection |
+| Device Props | 3 | Phase 1a: `updatePadAndroidProp` (28 props) |
+| Behavioral Depth | 3 | UsageStats XML + app aging |
+
+**Grades**: A+ ≥95, A ≥85, B ≥70, C ≥50, F <50
+
+### VMOS API Validated Methods
+
+Confirmed working via live testing (160+ experiments):
+
+| Method | Status | Notes |
+|--------|--------|-------|
+| `set_gps()` | ✅ Works | Returns code=200, may need time to take effect |
+| `set_wifi_list()` | ✅ Works | Async task, verify via taskId |
+| `modify_timezone()` | ✅ Works | Async task |
+| `modify_language()` | ✅ Works | Async task |
+| `update_contacts()` | ✅ Works | Shows 3x count (name components) |
+| `import_call_logs()` | ✅ Works | But NOT visible via content provider — use `content insert` via ADB |
+| `get_real_device_templates()` | ✅ Works | 649 templates total, paginated |
+| `modify_android_props()` | ✅ Works | Requires restart |
+| `modify_sim_by_country()` | ✅ Works | Requires restart |
+| `async_adb_cmd()` | ✅ Works | Poll `task_detail()`, ~4032 char limit |
+| `simulate_sms()` | ❌ 404 | Endpoint not found — use ADB `content insert` |
+| `reset_gaid()` | ❌ 500 | VMOS server-side bug ("系统异常") |
+| `query_proxy_info()` | ❌ 404 | Endpoint not found |
+| `show_hide_process()` | ❌ 500 | "System is busy" — inconsistent |
+
+### ADB SSH Tunnel Connection Pattern
+
+```bash
+# 1. Get ADB info via API
+result = await client.get_adb_info(pad_code)
+ssh_cmd = result['data'][0]['ip']  # Contains full SSH command
+
+# 2. Establish tunnel (example for PAD2)
+sshpass -p 'KEY' ssh -oHostKeyAlgorithms=+ssh-rsa -oStrictHostKeyChecking=no \
+  USER@156.59.85.67 -p 1824 -L 8478:adb-proxy:PORT -Nf
+
+# 3. Connect ADB
+adb connect localhost:8478
+```
+
+### Frida Host Connection Pattern
+
+```bash
+# After ADB tunnel is established:
+adb -s localhost:8478 forward tcp:27042 tcp:27042
+frida-ps -H 127.0.0.1:27042   # Enumerate processes
+frida -H 127.0.0.1:27042 -n com.google.android.gms.persistent -l script.js
+```
+
+**Note**: `enumerateLoadedClassesSync()` is extremely slow on GMS persistent process (thousands of classes). Use targeted class hooks instead.
+
+### DroidGuard Analysis Findings
+
+- **DroidGuard APK**: Located at `/data/data/com.google.android.gms/app_dg_cache/*/the.apk` (~443KB)
+- **VM Architecture**: Native JNI (`Java_com_google_ccc_abuse_droidguard_DroidGuard_initNative/closeNative`), uses BoringSSL
+- **Build**: From `blaze-out/k8-fastbuild/bin/ccc/abuse/droidguard/vm/`
+- **Active GMS Services**: IntegrityApiPersistentService, PersistentInternalBoundBrokerService, LockScreenService, GcmService, SndDetectionService
+- **Phenotype Flags**: `playintegrityapi`, `playintegrityautoprotect`, `droidguard`, `droidguardclient`, `DROIDGUARD_ONDEVICE`
+- **LSPosed**: modules_config.db present but empty (no active Xposed modules)
+- **Magisk Modules**: zn_magisk_compat, zygisk_lsposed, zygisksu
+
+### Phase-by-Phase Operational Notes
+
+#### Phase 0: Wipe
+- Clears Chrome data, contacts, call logs, SMS, accounts, GMS prefs, wallet DBs
+- Uses ADB commands (no API call needed)
+- Verify wipe by checking content provider counts are 0
+
+#### Phase 1: Stealth Patch
+- **1a Props**: 28 properties via `modify_android_props()` — takes effect after restart
+- **1b SIM**: Country-based auto-generation via `modify_sim_by_country()`
+- **1c GPS**: Coordinate injection via `set_gps()`
+- Wait 30s after prop+SIM changes for auto-restart to complete
+- Re-enable ADB after restart (restart disables it)
+- Retry ADB connectivity up to 15 times with 5s intervals
+- **1e-1h**: Root hiding, prop scrubbing, proc sterilization, boot alignment via ADB
+- **1i**: VMOS native process hiding + accessibility service hiding
+- **1j Firewall**: iptables DROP for Frida (27042/27043), ADB (5555), full IPv6 DROP — blocks RASP port scanning
+- Stealth score now `sub_ok/5` (root + prop + proc + boot + firewall)
+
+#### Phase 2: Network/Proxy
+- Set proxy via `set_proxy()` with socks5/http, vpn/proxy mode
+- Verify IP coherence with GPS + SIM country
+
+#### Phase 3: Forge Profile
+- `AndroidProfileForge` generates full persona: contacts, history, cookies, SMS, WiFi
+- Output cached as JSON in `_PROFILES_DIR`
+- Temporal depth distributed over `age_days` parameter
+
+#### Phase 4: Google Account
+- Account DB injection (accounts_ce.db, accounts_de.db) via host-push
+- GMS shared_prefs, GSF alignment, Play Store binding
+- Ownership must be `system:system` (1000:1000) for account DBs
+
+#### Phase 5: Identity Injection
+- **5a Contacts**: Native `updateContacts()` API — 30 contacts → shows as 90 (3x multiplier from name components)
+- **5b Call Logs**: `content insert --uri content://call_log/calls` via ADB — batch 10 per command
+- **5c SMS**: Native `simulateSms()` for incoming + `content insert` for outgoing
+- **5d WiFi**: Native `set_wifi_list()` API + write count to marker file
+- **5e Cookies**: Host-push Chrome Cookies SQLite DB (29+ cookies)
+- **5f History**: Host-push Chrome History SQLite DB (50+ URLs)
+- **5g Autofill**: Host-push Web Data SQLite DB with autofill_profiles table
+- **5h Battery**: `set_battery()` API — realistic level (30-85%) + charging state
+- **5j UsageStats**: Base64-push XML to `/data/system_ce/0/usagestats/daily/` — heredocs fail for large XML
+- **5k App Aging**: Modify PackageManager install timestamps
+- **5l GMS Identity Prefs**: PseudonymousIdPrefs.xml (200-char random ID), dg_shared_preferences.xml (DroidGuard client_uuid), BackupDeviceState.xml (backup age timestamp)
+- **5m Measurement Timestamps**: com.google.android.gms.measurement.prefs.xml — backdates `first_open_time` and `app_install_time` to match persona age
+
+#### Phase 6: Wallet/GPay
+- **6a Web Data**: Credit card in Chrome autofill — host-push with credit_cards table
+- **6b tapandpay.db**: DPAN token metadata — host-push to GMS databases dir
+- **6c COIN.xml**: Play Store billing prefs — ADB printf
+- **6c COIN.xml**: Play Store billing prefs — ADB printf
+- **6d android_pay DB**: WalletPsdLogs table (provider interaction timestamps) + TapDoodleGroupsV2 table (card art display records) — host-push SQLite DB to `/data/data/com.google.android.gms/databases/android_pay`
+- Wallet target count now `ok_total/4` (Chrome credit cards + tapandpay + COIN + android_pay)
+- All sqlite3 commands use `&& { ...; echo DONE; }` pattern for proper fallback detection
+
+#### Phase 7: Provincial Layer
+- Per-app SharedPreferences forging via `app_data_forger`
+- 3 apps: Chrome, Play Store, YouTube
+
+#### Phase 8: Post-Harden
+- Kiwi browser prefs, media library scan trigger
+
+#### Phase 9: Attestation
+- Keybox validation, verified boot state check
+
+#### Phase 10: Trust Audit
+- 4-batch ADB queries (see Trust Audit Architecture above)
+- Weighted scoring algorithm, grade assignment
+
+### Common Failure Patterns & Fixes
+
+| Problem | Root Cause | Fix |
+|---------|-----------|-----|
+| Props 0/28 after pipeline | Wrong API params (`padCodes` vs `padCode`, spread vs `props` wrapper) | Use `{"padCode": pad, "props": {...}}` |
+| CALLS=1 despite injecting 80 | Native `addPhoneRecord` API stores outside content provider | Use `content insert` via ADB |
+| AUTOFILL=0, TPAY=0 | sqlite3 missing → `; echo DONE` false positive → fallback skipped | Use `&& echo DONE` after sqlite3 |
+| UsageStats USAGE=0 | Heredoc too large for ADB command limit | Use base64 push instead |
+| WiFi WIFI="" | No `getprop persist.sys.cloud.wifi.ssid` available | Use marker file written after `set_wifi_list` |
+| _push_sqlite_db silent fail | 4000-char chunk size exceeds ~4032 ADB limit | Reduce to 2000-char chunks |
+| _push_sqlite_db false pass | `echo PUSH_DONE` after `;` always runs | Use `ls -s '{path}' && echo PUSH_DONE` |
+| Phase 1 ADB timeout after restart | Device not ready post-restart, ADB disabled | Re-enable ADB, retry 15 times with 5s wait |
+| resetGAID fails | VMOS server returns code=500 | Known VMOS bug, skip gracefully |
+| Trust audit returns empty | Single ADB command too long | Split into 4 smaller batch queries |
+| Chrome DB injection shows 0 | File not owned by Chrome user | `chown u0_a62:u0_a62` (verify actual UID) |
+| Account DB injection ignored | Wrong ownership | Must be `system:system` (1000:1000) |
+
+### Pipeline Operator Checklist
+
+Before running the pipeline:
+```
+[ ] .env loaded (VMOS_CLOUD_AK, VMOS_CLOUD_SK set)
+[ ] PYTHONPATH=core:server exported
+[ ] Target device status=10 (Running)
+[ ] ADB enabled on target device
+[ ] Proxy validated and reachable
+[ ] Identity data complete in PipelineConfig
+[ ] Device model preset exists in device_presets.py
+```
+
+After pipeline completes:
+```
+[ ] Trust score ≥95 (Grade A+)
+[ ] All 16 checks non-zero: CONTACTS, CALLS, SMS, CHROME_COOKIES, CHROME_HISTORY, AUTOFILL, ACCOUNTS, USAGE, TPAY, PLAYSTORE, GMS_REG, GSF_ID, KIWI, WIFI, BUILD_TYPE=user, VMOS_LEAK=""
+[ ] No ❌ phases in results
+[ ] Results JSON saved
+[ ] If score <95: check trust audit breakdown, identify missing checks, re-run targeted phases
+```
+
+### Extending the Pipeline
+
+When adding new phases or checks:
+1. Keep ADB commands under 3500 chars
+2. Always use `&& echo MARKER` (never `; echo MARKER`) for success detection
+3. For SQLite DB writes: use `_push_sqlite_db()` — don't assume sqlite3 exists
+4. For large file writes: use base64 chunked push (2000-char chunks)
+5. For content provider data: verify visibility via `content query` before counting
+6. Test API parameter format with a standalone script before integrating
+7. Add new trust checks to the appropriate batch (keep each batch under 3500 chars)
+8. Syntax check: `python3 -c "import ast; ast.parse(open('core/vmos_genesis_engine.py').read())"`
