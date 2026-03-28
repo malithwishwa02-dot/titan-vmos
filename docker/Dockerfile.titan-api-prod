@@ -1,0 +1,39 @@
+# ── Stage 1: Builder — install Python deps into a virtual env ──────────
+FROM python:3.12-slim AS builder
+
+COPY server/requirements.txt /tmp/requirements.txt
+RUN python -m venv /opt/venv \
+    && /opt/venv/bin/pip install --no-cache-dir --upgrade pip \
+    && /opt/venv/bin/pip install --no-cache-dir -r /tmp/requirements.txt
+
+# ── Stage 2: Runtime — lean image with only what's needed ─────────────
+FROM python:3.12-slim AS runtime
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    adb curl sqlite3 tesseract-ocr ffmpeg \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy pre-built venv from builder
+COPY --from=builder /opt/venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
+WORKDIR /opt/titan
+
+COPY core/ /opt/titan/core/
+COPY server/ /opt/titan/server/
+COPY console/ /opt/titan/console/
+COPY scripts/ /opt/titan/scripts/
+
+ENV PYTHONPATH=/opt/titan/server:/opt/titan/core
+ENV TITAN_DATA=/opt/titan/data
+ENV TITAN_GPU_OLLAMA=http://127.0.0.1:11435
+
+RUN mkdir -p /opt/titan/data/devices /opt/titan/data/profiles /opt/titan/data/config \
+             /opt/titan/data/jobs /opt/titan/data/logs
+
+HEALTHCHECK --interval=30s --timeout=10s --retries=3 \
+    CMD curl -f http://localhost:8080/health/live || exit 1
+
+EXPOSE 8080
+
+CMD ["python3", "-m", "uvicorn", "server.titan_api:app", "--host", "0.0.0.0", "--port", "8080", "--workers", "2", "--loop", "uvloop", "--http", "httptools"]

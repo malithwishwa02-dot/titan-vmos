@@ -1,0 +1,1628 @@
+#!/usr/bin/env python3
+"""
+titan-op — Titan Operations CLI (mirrors Desktop App)
+=====================================================
+Full CLI mirror of Cuttlefish Desktop + Titan Console.
+Every operation available in the GUI is available here.
+
+Usage:
+    titan-op <section> <command> [options]
+    titan-op --help
+
+Sections:
+    dash        Dashboard & system overview
+    device      Device management (permanent device, input, screenshot)
+    genesis     Profile forge, inject, provision, reforge
+    stealth     Anomaly patching, audit, bootstrap
+    agent       AI task automation (See→Think→Act)
+    intel       Intelligence, OSINT, recon, 3DS strategy
+    network     VPN, proxy, forensic, shield
+    cerberus    Card validation, BIN lookup, batch
+    targets     Site analysis, WAF, DNS, profiling
+    kyc         Face upload, deepfake, voice synthesis
+    admin       Services, health, CVD, kernel modules
+    bundles     App bundle installation
+    training    Workflow, demo recording, scenarios
+    ai          LLM query, screen read, faceswap
+    viewer      Screen capture, tap, swipe, key
+    settings    Read/write platform settings
+
+Environment:
+    TITAN_API_PORT   API port (default: 8080)
+    TITAN_API_SECRET Auth token (auto-loaded from /opt/titan/.env)
+"""
+
+import argparse
+import base64
+import json
+import os
+import sys
+import time
+import textwrap
+from pathlib import Path
+from urllib.error import URLError, HTTPError
+from urllib.request import Request, urlopen
+
+# ═══════════════════════════════════════════════════════════════════════
+# CONFIG
+# ═══════════════════════════════════════════════════════════════════════
+
+# Load .env
+_env_file = Path("/opt/titan/.env")
+if _env_file.exists():
+    for line in _env_file.read_text().splitlines():
+        line = line.strip()
+        if line and not line.startswith("#") and "=" in line:
+            k, v = line.split("=", 1)
+            os.environ.setdefault(k.strip(), v.strip())
+
+API_PORT = os.environ.get("TITAN_API_PORT", "8080")
+API_BASE = f"http://127.0.0.1:{API_PORT}"
+API_SECRET = os.environ.get("TITAN_API_SECRET", "")
+PERMANENT_DEVICE = "titan-permanent-001"
+DEFAULT_ADB = "0.0.0.0:6520"
+
+# ═══════════════════════════════════════════════════════════════════════
+# HTTP CLIENT
+# ═══════════════════════════════════════════════════════════════════════
+
+class ApiError(Exception):
+    def __init__(self, status, body):
+        self.status = status
+        self.body = body
+        super().__init__(f"HTTP {status}: {body[:200]}")
+
+
+def api(method: str, path: str, body: dict = None, timeout: int = 120) -> dict:
+    """Make API call. Returns parsed JSON."""
+    url = f"{API_BASE}{path}"
+    headers = {"Content-Type": "application/json"}
+    if API_SECRET:
+        headers["Authorization"] = f"Bearer {API_SECRET}"
+
+    data = json.dumps(body).encode() if body else None
+    req = Request(url, data=data, headers=headers, method=method)
+
+    try:
+        with urlopen(req, timeout=timeout) as resp:
+            raw = resp.read()
+            if not raw:
+                return {}
+            return json.loads(raw)
+    except HTTPError as e:
+        body_text = e.read().decode(errors="replace")
+        raise ApiError(e.code, body_text)
+    except URLError as e:
+        die(f"API unreachable at {API_BASE}: {e.reason}\nStart with: titan-vmos start")
+
+
+def api_get(path: str, timeout: int = 30) -> dict:
+    return api("GET", path, timeout=timeout)
+
+
+def api_post(path: str, body: dict = None, timeout: int = 120) -> dict:
+    return api("POST", path, body or {}, timeout=timeout)
+
+
+def api_delete(path: str, timeout: int = 30) -> dict:
+    return api("DELETE", path, timeout=timeout)
+
+
+def api_binary(path: str, timeout: int = 30) -> bytes:
+    """GET binary response (e.g., screenshot PNG)."""
+    url = f"{API_BASE}{path}"
+    headers = {}
+    if API_SECRET:
+        headers["Authorization"] = f"Bearer {API_SECRET}"
+    req = Request(url, headers=headers, method="GET")
+    try:
+        with urlopen(req, timeout=timeout) as resp:
+            return resp.read()
+    except HTTPError as e:
+        raise ApiError(e.code, e.read().decode(errors="replace"))
+    except URLError as e:
+        die(f"API unreachable: {e.reason}")
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# OUTPUT HELPERS
+# ═══════════════════════════════════════════════════════════════════════
+
+# ANSI
+C_RESET = "\033[0m"
+C_BOLD = "\033[1m"
+C_DIM = "\033[2m"
+C_RED = "\033[31m"
+C_GREEN = "\033[32m"
+C_YELLOW = "\033[33m"
+C_CYAN = "\033[36m"
+C_MAGENTA = "\033[35m"
+C_WHITE = "\033[97m"
+
+
+def die(msg: str):
+    print(f"{C_RED}ERROR:{C_RESET} {msg}", file=sys.stderr)
+    sys.exit(1)
+
+
+def ok(msg: str = ""):
+    print(f"{C_GREEN}✓{C_RESET} {msg}")
+
+
+def warn(msg: str):
+    print(f"{C_YELLOW}⚠{C_RESET} {msg}")
+
+
+def info(msg: str):
+    print(f"{C_CYAN}→{C_RESET} {msg}")
+
+
+def header(title: str):
+    print(f"\n{C_BOLD}{C_CYAN}═══ {title} ═══{C_RESET}")
+
+
+def kv(key: str, val, indent: int = 2):
+    pad = " " * indent
+    if isinstance(val, bool):
+        color = C_GREEN if val else C_RED
+        print(f"{pad}{C_DIM}{key}:{C_RESET} {color}{val}{C_RESET}")
+    elif isinstance(val, (int, float)):
+        print(f"{pad}{C_DIM}{key}:{C_RESET} {C_WHITE}{val}{C_RESET}")
+    else:
+        print(f"{pad}{C_DIM}{key}:{C_RESET} {val}")
+
+
+def dump_json(data: dict, indent: int = 2):
+    """Pretty-print JSON with colors."""
+    print(json.dumps(data, indent=indent, default=str))
+
+
+def table(rows: list, headers: list = None):
+    """Simple ASCII table."""
+    if not rows:
+        print("  (empty)")
+        return
+    if headers:
+        rows = [headers] + rows
+    widths = [max(len(str(row[i])) for row in rows) for i in range(len(rows[0]))]
+    for i, row in enumerate(rows):
+        line = "  ".join(str(row[j]).ljust(widths[j]) for j in range(len(row)))
+        if i == 0 and headers:
+            print(f"  {C_BOLD}{line}{C_RESET}")
+            print(f"  {'  '.join('─' * w for w in widths)}")
+        else:
+            print(f"  {line}")
+
+
+def poll_job(status_path: str, interval: float = 3.0, timeout: int = 600):
+    """Poll a job status endpoint until completion."""
+    start = time.time()
+    last_phase = ""
+    while time.time() - start < timeout:
+        r = api_get(status_path)
+        status = r.get("status", r.get("state", "unknown"))
+        phase = r.get("current_phase", r.get("phase", ""))
+        progress = r.get("progress", "")
+
+        if phase != last_phase:
+            info(f"[{status}] {phase} {progress}")
+            last_phase = phase
+
+        if status in ("completed", "done", "success", "finished"):
+            ok(f"Job completed in {int(time.time() - start)}s")
+            return r
+        if status in ("failed", "error", "aborted"):
+            die(f"Job failed: {r.get('error', r.get('message', status))}")
+
+        time.sleep(interval)
+
+    die(f"Job timed out after {timeout}s")
+
+
+def get_device_id(args) -> str:
+    return getattr(args, "device_id", None) or PERMANENT_DEVICE
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# SECTION: DASHBOARD
+# ═══════════════════════════════════════════════════════════════════════
+
+def cmd_dash(args):
+    sub = args.dash_cmd
+
+    if sub == "summary":
+        header("DASHBOARD SUMMARY")
+        try:
+            r = api_get("/api/dashboard/summary")
+            for k, v in r.items():
+                if isinstance(v, dict):
+                    print(f"  {C_BOLD}{k}:{C_RESET}")
+                    for sk, sv in v.items():
+                        kv(sk, sv, 4)
+                else:
+                    kv(k, v)
+        except ApiError:
+            warn("Dashboard endpoint not available, falling back to health check")
+            r = api_get("/health")
+            for k, v in r.items():
+                kv(k, v)
+
+    elif sub == "health":
+        header("SYSTEM HEALTH")
+        r = api_get("/health")
+        kv("status", r.get("status"))
+        for name, check in r.get("checks", {}).items():
+            ok_val = check.get("ok", False)
+            color = C_GREEN if ok_val else C_RED
+            detail = {k: v for k, v in check.items() if k != "ok"}
+            print(f"  {color}{'✓' if ok_val else '✗'}{C_RESET} {name}: {detail}")
+
+    elif sub == "version":
+        r = api_get("/api/version")
+        for k, v in r.items():
+            kv(k, v)
+
+    elif sub == "metrics":
+        r = api_get("/api/metrics")
+        dump_json(r)
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# SECTION: DEVICE
+# ═══════════════════════════════════════════════════════════════════════
+
+def cmd_device(args):
+    sub = args.device_cmd
+    did = get_device_id(args)
+
+    if sub == "status":
+        header("PERMANENT DEVICE STATUS")
+        try:
+            r = api_get("/api/devices/permanent")
+            kv("id", r.get("id", r.get("device_id")))
+            kv("state", r.get("state"))
+            kv("adb_target", r.get("adb_target"))
+            kv("model", r.get("model", r.get("preset")))
+            kv("uptime", r.get("uptime", "N/A"))
+            score = r.get("stealth_score", r.get("trust_score", "N/A"))
+            kv("stealth_score", score)
+        except ApiError:
+            r = api_get("/api/devices")
+            if isinstance(r, list) and r:
+                d = r[0] if isinstance(r[0], dict) else r[0].__dict__
+                for k, v in (d if isinstance(d, dict) else {"device": d}).items():
+                    kv(k, v)
+            else:
+                warn("No devices found")
+
+    elif sub == "list":
+        r = api_get("/api/devices")
+        devs = r if isinstance(r, list) else r.get("devices", [r])
+        if not devs:
+            warn("No devices")
+            return
+        rows = []
+        for d in devs:
+            if isinstance(d, dict):
+                rows.append([d.get("id", "?"), d.get("state", "?"),
+                             d.get("adb_target", "?"), d.get("model", d.get("preset", "?"))])
+            else:
+                rows.append([str(d)])
+        table(rows, ["ID", "State", "ADB", "Model"])
+
+    elif sub == "reset":
+        header("FACTORY RESET")
+        info(f"Resetting device {did}...")
+        r = api_post(f"/api/devices/factory-reset", {"device_id": did}, timeout=300)
+        ok(f"Factory reset initiated")
+        dump_json(r)
+
+    elif sub == "config":
+        header("DEVICE CONFIG")
+        if args.model or args.carrier or args.country or args.location:
+            body = {}
+            if args.model:
+                body["model"] = args.model
+            if args.carrier:
+                body["carrier"] = args.carrier
+            if args.country:
+                body["country"] = args.country
+            if args.location:
+                body["location"] = args.location
+            r = api_post(f"/api/devices/permanent/config", body)
+            ok("Config updated")
+            dump_json(r)
+        else:
+            r = api_get("/api/devices/permanent")
+            dump_json(r)
+
+    elif sub == "screenshot":
+        out = args.output or f"/tmp/titan_screenshot_{int(time.time())}.png"
+        info(f"Capturing screenshot → {out}")
+        try:
+            data = api_binary(f"/api/devices/{did}/screenshot")
+            Path(out).write_bytes(data)
+            ok(f"Screenshot saved: {out} ({len(data)} bytes)")
+        except ApiError:
+            # Fallback: viewer endpoint
+            data = api_binary(f"/api/viewer/{did}/screen")
+            Path(out).write_bytes(data)
+            ok(f"Screenshot saved: {out} ({len(data)} bytes)")
+
+    elif sub == "tap":
+        x, y = int(args.x), int(args.y)
+        api_post(f"/api/viewer/{did}/tap", {"x": x, "y": y})
+        ok(f"Tap ({x}, {y})")
+
+    elif sub == "swipe":
+        body = {"x1": int(args.x1), "y1": int(args.y1),
+                "x2": int(args.x2), "y2": int(args.y2),
+                "duration": int(args.duration or 300)}
+        api_post(f"/api/viewer/{did}/swipe", body)
+        ok(f"Swipe ({body['x1']},{body['y1']}) → ({body['x2']},{body['y2']})")
+
+    elif sub == "key":
+        api_post(f"/api/viewer/{did}/key", {"code": args.code})
+        ok(f"Key: {args.code}")
+
+    elif sub == "text":
+        api_post(f"/api/devices/{did}/input", {"type": "text", "text": args.text})
+        ok(f"Typed: {args.text[:40]}...")
+
+    elif sub == "home":
+        api_post(f"/api/viewer/{did}/key", {"code": "KEYCODE_HOME"})
+        ok("Home")
+
+    elif sub == "back":
+        api_post(f"/api/viewer/{did}/key", {"code": "KEYCODE_BACK"})
+        ok("Back")
+
+    elif sub == "scroll-down":
+        api_post(f"/api/viewer/{did}/swipe",
+                 {"x1": 360, "y1": 1000, "x2": 360, "y2": 400, "duration": 300})
+        ok("Scroll down")
+
+    elif sub == "scroll-up":
+        api_post(f"/api/viewer/{did}/swipe",
+                 {"x1": 360, "y1": 400, "x2": 360, "y2": 1000, "duration": 300})
+        ok("Scroll up")
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# SECTION: GENESIS (Profile Forge + Inject + Pipeline)
+# ═══════════════════════════════════════════════════════════════════════
+
+def cmd_genesis(args):
+    sub = args.genesis_cmd
+    did = get_device_id(args)
+
+    if sub == "forge":
+        header("FORGE PROFILE")
+        body = {
+            "name": args.name or "Auto User",
+            "email": args.email or "",
+            "country": args.country or "US",
+            "age_days": int(args.age_days or 90),
+        }
+        if args.phone:
+            body["phone"] = args.phone
+        if args.carrier:
+            body["carrier"] = args.carrier
+        if args.archetype:
+            body["archetype"] = args.archetype
+        if args.occupation:
+            body["occupation"] = args.occupation
+        # Address fields
+        for fld in ("street", "city", "state", "zip", "dob", "ssn"):
+            val = getattr(args, fld, None)
+            if val:
+                body[fld] = val
+        # CC fields (stored in profile for later pipeline use)
+        if getattr(args, "cc_number", None):
+            body["cc_number"] = args.cc_number
+        if getattr(args, "cc_exp", None):
+            body["cc_exp"] = args.cc_exp
+        if getattr(args, "cc_cvv", None):
+            body["cc_cvv"] = args.cc_cvv
+        if getattr(args, "cardholder", None):
+            body["cc_cardholder"] = args.cardholder
+
+        info("Forging profile...")
+        r = api_post("/api/genesis/create", body)
+        ok(f"Profile forged")
+        kv("profile_id", r.get("profile_id", r.get("id")))
+        kv("name", r.get("name", body["name"]))
+        kv("country", r.get("country", body["country"]))
+        dump_json({k: v for k, v in r.items() if k not in ("profile_data",)})
+
+    elif sub == "smartforge":
+        header("SMART FORGE")
+        body = {
+            "country": args.country or "US",
+            "age_days": int(args.age_days or 90),
+        }
+        if args.occupation:
+            body["occupation"] = args.occupation
+        if args.archetype:
+            body["archetype"] = args.archetype
+        r = api_post("/api/genesis/smartforge", body)
+        ok("SmartForge complete")
+        kv("profile_id", r.get("profile_id", r.get("id")))
+        dump_json(r)
+
+    elif sub == "profiles":
+        header("PROFILES")
+        r = api_get("/api/genesis/profiles")
+        profiles = r if isinstance(r, list) else r.get("profiles", [])
+        if not profiles:
+            warn("No profiles")
+            return
+        rows = []
+        for p in profiles:
+            rows.append([
+                p.get("id", p.get("profile_id", "?"))[:16],
+                p.get("name", "?"),
+                p.get("country", "?"),
+                str(p.get("age_days", "?")),
+                str(p.get("trust_score", "?"))
+            ])
+        table(rows, ["ID", "Name", "Country", "Age", "Trust"])
+
+    elif sub == "inject":
+        header("INJECT PROFILE")
+        body = {"profile_id": args.profile_id, "age_days": int(args.age_days or 90)}
+        if args.cc_number:
+            body["cc_number"] = args.cc_number
+        if args.cc_exp:
+            parts = args.cc_exp.split("/")
+            body["exp_month"] = parts[0]
+            body["exp_year"] = parts[1] if len(parts) > 1 else ""
+        if args.cc_cvv:
+            body["cvv"] = args.cc_cvv
+        if args.cardholder:
+            body["cardholder"] = args.cardholder
+
+        info(f"Injecting profile {args.profile_id[:16]}... into {did}")
+        r = api_post(f"/api/genesis/inject/{did}", body, timeout=300)
+        ok("Injection complete")
+        kv("trust_score", r.get("trust_score"))
+        kv("phases_ok", r.get("phases_ok", r.get("phases_completed")))
+        dump_json(r)
+
+    elif sub == "provision":
+        header("FULL PROVISION PIPELINE")
+        body = {
+            "country": getattr(args, "country", "US") or "US",
+            "age_days": int(getattr(args, "age_days", 90) or 90),
+        }
+        # Identity fields
+        for fld in ("name", "email", "phone", "dob", "ssn", "gender", "occupation"):
+            val = getattr(args, fld, None)
+            if val:
+                body[fld] = val
+        # Address fields
+        for fld in ("street", "city", "state", "zip"):
+            val = getattr(args, fld, None)
+            if val:
+                body[fld] = val
+        # Device config
+        if getattr(args, "carrier", None):
+            body["carrier"] = args.carrier
+        if getattr(args, "device_model", None):
+            body["device_model"] = args.device_model
+        if getattr(args, "location", None):
+            body["location"] = args.location
+        # Network
+        if getattr(args, "proxy", None):
+            body["proxy_url"] = args.proxy
+        # Google sign-in
+        if getattr(args, "google_email", None):
+            body["google_email"] = args.google_email
+        if getattr(args, "google_password", None):
+            body["google_password"] = args.google_password
+        if getattr(args, "real_phone", None):
+            body["real_phone"] = args.real_phone
+        if getattr(args, "otp_code", None):
+            body["otp_code"] = args.otp_code
+        # Card data
+        if getattr(args, "cc_number", None):
+            body["cc_number"] = args.cc_number
+        if getattr(args, "cc_exp", None):
+            body["cc_exp"] = args.cc_exp
+        if getattr(args, "cc_cvv", None):
+            body["cc_cvv"] = args.cc_cvv
+        if getattr(args, "cardholder", None):
+            body["cc_holder"] = args.cardholder
+        # Options
+        if getattr(args, "lockdown", False):
+            body["lockdown"] = True
+        if getattr(args, "skip_wipe", False):
+            body["skip_wipe"] = True
+        if getattr(args, "skip_patch", False):
+            body["skip_patch"] = True
+
+        info(f"Starting full pipeline on {did}...")
+        r = api_post(f"/api/genesis/pipeline/{did}", body, timeout=600)
+        if "job_id" in r:
+            poll_job(f"/api/genesis/pipeline-status/{r['job_id']}", interval=5, timeout=900)
+        else:
+            ok("Pipeline complete")
+            dump_json(r)
+
+    elif sub == "reforge":
+        header("RE-FORGE IDENTITY")
+        body = {}
+        if args.model:
+            body["model"] = args.model
+        if args.country:
+            body["country"] = args.country
+        if args.carrier:
+            body["carrier"] = args.carrier
+        if args.location:
+            body["location"] = args.location
+        if args.age_days:
+            body["age_days"] = int(args.age_days)
+
+        info(f"Re-forging device {did}...")
+        r = api_post("/api/genesis/reforge", body, timeout=600)
+        if "job_id" in r:
+            poll_job(f"/api/genesis/provision-status/{r['job_id']}", interval=5, timeout=900)
+        else:
+            ok("Re-forge complete")
+            dump_json(r)
+
+    elif sub == "trust-score":
+        r = api_get(f"/api/genesis/trust-score?device_id={did}")
+        header("TRUST SCORE")
+        score = r.get("score", r.get("trust_score", "?"))
+        grade = r.get("grade", "?")
+        print(f"  {C_BOLD}{C_GREEN if str(score) >= '80' else C_YELLOW}{score}/100 (Grade: {grade}){C_RESET}")
+        for check in r.get("checks", r.get("details", [])):
+            if isinstance(check, dict):
+                name = check.get("name", check.get("check", "?"))
+                pts = check.get("score", check.get("points", "?"))
+                mx = check.get("max", check.get("weight", "?"))
+                print(f"    {'✓' if pts == mx else '○'} {name}: {pts}/{mx}")
+
+    elif sub == "wallet-status":
+        r = api_get(f"/api/genesis/wallet-status/{did}")
+        header("WALLET STATUS")
+        dump_json(r)
+
+    elif sub == "delete-profile":
+        api_delete(f"/api/genesis/profiles/{args.profile_id}")
+        ok(f"Profile {args.profile_id} deleted")
+
+    elif sub == "inspect":
+        r = api_get(f"/api/genesis/profiles/{args.profile_id}/inspect")
+        header(f"PROFILE INSPECT: {args.profile_id[:16]}")
+        dump_json(r)
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# SECTION: STEALTH
+# ═══════════════════════════════════════════════════════════════════════
+
+def cmd_stealth(args):
+    sub = args.stealth_cmd
+    did = get_device_id(args)
+
+    if sub == "patch":
+        header("STEALTH PATCH")
+        body = {}
+        if args.preset:
+            body["preset"] = args.preset
+        if args.carrier:
+            body["carrier"] = args.carrier
+        if args.location:
+            body["location"] = args.location
+        if args.age_days:
+            body["age_days"] = int(args.age_days)
+        if args.lockdown:
+            body["lockdown"] = True
+
+        info(f"Patching device {did} (26 phases, ~200-365s)...")
+        r = api_post(f"/api/stealth/{did}/patch", body, timeout=600)
+        if "job_id" in r:
+            result = poll_job(f"/api/stealth/{did}/patch-status/{r['job_id']}",
+                              interval=5, timeout=600)
+            kv("stealth_score", result.get("stealth_score"))
+        else:
+            ok("Patch complete")
+            kv("stealth_score", r.get("stealth_score"))
+            dump_json(r)
+
+    elif sub == "audit":
+        header("STEALTH AUDIT")
+        info(f"Scanning 103+ vectors on {did}...")
+        r = api_get(f"/api/stealth/{did}/audit", timeout=120)
+        score = r.get("overall_score", r.get("stealth_score", "?"))
+        print(f"  {C_BOLD}Overall: {score}%{C_RESET}")
+        for cat, details in r.items():
+            if isinstance(details, dict) and cat not in ("overall_score", "stealth_score", "device_id"):
+                status = details.get("status", details.get("ok", "?"))
+                color = C_GREEN if status in (True, "pass", "ok") else C_RED
+                print(f"  {color}{'✓' if status in (True, 'pass', 'ok') else '✗'}{C_RESET} {cat}")
+
+    elif sub == "bootstrap":
+        header("BOOTSTRAP GAPPS")
+        info(f"Installing GMS + Play Store + Chrome + Wallet on {did}...")
+        r = api_post(f"/api/stealth/{did}/bootstrap-gapps", {}, timeout=300)
+        if "job_id" in r:
+            poll_job(f"/api/stealth/{did}/gapps-status", interval=5, timeout=300)
+        else:
+            ok("Bootstrap complete")
+            dump_json(r)
+
+    elif sub == "presets":
+        r = api_get("/api/stealth/presets")
+        header("DEVICE PRESETS")
+        presets = r if isinstance(r, list) else r.get("presets", [])
+        for p in presets:
+            if isinstance(p, dict):
+                print(f"  {C_CYAN}{p.get('name', p.get('id', '?'))}{C_RESET} — {p.get('brand', '')} {p.get('model', '')}")
+            else:
+                print(f"  {p}")
+
+    elif sub == "carriers":
+        r = api_get("/api/stealth/carriers")
+        header("CARRIERS")
+        carriers = r if isinstance(r, list) else r.get("carriers", [])
+        for c in carriers:
+            if isinstance(c, dict):
+                print(f"  {C_CYAN}{c.get('name', c.get('id', '?'))}{C_RESET} — {c.get('country', '')} {c.get('mcc', '')}/{c.get('mnc', '')}")
+            else:
+                print(f"  {c}")
+
+    elif sub == "locations":
+        r = api_get("/api/stealth/locations")
+        header("LOCATIONS")
+        locations = r if isinstance(r, list) else r.get("locations", [])
+        for loc in locations:
+            if isinstance(loc, dict):
+                print(f"  {C_CYAN}{loc.get('name', loc.get('id', '?'))}{C_RESET} — {loc.get('city', '')} {loc.get('country', '')}")
+            else:
+                print(f"  {loc}")
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# SECTION: AGENT
+# ═══════════════════════════════════════════════════════════════════════
+
+def cmd_agent(args):
+    sub = args.agent_cmd
+    did = get_device_id(args)
+
+    if sub == "start":
+        header("START AI TASK")
+        body = {"prompt": args.prompt}
+        if args.template:
+            body["template"] = args.template
+        if args.max_steps:
+            body["max_steps"] = int(args.max_steps)
+        if args.persona:
+            body["persona"] = args.persona
+
+        info(f"Starting AI task on {did}...")
+        r = api_post(f"/api/agent/task/{did}", body, timeout=30)
+        task_id = r.get("task_id", r.get("id"))
+        ok(f"Task started: {task_id}")
+
+        if args.wait:
+            poll_job(f"/api/agent/task/{did}/{task_id}", interval=3, timeout=int(args.timeout or 600))
+
+    elif sub == "stop":
+        r = api_post(f"/api/agent/stop/{did}/{args.task_id}")
+        ok(f"Task {args.task_id} stopped")
+
+    elif sub == "status":
+        r = api_get(f"/api/agent/task/{did}/{args.task_id}")
+        header("TASK STATUS")
+        dump_json(r)
+
+    elif sub == "tasks":
+        r = api_get(f"/api/agent/tasks/{did}")
+        header("ACTIVE TASKS")
+        tasks = r if isinstance(r, list) else r.get("tasks", [])
+        if not tasks:
+            warn("No active tasks")
+            return
+        for t in tasks:
+            if isinstance(t, dict):
+                kv(t.get("task_id", "?"), t.get("status", "?"))
+
+    elif sub == "templates":
+        r = api_get("/api/agent/templates")
+        header("TASK TEMPLATES")
+        templates = r if isinstance(r, list) else r.get("templates", [])
+        for t in templates:
+            if isinstance(t, dict):
+                print(f"  {C_CYAN}{t.get('id', t.get('name', '?'))}{C_RESET} — {t.get('description', t.get('category', ''))}")
+            else:
+                print(f"  {t}")
+
+    elif sub == "screen":
+        header("SCREEN ANALYSIS")
+        r = api_get(f"/api/agent/screen/{did}", timeout=30)
+        dump_json(r)
+
+    elif sub == "models":
+        r = api_get("/api/agent/models")
+        header("LLM MODELS")
+        dump_json(r)
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# SECTION: INTEL
+# ═══════════════════════════════════════════════════════════════════════
+
+def cmd_intel(args):
+    sub = args.intel_cmd
+
+    if sub == "copilot":
+        header("AI COPILOT")
+        r = api_post("/api/intel/copilot", {"query": args.query})
+        print(f"\n  {r.get('response', r.get('result', r.get('answer', json.dumps(r))))}\n")
+
+    elif sub == "recon":
+        header(f"RECON: {args.domain}")
+        r = api_post("/api/intel/recon", {"domain": args.domain}, timeout=60)
+        dump_json(r)
+
+    elif sub == "osint":
+        header("OSINT SEARCH")
+        body = {}
+        if args.name:
+            body["name"] = args.name
+        if args.email:
+            body["email"] = args.email
+        if args.username:
+            body["username"] = args.username
+        if args.phone:
+            body["phone"] = args.phone
+        if args.domain:
+            body["domain"] = args.domain
+
+        info("Running OSINT...")
+        r = api_post("/api/intel/osint", body, timeout=120)
+        dump_json(r)
+
+    elif sub == "3ds":
+        header("3DS STRATEGY")
+        body = {"bin": args.bin}
+        if args.merchant:
+            body["merchant"] = args.merchant
+        if args.amount:
+            body["amount"] = float(args.amount)
+        r = api_post("/api/intel/3ds-strategy", body)
+        dump_json(r)
+
+    elif sub == "darkweb":
+        header("DARK WEB SEARCH")
+        r = api_post("/api/intel/darkweb", {"query": args.query}, timeout=60)
+        dump_json(r)
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# SECTION: NETWORK
+# ═══════════════════════════════════════════════════════════════════════
+
+def cmd_network(args):
+    sub = args.network_cmd
+
+    if sub == "status":
+        r = api_get("/api/network/status")
+        header("NETWORK STATUS")
+        dump_json(r)
+
+    elif sub == "vpn-connect":
+        body = {}
+        if args.country:
+            body["country"] = args.country
+        if args.city:
+            body["city"] = args.city
+        info("Connecting VPN...")
+        r = api_post("/api/network/vpn/connect", body, timeout=30)
+        ok("VPN connected")
+        dump_json(r)
+
+    elif sub == "vpn-disconnect":
+        r = api_post("/api/network/vpn/disconnect")
+        ok("VPN disconnected")
+
+    elif sub == "proxy-test":
+        header("PROXY TEST")
+        r = api_post("/api/network/proxy-test", {"proxy": args.proxy}, timeout=30)
+        dump_json(r)
+
+    elif sub == "forensic":
+        r = api_get("/api/network/forensic")
+        header("FORENSIC SCAN")
+        dump_json(r)
+
+    elif sub == "shield":
+        r = api_get("/api/network/shield")
+        header("NETWORK SHIELD")
+        dump_json(r)
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# SECTION: CERBERUS
+# ═══════════════════════════════════════════════════════════════════════
+
+def cmd_cerberus(args):
+    sub = args.cerberus_cmd
+
+    if sub == "validate":
+        header("CARD VALIDATION")
+        r = api_post("/api/cerberus/validate", {"card_number": args.card})
+        kv("valid", r.get("valid"))
+        kv("brand", r.get("brand", r.get("network")))
+        kv("luhn", r.get("luhn_valid", r.get("luhn")))
+        dump_json(r)
+
+    elif sub == "batch":
+        cards = [c.strip() for c in args.cards.split(",")]
+        header(f"BATCH VALIDATE ({len(cards)} cards)")
+        r = api_post("/api/cerberus/batch", {"cards": cards})
+        dump_json(r)
+
+    elif sub == "bin":
+        header(f"BIN LOOKUP: {args.bin}")
+        r = api_post("/api/cerberus/bin-lookup", {"bin": args.bin})
+        kv("issuer", r.get("issuer", r.get("bank")))
+        kv("country", r.get("country"))
+        kv("type", r.get("type", r.get("card_type")))
+        kv("brand", r.get("brand", r.get("network")))
+        kv("prepaid", r.get("prepaid"))
+        dump_json(r)
+
+    elif sub == "intel":
+        header("CARD INTELLIGENCE")
+        body = {"bin": args.bin}
+        if args.merchant:
+            body["merchant"] = args.merchant
+        if args.amount:
+            body["amount"] = float(args.amount)
+        r = api_post("/api/cerberus/intelligence", body)
+        dump_json(r)
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# SECTION: TARGETS
+# ═══════════════════════════════════════════════════════════════════════
+
+def cmd_targets(args):
+    sub = args.targets_cmd
+
+    if sub == "analyze":
+        header(f"TARGET ANALYSIS: {args.domain}")
+        r = api_post("/api/targets/analyze", {"domain": args.domain}, timeout=60)
+        dump_json(r)
+
+    elif sub == "waf":
+        header(f"WAF DETECTION: {args.domain}")
+        r = api_post("/api/targets/waf", {"domain": args.domain}, timeout=30)
+        dump_json(r)
+
+    elif sub == "dns":
+        header(f"DNS INTEL: {args.domain}")
+        r = api_post("/api/targets/dns", {"domain": args.domain}, timeout=30)
+        dump_json(r)
+
+    elif sub == "profile":
+        header(f"TARGET PROFILE: {args.domain}")
+        r = api_post("/api/targets/profiler", {"domain": args.domain}, timeout=60)
+        dump_json(r)
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# SECTION: KYC
+# ═══════════════════════════════════════════════════════════════════════
+
+def cmd_kyc(args):
+    sub = args.kyc_cmd
+    did = get_device_id(args)
+
+    if sub == "upload-face":
+        header("UPLOAD FACE")
+        face_path = Path(args.face_image)
+        if not face_path.exists():
+            die(f"File not found: {face_path}")
+        face_b64 = base64.b64encode(face_path.read_bytes()).decode()
+        r = api_post(f"/api/kyc/{did}/upload_face", {"face_b64": face_b64})
+        ok("Face uploaded")
+        dump_json(r)
+
+    elif sub == "start-deepfake":
+        info("Starting deepfake...")
+        r = api_post(f"/api/kyc/{did}/start_deepfake")
+        ok("Deepfake started")
+        dump_json(r)
+
+    elif sub == "stop-deepfake":
+        r = api_post(f"/api/kyc/{did}/stop_deepfake")
+        ok("Deepfake stopped")
+
+    elif sub == "status":
+        r = api_get(f"/api/kyc/{did}/status")
+        header("KYC STATUS")
+        dump_json(r)
+
+    elif sub == "flow":
+        header("KYC FLOW")
+        body = {"provider": args.provider or "onfido"}
+        if args.face_image:
+            face_path = Path(args.face_image)
+            if face_path.exists():
+                body["face_image"] = base64.b64encode(face_path.read_bytes()).decode()
+        r = api_post(f"/api/kyc/{did}/kyc-flow", body, timeout=120)
+        dump_json(r)
+
+    elif sub == "voice":
+        header("VOICE SYNTHESIS")
+        r = api_post(f"/api/kyc/{did}/voice",
+                     {"text": args.text, "voice": args.voice or "en-US"}, timeout=30)
+        dump_json(r)
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# SECTION: ADMIN
+# ═══════════════════════════════════════════════════════════════════════
+
+def cmd_admin(args):
+    sub = args.admin_cmd
+
+    if sub == "services":
+        r = api_get("/api/admin/services")
+        header("SERVICES")
+        services = r if isinstance(r, list) else r.get("services", r)
+        if isinstance(services, dict):
+            for name, status in services.items():
+                color = C_GREEN if status in ("active", "running", True) else C_RED
+                print(f"  {color}●{C_RESET} {name}: {status}")
+        else:
+            dump_json(r)
+
+    elif sub == "health":
+        r = api_get("/api/admin/health")
+        header("ADMIN HEALTH")
+        dump_json(r)
+
+    elif sub == "cvd":
+        r = api_get("/api/admin/cvd-status")
+        header("CUTTLEFISH STATUS")
+        dump_json(r)
+
+    elif sub == "kernel":
+        r = api_get("/api/admin/kernel-modules")
+        header("KERNEL MODULES")
+        modules = r if isinstance(r, list) else r.get("modules", r)
+        if isinstance(modules, dict):
+            for mod, loaded in modules.items():
+                color = C_GREEN if loaded else C_RED
+                print(f"  {color}{'✓' if loaded else '✗'}{C_RESET} {mod}")
+        else:
+            dump_json(r)
+
+    elif sub == "cpu":
+        r = api_get("/api/admin/cpu")
+        header("CPU STATUS")
+        dump_json(r)
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# SECTION: BUNDLES
+# ═══════════════════════════════════════════════════════════════════════
+
+def cmd_bundles(args):
+    sub = args.bundles_cmd
+    did = get_device_id(args)
+
+    if sub == "list":
+        r = api_get(f"/api/bundles" + (f"/{args.country}" if args.country else ""))
+        header("APP BUNDLES")
+        bundles = r if isinstance(r, list) else r.get("bundles", [])
+        for b in bundles:
+            if isinstance(b, dict):
+                count = len(b.get("packages", b.get("apps", [])))
+                print(f"  {C_CYAN}{b.get('name', b.get('id', '?'))}{C_RESET} ({count} apps) — {b.get('description', '')}")
+            else:
+                print(f"  {b}")
+
+    elif sub == "install":
+        header(f"INSTALL BUNDLE: {args.bundle}")
+        body = {"bundle": args.bundle}
+        if args.packages:
+            body["packages"] = args.packages.split(",")
+        info(f"Installing {args.bundle} on {did}...")
+        r = api_post(f"/api/bundles/{did}/install", body, timeout=300)
+        ok("Bundle installation started")
+        dump_json(r)
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# SECTION: TRAINING
+# ═══════════════════════════════════════════════════════════════════════
+
+def cmd_training(args):
+    sub = args.training_cmd
+    did = get_device_id(args)
+
+    if sub == "start":
+        header("START WORKFLOW")
+        body = {}
+        if args.aging_level:
+            body["aging_level"] = args.aging_level
+        if args.country:
+            body["country"] = args.country
+        if args.disable_adb:
+            body["disable_adb"] = True
+        r = api_post(f"/api/training/workflow/start/{did}", body, timeout=30)
+        job_id = r.get("job_id", r.get("id"))
+        ok(f"Workflow started: {job_id}")
+        if args.wait:
+            poll_job(f"/api/training/workflow/status/{job_id}", interval=5, timeout=int(args.timeout or 1800))
+
+    elif sub == "status":
+        r = api_get(f"/api/training/workflow/status/{args.job_id}")
+        header("WORKFLOW STATUS")
+        dump_json(r)
+
+    elif sub == "jobs":
+        r = api_get("/api/training/workflow/jobs")
+        header("WORKFLOW JOBS")
+        jobs = r if isinstance(r, list) else r.get("jobs", [])
+        if not jobs:
+            warn("No jobs")
+            return
+        rows = []
+        for j in jobs:
+            if isinstance(j, dict):
+                rows.append([j.get("job_id", "?")[:16], j.get("status", "?"),
+                             j.get("device_id", "?"), j.get("stage", "?")])
+        table(rows, ["Job", "Status", "Device", "Stage"])
+
+    elif sub == "report":
+        r = api_get(f"/api/training/report/{did}")
+        header("AGING REPORT")
+        dump_json(r)
+
+    elif sub == "verify":
+        r = api_post(f"/api/training/verify/{did}")
+        header("VERIFICATION")
+        dump_json(r)
+
+    elif sub == "record-start":
+        body = {"prompt": args.prompt or "demo", "task_category": args.category or "general"}
+        r = api_post(f"/api/training/demo/start/{did}", body)
+        ok(f"Recording started: {r.get('session_id', r.get('id'))}")
+
+    elif sub == "record-stop":
+        r = api_post(f"/api/training/demo/stop/{args.session_id}")
+        ok("Recording stopped")
+
+    elif sub == "recordings":
+        r = api_get("/api/training/demo/sessions")
+        header("RECORDINGS")
+        dump_json(r)
+
+    elif sub == "scenario":
+        body = {"scenario": args.scenario}
+        if args.params:
+            body["params"] = json.loads(args.params)
+        r = api_post("/api/training/scenarios/run", body, timeout=120)
+        ok("Scenario started")
+        dump_json(r)
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# SECTION: AI
+# ═══════════════════════════════════════════════════════════════════════
+
+def cmd_ai(args):
+    sub = args.ai_cmd
+    did = get_device_id(args)
+
+    if sub == "status":
+        r = api_get("/api/ai/status")
+        header("AI STATUS")
+        dump_json(r)
+
+    elif sub == "query":
+        r = api_post("/api/ai/query", {
+            "prompt": args.prompt,
+            "model": args.model or "titan-agent:7b"
+        }, timeout=60)
+        print(f"\n{r.get('response', r.get('result', json.dumps(r)))}\n")
+
+    elif sub == "screen":
+        header("SCREEN READ")
+        r = api_get(f"/api/ai/screen/{did}", timeout=30)
+        dump_json(r)
+
+    elif sub == "task":
+        body = {"task": args.task, "max_steps": int(args.max_steps or 20)}
+        r = api_post(f"/api/ai/screen/{did}/task", body, timeout=120)
+        dump_json(r)
+
+    elif sub == "tap":
+        r = api_post(f"/api/ai/screen/{did}/tap", {"x": int(args.x), "y": int(args.y)})
+        ok(f"AI tap ({args.x}, {args.y})")
+
+    elif sub == "type":
+        r = api_post(f"/api/ai/screen/{did}/type", {"text": args.text})
+        ok(f"AI type: {args.text[:40]}")
+
+    elif sub == "faceswap":
+        body = {}
+        if args.source:
+            body["source_b64"] = base64.b64encode(Path(args.source).read_bytes()).decode()
+        if args.target:
+            body["target_b64"] = base64.b64encode(Path(args.target).read_bytes()).decode()
+        r = api_post("/api/ai/faceswap", body, timeout=60)
+        ok("Faceswap complete")
+        dump_json(r)
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# SECTION: SETTINGS
+# ═══════════════════════════════════════════════════════════════════════
+
+def cmd_settings(args):
+    sub = args.settings_cmd
+
+    if sub == "get":
+        r = api_get("/api/settings")
+        header("SETTINGS")
+        dump_json(r)
+
+    elif sub == "set":
+        body = {}
+        for pair in args.values:
+            k, v = pair.split("=", 1)
+            # Try to parse as JSON value
+            try:
+                body[k] = json.loads(v)
+            except (json.JSONDecodeError, ValueError):
+                body[k] = v
+        r = api_post("/api/settings", body)
+        ok("Settings updated")
+        dump_json(r)
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# ARGPARSE — BUILD CLI STRUCTURE
+# ═══════════════════════════════════════════════════════════════════════
+
+def build_parser():
+    p = argparse.ArgumentParser(
+        prog="titan-op",
+        description="Titan Operations CLI — mirrors Desktop App (134 operations)",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=textwrap.dedent("""
+        Examples:
+          titan-op dash summary                   System overview
+          titan-op device status                  Permanent device info
+          titan-op device tap 540 1200            Tap screen
+          titan-op device text "hello world"      Type text
+          titan-op genesis forge --name "John" --country US --age-days 90
+          titan-op genesis inject PROFILE_ID      Inject profile
+          titan-op genesis trust-score            Trust score check
+          titan-op stealth patch                  Run 26-phase stealth patch
+          titan-op stealth audit                  Audit 103+ vectors
+          titan-op agent start "Browse news"      Start AI task
+          titan-op cerberus validate 4111...      Validate card
+          titan-op cerberus bin 411111            BIN lookup
+          titan-op intel copilot "plan attack"    AI copilot
+          titan-op admin services                 Service status
+          titan-op ai query "what is this?"       LLM query
+        """)
+    )
+    p.add_argument("--json", action="store_true", help="Raw JSON output")
+    p.add_argument("--device-id", "-d", default=None, help=f"Device ID (default: {PERMANENT_DEVICE})")
+    sub = p.add_subparsers(dest="section", required=True)
+
+    # ── DASH ──────────────────────────────────────────────────────────
+    dash = sub.add_parser("dash", help="Dashboard & health")
+    dash_sub = dash.add_subparsers(dest="dash_cmd", required=True)
+    dash_sub.add_parser("summary", help="Dashboard summary")
+    dash_sub.add_parser("health", help="System health")
+    dash_sub.add_parser("version", help="API version")
+    dash_sub.add_parser("metrics", help="Metrics (JSON)")
+
+    # ── DEVICE ────────────────────────────────────────────────────────
+    dev = sub.add_parser("device", aliases=["dev", "d"], help="Device management")
+    dev_sub = dev.add_subparsers(dest="device_cmd", required=True)
+    dev_sub.add_parser("status", help="Permanent device status")
+    dev_sub.add_parser("list", help="List all devices")
+    dev_sub.add_parser("reset", help="Factory reset permanent device")
+
+    cfg = dev_sub.add_parser("config", help="View/update device config")
+    cfg.add_argument("--model", help="Device model preset")
+    cfg.add_argument("--carrier", help="Carrier")
+    cfg.add_argument("--country", help="Country")
+    cfg.add_argument("--location", help="Location")
+
+    ss = dev_sub.add_parser("screenshot", aliases=["ss"], help="Capture screenshot")
+    ss.add_argument("--output", "-o", help="Output file path")
+
+    tap = dev_sub.add_parser("tap", help="Tap screen at (x, y)")
+    tap.add_argument("x", help="X coordinate")
+    tap.add_argument("y", help="Y coordinate")
+
+    swipe = dev_sub.add_parser("swipe", help="Swipe from (x1,y1) to (x2,y2)")
+    swipe.add_argument("x1"); swipe.add_argument("y1")
+    swipe.add_argument("x2"); swipe.add_argument("y2")
+    swipe.add_argument("--duration", default="300", help="Duration ms (default: 300)")
+
+    key = dev_sub.add_parser("key", help="Send keycode")
+    key.add_argument("code", help="Android keycode (e.g. KEYCODE_BACK)")
+
+    txt = dev_sub.add_parser("text", help="Type text")
+    txt.add_argument("text", help="Text to type")
+
+    dev_sub.add_parser("home", help="Press Home")
+    dev_sub.add_parser("back", help="Press Back")
+    dev_sub.add_parser("scroll-down", help="Scroll down")
+    dev_sub.add_parser("scroll-up", help="Scroll up")
+
+    # ── GENESIS ───────────────────────────────────────────────────────
+    gen = sub.add_parser("genesis", aliases=["gen", "g"], help="Profile forge/inject/provision")
+    gen_sub = gen.add_subparsers(dest="genesis_cmd", required=True)
+
+    forge = gen_sub.add_parser("forge", help="Forge a new profile")
+    forge.add_argument("--name", help="Persona name")
+    forge.add_argument("--email", help="Email")
+    forge.add_argument("--phone", help="Phone")
+    forge.add_argument("--country", default="US")
+    forge.add_argument("--carrier", help="Carrier")
+    forge.add_argument("--age-days", default="90")
+    forge.add_argument("--archetype", help="professional|student|night_shift|retiree|gamer")
+    forge.add_argument("--occupation", help="Occupation for life-path")
+    # Address fields
+    forge.add_argument("--street", help="Street address")
+    forge.add_argument("--city", help="City")
+    forge.add_argument("--state", help="State (2-letter)")
+    forge.add_argument("--zip", help="ZIP code")
+    forge.add_argument("--dob", help="Date of birth (MM/DD/YYYY)")
+    forge.add_argument("--ssn", help="SSN")
+    # Card data (embedded in profile)
+    forge.add_argument("--cc-number", help="Credit card number")
+    forge.add_argument("--cc-exp", help="Expiry MM/YYYY")
+    forge.add_argument("--cc-cvv", help="CVV")
+    forge.add_argument("--cardholder", help="Cardholder name")
+
+    sf = gen_sub.add_parser("smartforge", help="Auto-generate optimal profile")
+    sf.add_argument("--country", default="US")
+    sf.add_argument("--age-days", default="90")
+    sf.add_argument("--occupation", help="Occupation")
+    sf.add_argument("--archetype", help="Archetype")
+
+    gen_sub.add_parser("profiles", help="List all profiles")
+
+    inj = gen_sub.add_parser("inject", help="Inject profile into device")
+    inj.add_argument("profile_id", help="Profile ID to inject")
+    inj.add_argument("--age-days", default="90")
+    inj.add_argument("--cc-number", help="Credit card number")
+    inj.add_argument("--cc-exp", help="Expiry MM/YYYY")
+    inj.add_argument("--cc-cvv", help="CVV")
+    inj.add_argument("--cardholder", help="Cardholder name")
+
+    prov = gen_sub.add_parser("provision", help="Full provision pipeline")
+    # Identity
+    prov.add_argument("--name", help="Persona name")
+    prov.add_argument("--email", help="Email")
+    prov.add_argument("--phone", help="Phone")
+    prov.add_argument("--dob", help="Date of birth (MM/DD/YYYY)")
+    prov.add_argument("--ssn", help="SSN")
+    prov.add_argument("--gender", help="M or F")
+    prov.add_argument("--occupation", help="Occupation")
+    # Address
+    prov.add_argument("--street", help="Street address")
+    prov.add_argument("--city", help="City")
+    prov.add_argument("--state", help="State (2-letter)")
+    prov.add_argument("--zip", help="ZIP code")
+    prov.add_argument("--country", default="US")
+    # Device config
+    prov.add_argument("--carrier", help="Carrier")
+    prov.add_argument("--device-model", help="Device model preset")
+    prov.add_argument("--location", help="Location (city code)")
+    prov.add_argument("--age-days", default="90")
+    # Network
+    prov.add_argument("--proxy", help="SOCKS5 proxy URL")
+    # Google sign-in
+    prov.add_argument("--google-email", help="Google account email")
+    prov.add_argument("--google-password", help="Google account password")
+    prov.add_argument("--real-phone", help="Real phone for OTP")
+    prov.add_argument("--otp-code", help="Pre-provided OTP code")
+    # Card data
+    prov.add_argument("--cc-number", help="Credit card number")
+    prov.add_argument("--cc-exp", help="Expiry MM/YYYY")
+    prov.add_argument("--cc-cvv", help="CVV")
+    prov.add_argument("--cardholder", help="Cardholder name")
+    # Options
+    prov.add_argument("--lockdown", action="store_true", help="Lock down after provision")
+    prov.add_argument("--skip-wipe", action="store_true", help="Skip device wipe")
+    prov.add_argument("--skip-patch", action="store_true", help="Skip stealth patching")
+
+    ref = gen_sub.add_parser("reforge", help="Re-forge device identity")
+    ref.add_argument("--model", help="Device model")
+    ref.add_argument("--country", help="Country")
+    ref.add_argument("--carrier", help="Carrier")
+    ref.add_argument("--location", help="Location")
+    ref.add_argument("--age-days", help="Age days")
+
+    gen_sub.add_parser("trust-score", aliases=["trust"], help="Get trust score")
+    gen_sub.add_parser("wallet-status", aliases=["wallet"], help="Wallet verification status")
+
+    dp = gen_sub.add_parser("delete-profile", help="Delete a profile")
+    dp.add_argument("profile_id", help="Profile ID")
+
+    ins = gen_sub.add_parser("inspect", help="Inspect profile data")
+    ins.add_argument("profile_id", help="Profile ID")
+
+    # ── STEALTH ───────────────────────────────────────────────────────
+    stl = sub.add_parser("stealth", aliases=["stl", "s"], help="Stealth patching & audit")
+    stl_sub = stl.add_subparsers(dest="stealth_cmd", required=True)
+
+    patch = stl_sub.add_parser("patch", help="Run 26-phase stealth patch")
+    patch.add_argument("--preset", help="Device preset name")
+    patch.add_argument("--carrier", help="Carrier name")
+    patch.add_argument("--location", help="Location name")
+    patch.add_argument("--age-days", help="Device age in days")
+    patch.add_argument("--lockdown", action="store_true", help="Lock down after patch")
+
+    stl_sub.add_parser("audit", help="Scan 103+ anti-detect vectors")
+    stl_sub.add_parser("bootstrap", help="Bootstrap GApps (GMS, Play, Chrome, Wallet)")
+    stl_sub.add_parser("presets", help="List device presets")
+    stl_sub.add_parser("carriers", help="List carriers")
+    stl_sub.add_parser("locations", help="List locations")
+
+    # ── AGENT ─────────────────────────────────────────────────────────
+    agt = sub.add_parser("agent", aliases=["ag", "a"], help="AI task automation")
+    agt_sub = agt.add_subparsers(dest="agent_cmd", required=True)
+
+    start = agt_sub.add_parser("start", help="Start AI task")
+    start.add_argument("prompt", help="Task prompt")
+    start.add_argument("--template", help="Task template")
+    start.add_argument("--max-steps", default="30")
+    start.add_argument("--persona", help="Persona for task")
+    start.add_argument("--wait", "-w", action="store_true", help="Wait for completion")
+    start.add_argument("--timeout", default="600", help="Poll timeout seconds")
+
+    stop = agt_sub.add_parser("stop", help="Stop AI task")
+    stop.add_argument("task_id", help="Task ID")
+
+    stat = agt_sub.add_parser("status", help="Check task status")
+    stat.add_argument("task_id", help="Task ID")
+
+    agt_sub.add_parser("tasks", help="List active tasks")
+    agt_sub.add_parser("templates", help="List task templates")
+    agt_sub.add_parser("screen", help="AI screen analysis")
+    agt_sub.add_parser("models", help="List LLM models")
+
+    # ── INTEL ─────────────────────────────────────────────────────────
+    intel = sub.add_parser("intel", aliases=["in", "i"], help="Intelligence & OSINT")
+    intel_sub = intel.add_subparsers(dest="intel_cmd", required=True)
+
+    cop = intel_sub.add_parser("copilot", help="AI operation copilot")
+    cop.add_argument("query", help="Query for copilot")
+
+    rec = intel_sub.add_parser("recon", help="Domain reconnaissance")
+    rec.add_argument("domain", help="Target domain")
+
+    osint = intel_sub.add_parser("osint", help="OSINT search")
+    osint.add_argument("--name", help="Full name")
+    osint.add_argument("--email", help="Email")
+    osint.add_argument("--username", help="Username")
+    osint.add_argument("--phone", help="Phone")
+    osint.add_argument("--domain", help="Domain")
+
+    tds = intel_sub.add_parser("3ds", help="3DS bypass strategy")
+    tds.add_argument("bin", help="Card BIN (6-8 digits)")
+    tds.add_argument("--merchant", help="Merchant domain")
+    tds.add_argument("--amount", help="Transaction amount")
+
+    dw = intel_sub.add_parser("darkweb", help="Dark web search")
+    dw.add_argument("query", help="Search query")
+
+    # ── NETWORK ───────────────────────────────────────────────────────
+    net = sub.add_parser("network", aliases=["net", "n"], help="VPN, proxy, forensic")
+    net_sub = net.add_subparsers(dest="network_cmd", required=True)
+
+    net_sub.add_parser("status", help="Network/VPN status")
+
+    vc = net_sub.add_parser("vpn-connect", help="Connect VPN")
+    vc.add_argument("--country", help="VPN country")
+    vc.add_argument("--city", help="VPN city")
+
+    net_sub.add_parser("vpn-disconnect", help="Disconnect VPN")
+
+    pt = net_sub.add_parser("proxy-test", help="Test proxy")
+    pt.add_argument("proxy", help="socks5://[user:pass@]host:port")
+
+    net_sub.add_parser("forensic", help="Forensic scan")
+    net_sub.add_parser("shield", help="Network shield status")
+
+    # ── CERBERUS ──────────────────────────────────────────────────────
+    cerb = sub.add_parser("cerberus", aliases=["cb", "c"], help="Card validation & BIN")
+    cerb_sub = cerb.add_subparsers(dest="cerberus_cmd", required=True)
+
+    cv = cerb_sub.add_parser("validate", help="Validate card number")
+    cv.add_argument("card", help="Card number")
+
+    cb = cerb_sub.add_parser("batch", help="Batch validate cards")
+    cb.add_argument("cards", help="Comma-separated card numbers")
+
+    bl = cerb_sub.add_parser("bin", help="BIN lookup")
+    bl.add_argument("bin", help="BIN (6-8 digits)")
+
+    ci = cerb_sub.add_parser("intel", help="Card intelligence")
+    ci.add_argument("bin", help="Card BIN")
+    ci.add_argument("--merchant", help="Merchant domain")
+    ci.add_argument("--amount", help="Amount")
+
+    # ── TARGETS ───────────────────────────────────────────────────────
+    tgt = sub.add_parser("targets", aliases=["tgt", "t"], help="Site analysis")
+    tgt_sub = tgt.add_subparsers(dest="targets_cmd", required=True)
+
+    for cmd_name, hlp in [("analyze", "Full target analysis"), ("waf", "WAF detection"),
+                           ("dns", "DNS reconnaissance"), ("profile", "Target profiling")]:
+        tp = tgt_sub.add_parser(cmd_name, help=hlp)
+        tp.add_argument("domain", help="Target domain")
+
+    # ── KYC ───────────────────────────────────────────────────────────
+    kyc = sub.add_parser("kyc", aliases=["k"], help="Face, deepfake, voice")
+    kyc_sub = kyc.add_subparsers(dest="kyc_cmd", required=True)
+
+    uf = kyc_sub.add_parser("upload-face", help="Upload face image")
+    uf.add_argument("face_image", help="Path to face image")
+
+    kyc_sub.add_parser("start-deepfake", help="Start GPU deepfake")
+    kyc_sub.add_parser("stop-deepfake", help="Stop deepfake")
+    kyc_sub.add_parser("status", help="KYC status")
+
+    kf = kyc_sub.add_parser("flow", help="Run KYC flow")
+    kf.add_argument("--provider", help="onfido|jumio|veriff|sumsub")
+    kf.add_argument("--face-image", help="Path to face image")
+
+    kv_cmd = kyc_sub.add_parser("voice", help="Voice synthesis")
+    kv_cmd.add_argument("text", help="Text to synthesize")
+    kv_cmd.add_argument("--voice", help="Voice locale (e.g. en-US)")
+
+    # ── ADMIN ─────────────────────────────────────────────────────────
+    adm = sub.add_parser("admin", aliases=["adm"], help="System administration")
+    adm_sub = adm.add_subparsers(dest="admin_cmd", required=True)
+    adm_sub.add_parser("services", help="Service status")
+    adm_sub.add_parser("health", help="Admin health check")
+    adm_sub.add_parser("cvd", help="Cuttlefish VM status")
+    adm_sub.add_parser("kernel", help="Kernel module status")
+    adm_sub.add_parser("cpu", help="CPU status")
+
+    # ── BUNDLES ───────────────────────────────────────────────────────
+    bnd = sub.add_parser("bundles", aliases=["bnd", "b"], help="App bundles")
+    bnd_sub = bnd.add_subparsers(dest="bundles_cmd", required=True)
+
+    bl_cmd = bnd_sub.add_parser("list", help="List app bundles")
+    bl_cmd.add_argument("--country", help="Filter by country")
+
+    bi = bnd_sub.add_parser("install", help="Install app bundle")
+    bi.add_argument("bundle", help="Bundle name")
+    bi.add_argument("--packages", help="Comma-separated package names")
+
+    # ── TRAINING ──────────────────────────────────────────────────────
+    trn = sub.add_parser("training", aliases=["trn"], help="Workflow & recording")
+    trn_sub = trn.add_subparsers(dest="training_cmd", required=True)
+
+    ts = trn_sub.add_parser("start", help="Start workflow")
+    ts.add_argument("--aging-level", help="light|medium|heavy")
+    ts.add_argument("--country", help="Country")
+    ts.add_argument("--disable-adb", action="store_true")
+    ts.add_argument("--wait", "-w", action="store_true")
+    ts.add_argument("--timeout", default="1800")
+
+    tst = trn_sub.add_parser("status", help="Workflow job status")
+    tst.add_argument("job_id", help="Job ID")
+
+    trn_sub.add_parser("jobs", help="List workflow jobs")
+    trn_sub.add_parser("report", help="Aging report")
+    trn_sub.add_parser("verify", help="Run verification")
+
+    trs = trn_sub.add_parser("record-start", help="Start demo recording")
+    trs.add_argument("--prompt", help="Demo prompt")
+    trs.add_argument("--category", help="Task category")
+
+    trsp = trn_sub.add_parser("record-stop", help="Stop demo recording")
+    trsp.add_argument("session_id", help="Session ID")
+
+    trn_sub.add_parser("recordings", help="List recordings")
+
+    trsc = trn_sub.add_parser("scenario", help="Run scenario")
+    trsc.add_argument("scenario", help="Scenario name")
+    trsc.add_argument("--params", help="JSON params")
+
+    # ── AI ────────────────────────────────────────────────────────────
+    ai = sub.add_parser("ai", help="LLM, vision, faceswap")
+    ai_sub = ai.add_subparsers(dest="ai_cmd", required=True)
+
+    ai_sub.add_parser("status", help="AI/Ollama status")
+
+    aq = ai_sub.add_parser("query", help="LLM query")
+    aq.add_argument("prompt", help="Prompt text")
+    aq.add_argument("--model", help="Model name")
+
+    ai_sub.add_parser("screen", help="Vision screen read")
+
+    at = ai_sub.add_parser("task", help="AI screen task")
+    at.add_argument("task", help="Task description")
+    at.add_argument("--max-steps", default="20")
+
+    atp = ai_sub.add_parser("tap", help="AI tap")
+    atp.add_argument("x"); atp.add_argument("y")
+
+    att = ai_sub.add_parser("type", help="AI type text")
+    att.add_argument("text", help="Text to type")
+
+    afs = ai_sub.add_parser("faceswap", help="Face swap")
+    afs.add_argument("--source", help="Source face image")
+    afs.add_argument("--target", help="Target image")
+
+    # ── SETTINGS ──────────────────────────────────────────────────────
+    stg = sub.add_parser("settings", aliases=["cfg"], help="Platform settings")
+    stg_sub = stg.add_subparsers(dest="settings_cmd", required=True)
+    stg_sub.add_parser("get", help="Read settings")
+    ss_cmd = stg_sub.add_parser("set", help="Update settings (key=value pairs)")
+    ss_cmd.add_argument("values", nargs="+", help="key=value pairs")
+
+    return p
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# DISPATCH
+# ═══════════════════════════════════════════════════════════════════════
+
+DISPATCH = {
+    "dash": cmd_dash,
+    "device": cmd_device, "dev": cmd_device, "d": cmd_device,
+    "genesis": cmd_genesis, "gen": cmd_genesis, "g": cmd_genesis,
+    "stealth": cmd_stealth, "stl": cmd_stealth, "s": cmd_stealth,
+    "agent": cmd_agent, "ag": cmd_agent, "a": cmd_agent,
+    "intel": cmd_intel, "in": cmd_intel, "i": cmd_intel,
+    "network": cmd_network, "net": cmd_network, "n": cmd_network,
+    "cerberus": cmd_cerberus, "cb": cmd_cerberus, "c": cmd_cerberus,
+    "targets": cmd_targets, "tgt": cmd_targets, "t": cmd_targets,
+    "kyc": cmd_kyc, "k": cmd_kyc,
+    "admin": cmd_admin, "adm": cmd_admin,
+    "bundles": cmd_bundles, "bnd": cmd_bundles, "b": cmd_bundles,
+    "training": cmd_training, "trn": cmd_training,
+    "ai": cmd_ai,
+    "settings": cmd_settings, "cfg": cmd_settings,
+}
+
+
+def main():
+    parser = build_parser()
+    args = parser.parse_args()
+
+    if not args.section:
+        parser.print_help()
+        sys.exit(0)
+
+    handler = DISPATCH.get(args.section)
+    if not handler:
+        die(f"Unknown section: {args.section}")
+
+    try:
+        handler(args)
+    except ApiError as e:
+        die(f"API error {e.status}: {e.body[:500]}")
+    except KeyboardInterrupt:
+        print("\nAborted.")
+        sys.exit(130)
+    except Exception as e:
+        die(f"{type(e).__name__}: {e}")
+
+
+if __name__ == "__main__":
+    main()

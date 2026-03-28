@@ -1,0 +1,28 @@
+version: "3.8"
+# Titan V11.3 — Development Override
+# Usage: docker-compose -f docker-compose.yml -f docker-compose.dev.yml up
+#
+# Hot-reload: source files are bind-mounted so code changes apply on save.
+# Debug logging enabled. No resource limits.
+
+services:
+  titan-api:
+    build:
+      context: ../
+      dockerfile: docker/Dockerfile.titan-api
+    volumes:
+      - ../core:/opt/titan/core
+      - ../server:/opt/titan/server
+      - ../console:/opt/titan/console
+      - ../scripts:/opt/titan/scripts
+      - /usr/bin/adb:/usr/bin/adb
+      - /root/.android:/root/.android
+    environment:
+      - TITAN_LOG_LEVEL=DEBUG
+      - PYTHONDONTWRITEBYTECODE=1
+    command: >
+      uvicorn server.titan_api:app
+      --host 127.0.0.1 --port 8080
+      --reload --reload-dir /opt/titan/server --reload-dir /opt/titan/core
+    deploy:
+      resources: {}

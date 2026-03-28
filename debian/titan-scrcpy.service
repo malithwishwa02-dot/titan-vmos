@@ -1,0 +1,20 @@
+[Unit]
+Description=Titan VMOS ws-scrcpy Device Streaming
+Documentation=https://github.com/NetrisTV/ws-scrcpy
+After=docker.service titan-api.service
+Requires=docker.service
+
+[Service]
+Type=simple
+ExecStartPre=-/usr/bin/docker rm -f titan-scrcpy
+ExecStart=/usr/bin/docker run --rm --name titan-scrcpy \
+    --network host \
+    -v /root/.android:/root/.android:ro \
+    scavin/ws-scrcpy:latest
+Restart=on-failure
+RestartSec=10
+MemoryMax=512M
+CPUQuota=100%
+
+[Install]
+WantedBy=multi-user.target

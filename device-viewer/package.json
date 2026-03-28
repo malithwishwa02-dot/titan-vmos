@@ -1,0 +1,25 @@
+{
+  "name": "titan-console",
+  "version": "13.0.0",
+  "description": "Professional Android Device Console",
+  "main": "src/main/index.js",
+  "scripts": {
+    "start": "electron --no-sandbox --disable-gpu-sandbox .",
+    "lint": "eslint src/",
+    "lint:fix": "eslint src/ --fix",
+    "format": "prettier --write src/",
+    "build": "electron-builder",
+    "build:appimage": "electron-builder -l AppImage",
+    "build:dir": "electron-builder --dir -l"
+  },
+  "build": {
+    "appId": "com.cuttlefish-desktop.titan-console",
+    "productName": "Titan Console"
+  },
+  "devDependencies": {
+    "electron": "^28.3.3",
+    "electron-builder": "^24.13.3",
+    "eslint": "^8.56.0",
+    "prettier": "^3.2.0"
+  }
+}

@@ -1,0 +1,503 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Soundgasm Audio Stories</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            color: #333;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+
+        header {
+            text-align: center;
+            margin-bottom: 40px;
+            color: white;
+        }
+
+        header h1 {
+            font-size: 2.5rem;
+            margin-bottom: 10px;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
+        }
+
+        header p {
+            font-size: 1.1rem;
+            opacity: 0.9;
+        }
+
+        .search-section {
+            background: white;
+            padding: 30px;
+            border-radius: 15px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+            margin-bottom: 30px;
+        }
+
+        .search-form {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+        }
+
+        .search-input {
+            flex: 1;
+            padding: 15px;
+            border: 2px solid #e1e5e9;
+            border-radius: 10px;
+            font-size: 16px;
+            transition: border-color 0.3s;
+        }
+
+        .search-input:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+
+        .btn {
+            padding: 15px 30px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            border-radius: 10px;
+            font-size: 16px;
+            cursor: pointer;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(0,0,0,0.2);
+        }
+
+        .btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .tabs {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+        }
+
+        .tab {
+            padding: 10px 20px;
+            background: #f8f9fa;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: background 0.3s;
+        }
+
+        .tab.active {
+            background: #667eea;
+            color: white;
+        }
+
+        .stories-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(350px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+
+        .story-card {
+            background: white;
+            border-radius: 15px;
+            overflow: hidden;
+            box-shadow: 0 5px 20px rgba(0,0,0,0.1);
+            transition: transform 0.3s, box-shadow 0.3s;
+        }
+
+        .story-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+        }
+
+        .story-header {
+            padding: 20px;
+            background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
+        }
+
+        .story-title {
+            font-size: 1.2rem;
+            font-weight: 600;
+            margin-bottom: 8px;
+            color: #333;
+        }
+
+        .story-user {
+            color: #667eea;
+            font-weight: 500;
+            margin-bottom: 5px;
+        }
+
+        .story-description {
+            color: #666;
+            font-size: 0.9rem;
+            line-height: 1.4;
+            margin-bottom: 15px;
+        }
+
+        .story-actions {
+            padding: 0 20px 20px;
+            display: flex;
+            gap: 10px;
+        }
+
+        .btn-small {
+            padding: 8px 16px;
+            font-size: 14px;
+            border-radius: 6px;
+            border: none;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .btn-play {
+            background: #28a745;
+            color: white;
+        }
+
+        .btn-play:hover {
+            background: #218838;
+        }
+
+        .btn-link {
+            background: #6c757d;
+            color: white;
+        }
+
+        .btn-link:hover {
+            background: #5a6268;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 40px;
+            color: white;
+        }
+
+        .error {
+            background: #f8d7da;
+            color: #721c24;
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+        }
+
+        .audio-player {
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            background: white;
+            padding: 20px;
+            box-shadow: 0 -5px 20px rgba(0,0,0,0.1);
+            display: none;
+            align-items: center;
+            gap: 20px;
+        }
+
+        .audio-player.active {
+            display: flex;
+        }
+
+        .audio-info {
+            flex: 1;
+        }
+
+        .audio-title {
+            font-weight: 600;
+            margin-bottom: 5px;
+        }
+
+        .audio-user {
+            color: #667eea;
+            font-size: 0.9rem;
+        }
+
+        .close-player {
+            background: #dc3545;
+            color: white;
+            border: none;
+            padding: 8px 12px;
+            border-radius: 6px;
+            cursor: pointer;
+        }
+
+        @media (max-width: 768px) {
+            .container {
+                padding: 10px;
+            }
+
+            header h1 {
+                font-size: 2rem;
+            }
+
+            .stories-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .search-form {
+                flex-direction: column;
+            }
+
+            .audio-player {
+                flex-direction: column;
+                align-items: stretch;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🎧 Soundgasm Audio Stories</h1>
+            <p>Discover and listen to amazing audio stories</p>
+        </header>
+
+        <div class="search-section">
+            <form class="search-form" id="searchForm">
+                <input 
+                    type="text" 
+                    class="search-input" 
+                    id="searchInput" 
+                    placeholder="Search for audio stories..."
+                    autocomplete="off"
+                >
+                <button type="submit" class="btn" id="searchBtn">Search</button>
+            </form>
+
+            <div class="tabs">
+                <button class="tab active" data-tab="trending">🔥 Trending</button>
+                <button class="tab" data-tab="search">🔍 Search Results</button>
+            </div>
+        </div>
+
+        <div id="content">
+            <div class="loading">Loading trending stories...</div>
+        </div>
+    </div>
+
+    <div class="audio-player" id="audioPlayer">
+        <div class="audio-info">
+            <div class="audio-title" id="audioTitle">Story Title</div>
+            <div class="audio-user" id="audioUser">Username</div>
+        </div>
+        <audio controls id="audioElement" style="flex: 1;">
+            Your browser does not support the audio element.
+        </audio>
+        <button class="close-player" id="closePlayer">✕</button>
+    </div>
+
+    <script>
+        class SoundgasmApp {
+            constructor() {
+                this.currentTab = 'trending';
+                this.stories = [];
+                this.init();
+            }
+
+            init() {
+                this.bindEvents();
+                this.loadTrending();
+            }
+
+            bindEvents() {
+                // Search form
+                document.getElementById('searchForm').addEventListener('submit', (e) => {
+                    e.preventDefault();
+                    this.handleSearch();
+                });
+
+                // Tabs
+                document.querySelectorAll('.tab').forEach(tab => {
+                    tab.addEventListener('click', () => {
+                        this.switchTab(tab.dataset.tab);
+                    });
+                });
+
+                // Audio player controls
+                document.getElementById('closePlayer').addEventListener('click', () => {
+                    this.closeAudioPlayer();
+                });
+            }
+
+            switchTab(tab) {
+                this.currentTab = tab;
+                
+                // Update tab buttons
+                document.querySelectorAll('.tab').forEach(t => {
+                    t.classList.toggle('active', t.dataset.tab === tab);
+                });
+
+                // Update content
+                if (tab === 'trending') {
+                    this.loadTrending();
+                } else if (tab === 'search') {
+                    // Keep search results if they exist
+                    if (this.stories.length === 0) {
+                        this.showContent('<div class="loading">Search for stories to see results</div>');
+                    }
+                }
+            }
+
+            async loadTrending() {
+                this.showLoading();
+                try {
+                    const response = await fetch('/api/trending');
+                    const data = await response.json();
+                    
+                    if (data.success) {
+                        this.stories = data.stories;
+                        this.displayStories();
+                    } else {
+                        this.showError('Failed to load trending stories: ' + data.error);
+                    }
+                } catch (error) {
+                    this.showError('Network error: ' + error.message);
+                }
+            }
+
+            async handleSearch() {
+                const query = document.getElementById('searchInput').value.trim();
+                
+                if (!query) {
+                    this.showError('Please enter a search term');
+                    return;
+                }
+
+                this.showLoading();
+                this.setLoadingState(true);
+
+                try {
+                    const response = await fetch(`/api/search?q=${encodeURIComponent(query)}`);
+                    const data = await response.json();
+                    
+                    if (data.success) {
+                        this.stories = data.stories;
+                        this.switchTab('search');
+                        this.displayStories();
+                    } else {
+                        this.showError('Search failed: ' + data.error);
+                    }
+                } catch (error) {
+                    this.showError('Network error: ' + error.message);
+                } finally {
+                    this.setLoadingState(false);
+                }
+            }
+
+            displayStories() {
+                if (this.stories.length === 0) {
+                    this.showContent('<div class="loading">No stories found</div>');
+                    return;
+                }
+
+                const html = this.stories.map(story => `
+                    <div class="story-card">
+                        <div class="story-header">
+                            <div class="story-title">${this.escapeHtml(story.title)}</div>
+                            <div class="story-user">by ${this.escapeHtml(story.username)}</div>
+                            <div class="story-description">${this.escapeHtml(story.description.substring(0, 150))}...</div>
+                        </div>
+                        <div class="story-actions">
+                            <button class="btn-small btn-play" onclick="app.playAudio('${story.url}', '${this.escapeHtml(story.title)}', '${this.escapeHtml(story.username)}')">▶ Play</button>
+                            <button class="btn-small btn-link" onclick="window.open('${story.url}', '_blank')">🔗 Open</button>
+                        </div>
+                    </div>
+                `).join('');
+
+                this.showContent(`<div class="stories-grid">${html}</div>`);
+            }
+
+            async playAudio(storyUrl, title, username) {
+                const player = document.getElementById('audioPlayer');
+                const audio = document.getElementById('audioElement');
+                const titleEl = document.getElementById('audioTitle');
+                const userEl = document.getElementById('audioUser');
+
+                // Show player with loading state
+                titleEl.textContent = title;
+                userEl.textContent = `by ${username}`;
+                player.classList.add('active');
+                audio.src = '';
+
+                try {
+                    // Fetch audio URL
+                    const response = await fetch(`/api/audio?url=${encodeURIComponent(storyUrl)}`);
+                    const data = await response.json();
+                    
+                    if (data.success && data.audio_url) {
+                        audio.src = data.audio_url;
+                        audio.play();
+                    } else {
+                        alert('Audio not available for this story');
+                        this.closeAudioPlayer();
+                    }
+                } catch (error) {
+                    alert('Error loading audio: ' + error.message);
+                    this.closeAudioPlayer();
+                }
+            }
+
+            closeAudioPlayer() {
+                const player = document.getElementById('audioPlayer');
+                const audio = document.getElementById('audioElement');
+                
+                player.classList.remove('active');
+                audio.pause();
+                audio.src = '';
+            }
+
+            showLoading() {
+                this.showContent('<div class="loading">Loading stories...</div>');
+            }
+
+            showError(message) {
+                this.showContent(`<div class="error">${message}</div>`);
+            }
+
+            showContent(html) {
+                document.getElementById('content').innerHTML = html;
+            }
+
+            setLoadingState(loading) {
+                const btn = document.getElementById('searchBtn');
+                const input = document.getElementById('searchInput');
+                
+                btn.disabled = loading;
+                btn.textContent = loading ? 'Searching...' : 'Search';
+                input.disabled = loading;
+            }
+
+            escapeHtml(text) {
+                const div = document.createElement('div');
+                div.textContent = text;
+                return div.innerHTML;
+            }
+        }
+
+        // Initialize app
+        const app = new SoundgasmApp();
+    </script>
+</body>
+</html>

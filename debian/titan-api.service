@@ -1,0 +1,34 @@
+[Unit]
+Description=Titan VMOS API Server (Desktop-Only, FastAPI + uvicorn)
+Documentation=https://github.com/malithwishwa02-dot/titan-vmos
+After=network.target docker.service
+Wants=docker.service
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/titan
+Environment=PYTHONPATH=/opt/titan/server:/opt/titan/core
+EnvironmentFile=-/opt/titan/.env
+ExecStart=/opt/titan/venv/bin/uvicorn server.titan_api:app \
+    --host 127.0.0.1 --port 8080 \
+    --workers 2 --loop uvloop --http httptools
+Restart=on-failure
+RestartSec=5
+TimeoutStartSec=30
+TimeoutStopSec=15
+
+# Resource limits — prevent runaway on shared VPS
+MemoryMax=2G
+CPUQuota=200%
+
+# Security hardening
+ProtectSystem=strict
+ReadWritePaths=/opt/titan/data /opt/titan/venv /opt/titan/cuttlefish /tmp
+ReadWritePaths=/opt/titan/.env /opt/titan/docker/ssl
+ProtectHome=read-only
+NoNewPrivileges=false
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

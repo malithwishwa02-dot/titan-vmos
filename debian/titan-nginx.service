@@ -1,0 +1,19 @@
+[Unit]
+Description=Titan VMOS Nginx Reverse Proxy (SSL + WebSocket)
+Documentation=https://github.com/malithwishwa02-dot/titan-vmos
+After=titan-api.service docker.service
+Wants=titan-api.service
+
+[Service]
+Type=simple
+ExecStartPre=-/usr/bin/docker rm -f titan-nginx
+ExecStart=/usr/bin/docker run --rm --name titan-nginx \
+    --network host \
+    -v /opt/titan/docker/nginx.conf:/etc/nginx/conf.d/default.conf:ro \
+    -v /opt/titan/docker/ssl:/etc/nginx/ssl:ro \
+    nginx:alpine
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

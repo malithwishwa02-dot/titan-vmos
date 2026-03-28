@@ -1,0 +1,81 @@
+#!/usr/bin/env bash
+# ═══════════════════════════════════════════════════════════════════════
+# Titan VMOS — Pre-installation validation (dpkg preinst)
+#
+# Verifies the target system meets minimum requirements before
+# installing any files. Prevents broken installs on unsupported hosts.
+# ═══════════════════════════════════════════════════════════════════════
+set -euo pipefail
+
+log() { echo "[titan-vmos preinst] $*"; }
+die() { echo "[titan-vmos preinst] FATAL: $*" >&2; exit 1; }
+
+case "${1:-install}" in
+    install|upgrade)
+        ;;
+    abort-upgrade)
+        exit 0
+        ;;
+    *)
+        exit 0
+        ;;
+esac
+
+# ─── 1. Architecture check ───────────────────────────────────────────
+ARCH=$(dpkg --print-architecture 2>/dev/null || uname -m)
+case "$ARCH" in
+    amd64|x86_64) ;;
+    *)
+        die "Titan VMOS requires amd64/x86_64 architecture (detected: $ARCH)"
+        ;;
+esac
+log "Architecture: $ARCH ✓"
+
+# ─── 2. KVM availability ─────────────────────────────────────────────
+if [[ ! -e /dev/kvm ]]; then
+    log "WARNING: /dev/kvm not found."
+    log "  Cuttlefish VMs require KVM (hardware virtualization)."
+    log "  Enable VT-x/AMD-V in BIOS, or ensure kvm kernel module is loaded."
+    log "  Installation will proceed, but VMs won't start until KVM is available."
+fi
+
+# ─── 3. Disk space check (5 GB minimum for code-only, 8 GB with images) ─
+INSTALL_DISK=$(df -BG /opt 2>/dev/null | tail -1 | awk '{print $4}' | tr -d 'G')
+MIN_DISK=5
+if [[ -n "$INSTALL_DISK" ]] && [[ "$INSTALL_DISK" -lt "$MIN_DISK" ]]; then
+    die "Insufficient disk space: ${INSTALL_DISK}G available, ${MIN_DISK}G required in /opt"
+fi
+log "Disk space: ${INSTALL_DISK:-?}G available ✓"
+
+# ─── 4. Port conflict check ──────────────────────────────────────────
+check_port() {
+    local port=$1 service=$2
+    if ss -tlnp 2>/dev/null | grep -q ":${port} "; then
+        log "WARNING: Port ${port} already in use (needed for ${service})"
+        log "  Check: ss -tlnp | grep :${port}"
+    fi
+}
+check_port 8080 "titan-api"
+check_port 80   "nginx HTTP"
+check_port 443  "nginx HTTPS"
+
+# ─── 5. Kernel version info ──────────────────────────────────────────
+KVER=$(uname -r)
+log "Kernel: ${KVER}"
+
+# Check if kernel is too old for Cuttlefish (needs >= 5.4)
+KMAJOR=$(echo "$KVER" | cut -d. -f1)
+KMINOR=$(echo "$KVER" | cut -d. -f2)
+if [[ "$KMAJOR" -lt 5 ]] || { [[ "$KMAJOR" -eq 5 ]] && [[ "$KMINOR" -lt 4 ]]; }; then
+    log "WARNING: Kernel ${KVER} may be too old for Cuttlefish (recommend >= 5.4)"
+fi
+
+# ─── 6. Memory check (4 GB min, 8 GB recommended per VM) ─────────────
+TOTAL_MEM_MB=$(free -m 2>/dev/null | awk '/Mem:/{print $2}' || echo 0)
+if [[ "$TOTAL_MEM_MB" -gt 0 ]] && [[ "$TOTAL_MEM_MB" -lt 4096 ]]; then
+    log "WARNING: Only ${TOTAL_MEM_MB}MB RAM detected."
+    log "  Titan VMOS needs 4GB minimum, 8GB+ recommended per VM."
+fi
+log "Memory: ${TOTAL_MEM_MB}MB total ✓"
+
+log "Pre-install validation complete."

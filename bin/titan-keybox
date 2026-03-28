@@ -1,0 +1,217 @@
+#!/usr/bin/env python3
+"""
+Titan V12 — Keybox CLI Tool
+============================
+Command-line interface for keybox lifecycle management.
+
+Usage:
+    titan-keybox install /path/to/keybox.xml [--device 127.0.0.1:6520]
+    titan-keybox check [/path/to/keybox.xml]
+    titan-keybox status [--device 127.0.0.1:6520]
+    titan-keybox rotate /path/to/new-keybox.xml [--device 127.0.0.1:6520]
+    titan-keybox validate /path/to/keybox.xml
+"""
+
+import argparse
+import json
+import os
+import sys
+
+# Add core/ to path
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "core"))
+
+from keybox_manager import KeyboxManager, KeyboxHealth
+
+
+def _color(text: str, code: str) -> str:
+    """ANSI color wrapper."""
+    codes = {"red": "31", "green": "32", "yellow": "33", "cyan": "36", "bold": "1"}
+    return f"\033[{codes.get(code, '0')}m{text}\033[0m"
+
+
+def _health_display(health: str) -> str:
+    """Color-coded health status."""
+    mapping = {
+        "valid": _color("VALID", "green"),
+        "placeholder": _color("PLACEHOLDER", "yellow"),
+        "missing": _color("MISSING", "red"),
+        "revoked": _color("REVOKED", "red"),
+        "unknown": _color("UNKNOWN", "yellow"),
+    }
+    return mapping.get(health, health)
+
+
+def cmd_validate(args):
+    """Validate a keybox.xml file."""
+    mgr = KeyboxManager()
+    info = mgr.validate_keybox(args.path)
+    print(f"  File:         {info.path}")
+    print(f"  Health:       {_health_display(info.health.value)}")
+    print(f"  SHA256:       {info.sha256[:32]}..." if info.sha256 else "  SHA256:       —")
+    print(f"  Algorithm:    {info.algorithm or '—'}")
+    print(f"  Device ID:    {info.device_id or '—'}")
+    print(f"  Private Key:  {'Yes' if info.has_private_key else 'No'}")
+    print(f"  Certificates: {info.num_certificates}")
+    print(f"  Detail:       {info.detail}")
+    return 0 if info.health == KeyboxHealth.VALID else 1
+
+
+def cmd_check(args):
+    """Validate keybox and check against Google's revocation list."""
+    mgr = KeyboxManager()
+    path = args.path
+    if not path:
+        path = mgr.find_keybox()
+        if not path:
+            print(_color("No keybox found at default paths.", "red"))
+            print("  Checked: /opt/titan/data/keybox.xml, /opt/titan/data/keybox/keybox.xml")
+            print("  Set TITAN_KEYBOX_PATH or provide path argument.")
+            return 1
+
+    info = mgr.check_revocation(path)
+    print(f"  File:    {info.path}")
+    print(f"  Health:  {_health_display(info.health.value)}")
+    print(f"  SHA256:  {info.sha256[:32]}..." if info.sha256 else "  SHA256:  —")
+    if info.serial:
+        print(f"  Serial:  {info.serial[:24]}...")
+    print(f"  Detail:  {info.detail}")
+
+    if info.health == KeyboxHealth.REVOKED:
+        print()
+        print(_color("  ⚠ This keybox has been REVOKED by Google.", "red"))
+        print("  Replace with a fresh keybox: titan-keybox rotate /path/to/new.xml")
+        return 2
+    elif info.health == KeyboxHealth.PLACEHOLDER:
+        print()
+        print(_color("  ⚠ This is a placeholder keybox — will NOT pass Play Integrity.", "yellow"))
+        print("  Place a real keybox at /opt/titan/data/keybox.xml")
+        return 1
+    elif info.health == KeyboxHealth.VALID:
+        print()
+        print(_color("  ✓ Keybox is valid and not on Google's revocation list.", "green"))
+        return 0
+    return 1
+
+
+def cmd_install(args):
+    """Install keybox to device."""
+    mgr = KeyboxManager()
+    result = mgr.install_keybox(args.path, args.device)
+    print(f"  Health:  {_health_display(result['health'])}")
+    print(f"  Type:    {result.get('kb_type', '—')}")
+    print(f"  Paths:   {result['paths_pushed']}/{result.get('total_paths', '?')}")
+    print(f"  Hash:    {result.get('hash', '—')}")
+    print(f"  Detail:  {result.get('detail', '—')}")
+
+    if result["ok"]:
+        print()
+        print(_color(f"  ✓ Keybox installed to {result['paths_pushed']} device path(s).", "green"))
+        if result.get("kb_type") == "placeholder":
+            print(_color("  ⚠ Placeholder keybox — real Play Integrity will FAIL.", "yellow"))
+    else:
+        print()
+        print(_color("  ✗ Installation failed.", "red"))
+    return 0 if result["ok"] else 1
+
+
+def cmd_status(args):
+    """Show current keybox and attestation status on device."""
+    mgr = KeyboxManager()
+    status = mgr.get_keybox_status(args.device)
+
+    print(f"  Health:           {_health_display(status['health'])}")
+    print(f"  Loaded:           {'Yes' if status['loaded'] else 'No'}")
+    print(f"  Type:             {status['type']}")
+    print(f"  Hash:             {status['hash'] or '—'}")
+    print(f"  Strategy:         {status['strategy']}")
+    print(f"  Installed paths:  {', '.join(status['installed_paths']) or 'none'}")
+    print()
+    print(f"  Magisk:           {status['magisk_version']}")
+    print(f"  Zygisk:           {status['zygisk_status']}")
+    print(f"  TrickyStore:      {status['trickystore_module']}")
+    print(f"  PIF module:       {status['pif_module']}")
+    print()
+    ready = status.get("attestation_ready", False)
+    if ready:
+        print(_color("  ✓ Attestation pipeline ready (keybox + TrickyStore + PIF).", "green"))
+    else:
+        missing = []
+        if status["health"] != "valid":
+            missing.append("valid keybox")
+        if status["trickystore_module"] != "installed":
+            missing.append("TrickyStore module")
+        if status["pif_module"] != "installed":
+            missing.append("PIF module")
+        print(_color(f"  ✗ Not ready — missing: {', '.join(missing)}", "red"))
+    return 0 if ready else 1
+
+
+def cmd_rotate(args):
+    """Hot-swap keybox on device."""
+    mgr = KeyboxManager()
+    result = mgr.rotate_keybox(args.path, args.device)
+
+    print(f"  Health:  {_health_display(result['health'])}")
+    print(f"  Step:    {result.get('step', '—')}")
+    print(f"  Detail:  {result.get('detail', '—')}")
+
+    if result.get("rotated"):
+        print()
+        print(_color("  ✓ Keybox rotated — GMS cache cleared.", "green"))
+        print("  GMS will re-attest on next request.")
+    else:
+        print()
+        print(_color(f"  ✗ Rotation failed at step: {result.get('step', '?')}", "red"))
+    return 0 if result.get("ok") else 1
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        prog="titan-keybox",
+        description="Titan V12 Keybox Lifecycle Manager",
+    )
+    sub = parser.add_subparsers(dest="command")
+
+    # validate
+    p_val = sub.add_parser("validate", help="Validate keybox.xml structure")
+    p_val.add_argument("path", help="Path to keybox.xml")
+
+    # check
+    p_check = sub.add_parser("check", help="Validate + check revocation")
+    p_check.add_argument("path", nargs="?", default="",
+                         help="Path to keybox.xml (default: auto-detect)")
+
+    # install
+    p_inst = sub.add_parser("install", help="Install keybox to device")
+    p_inst.add_argument("path", help="Path to keybox.xml")
+    p_inst.add_argument("--device", default="127.0.0.1:6520",
+                        help="ADB target (default: 127.0.0.1:6520)")
+
+    # status
+    p_stat = sub.add_parser("status", help="Show keybox/attestation status")
+    p_stat.add_argument("--device", default="127.0.0.1:6520",
+                        help="ADB target (default: 127.0.0.1:6520)")
+
+    # rotate
+    p_rot = sub.add_parser("rotate", help="Hot-swap keybox on device")
+    p_rot.add_argument("path", help="Path to new keybox.xml")
+    p_rot.add_argument("--device", default="127.0.0.1:6520",
+                        help="ADB target (default: 127.0.0.1:6520)")
+
+    args = parser.parse_args()
+    if not args.command:
+        parser.print_help()
+        return 1
+
+    cmd_map = {
+        "validate": cmd_validate,
+        "check": cmd_check,
+        "install": cmd_install,
+        "status": cmd_status,
+        "rotate": cmd_rotate,
+    }
+    return cmd_map[args.command](args)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

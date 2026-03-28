@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+# Titan VMOS — Post-removal script (dpkg postrm)
+# Cleans up systemd units and optional data on purge.
+set -e
+
+case "${1:-remove}" in
+    remove)
+        echo "[titan-vmos] Disabling systemd services..."
+        systemctl disable titan-api 2>/dev/null || true
+        systemctl disable titan-scrcpy 2>/dev/null || true
+        systemctl disable titan-nginx 2>/dev/null || true
+        systemctl disable titan-recovery 2>/dev/null || true
+        systemctl daemon-reload 2>/dev/null || true
+        ;;
+    purge)
+        echo "[titan-vmos] Purging data and configuration..."
+        systemctl disable titan-api 2>/dev/null || true
+        systemctl disable titan-scrcpy 2>/dev/null || true
+        systemctl disable titan-nginx 2>/dev/null || true
+        systemctl disable titan-recovery 2>/dev/null || true
+        systemctl daemon-reload 2>/dev/null || true
+
+        # Remove venv
+        rm -rf /opt/titan/venv
+
+        # Remove generated config (but NOT user data by default)
+        rm -f /opt/titan/.env
+
+        # Remove kernel module configs
+        rm -f /etc/modules-load.d/titan-vmos.conf
+        rm -f /etc/modprobe.d/titan-vmos.conf
+
+        echo "[titan-vmos] Purge complete."
+        echo "  NOTE: /opt/titan/data preserved. Remove manually if desired:"
+        echo "    rm -rf /opt/titan/data /opt/titan/cuttlefish"
+        ;;
+    upgrade|failed-upgrade|abort-install|abort-upgrade|disappear)
+        ;;
+    *)
+        ;;
+esac

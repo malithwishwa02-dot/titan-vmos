@@ -1,0 +1,52 @@
+Package: titan-vmos
+Version: 13.0.0
+Section: misc
+Priority: optional
+Architecture: amd64
+Maintainer: Titan <dev@titan.local>
+Depends: python3 (>= 3.10),
+         python3-venv,
+         python3-pip,
+         adb,
+         qemu-kvm,
+         bridge-utils,
+         curl,
+         wget,
+         jq,
+         sqlite3,
+         ffmpeg,
+         openssl,
+         docker.io | docker-ce,
+         unzip,
+         rsync,
+         android-sdk-libsparse-utils,
+         e2fsprogs
+Recommends: v4l2loopback-dkms,
+            v4l2loopback-utils,
+            linux-modules-extra-generic,
+            autossh,
+            nginx
+Suggests: ollama
+Installed-Size: 5200000
+Homepage: https://github.com/malithwishwa02-dot/titan-vmos
+Description: Titan VMOS — Antidetect Android Device Platform (Cuttlefish KVM)
+ Production-grade KVM-based Android 14 virtualization platform running
+ Google Cuttlefish VMs with 103+ anti-detect vectors, AI-driven device
+ automation, profile forging, wallet provisioning, and Play Integrity
+ defense via Magisk/TrickyStore/PlayIntegrityFork.
+ .
+ V12.0 Features:
+  - Up to 8 concurrent Android 14 VMs (Cuttlefish KVM)
+  - 28-phase anomaly patcher (103+ stealth vectors)
+  - Pre-bundled Cuttlefish images + CVD host tools
+  - Pre-bundled GApps APKs (GMS, Play Store, Chrome, YouTube, Wallet)
+  - Genesis profile forge (contacts, SMS, call logs, cookies, gallery)
+  - Wallet provisioning (Google Pay tap-and-pay token injection)
+  - AI agent automation (Ollama LLM See→Think→Act loop)
+  - Real-time screen streaming (ws-scrcpy H.264 + JPEG fallback)
+  - Play Integrity defense (TrickyStore + PIF Zygisk modules)
+  - Keybox lifecycle management (validate, rotate, revocation check)
+  - FastAPI server with 18 routers (62+ endpoints)
+  - Web console + optional Electron desktop UI
+  - Device recovery watchdog (auto-restart stalled VMs)
+  - NUMA-aware CPU pinning for anti-timing fingerprinting

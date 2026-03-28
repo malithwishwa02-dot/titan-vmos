@@ -1,0 +1,350 @@
+#!/usr/bin/env bash
+# ═══════════════════════════════════════════════════════════════════════
+# Titan VMOS — Post-installation script (dpkg postinst)
+#
+# Runs after package files are placed on disk. Full pre-configured setup:
+#   1. Create titan user + groups (kvm, cvdnetwork)
+#   2. Kernel module loading + persistence
+#   3. Python venv creation + dependency install
+#   4. Data directory scaffolding
+#   5. Verify/link bundled Cuttlefish images + CVD host tools
+#   6. Stage Zygisk module data overlay
+#   7. Stage GApps APKs for runtime bootstrap
+#   8. Environment file seeding + API secret generation
+#   9. SSL certificate generation
+#  10. Systemd service setup + enable
+#  11. Docker images (pull in background)
+#  12. Cuttlefish integration verification + health check
+#
+# Idempotent: safe to re-run on upgrade.
+# ═══════════════════════════════════════════════════════════════════════
+set -euo pipefail
+
+TITAN_DIR="/opt/titan"
+DATA_DIR="/opt/titan/data"
+VENV_DIR="/opt/titan/venv"
+CVD_DIR="/opt/titan/cuttlefish"
+IMAGES_DIR="/opt/titan/cuttlefish/images"
+SSL_DIR="${TITAN_DIR}/docker/ssl"
+ENV_FILE="${TITAN_DIR}/.env"
+API_PORT=8080
+TITAN_USER="titan"
+VERSION="13.0.0"
+
+log() { echo "[titan-vmos postinst] $*"; }
+
+case "${1:-configure}" in
+    configure|reconfigure)
+        ;;
+    abort-upgrade|abort-remove|abort-deconfigure)
+        exit 0
+        ;;
+    *)
+        exit 0
+        ;;
+esac
+
+# ─── 1. Create titan user + groups ───────────────────────────────────
+log "[1/12] Setting up user and groups..."
+
+if ! getent group cvdnetwork >/dev/null 2>&1; then
+    groupadd cvdnetwork 2>/dev/null || true
+fi
+if ! getent group kvm >/dev/null 2>&1; then
+    groupadd kvm 2>/dev/null || true
+fi
+if ! getent group render >/dev/null 2>&1; then
+    groupadd render 2>/dev/null || true
+fi
+
+if ! id "$TITAN_USER" &>/dev/null; then
+    useradd -r -m -d /opt/titan -s /bin/bash -G kvm,cvdnetwork,render "$TITAN_USER" 2>/dev/null || true
+    log "Created system user: $TITAN_USER"
+else
+    usermod -aG kvm,cvdnetwork,render "$TITAN_USER" 2>/dev/null || true
+fi
+
+# Root also needs kvm/cvdnetwork for manual ops
+usermod -aG kvm,cvdnetwork,render root 2>/dev/null || true
+
+# ─── 2. Kernel modules ───────────────────────────────────────────────
+log "[2/12] Loading kernel modules..."
+
+for mod in kvm vhost_vsock vhost_net; do
+    modprobe -q "$mod" 2>/dev/null || log "  WARN: $mod not available (check BIOS VT-x/AMD-V)"
+done
+
+# Optional — binder for older kernels
+modprobe -q binder_linux devices=binder,hwbinder,vndbinder 2>/dev/null || true
+
+# Optional — ashmem (deprecated in 6.8+, memfd fallback)
+modprobe -q ashmem_linux 2>/dev/null || true
+
+# v4l2loopback for KYC virtual cameras
+modprobe -q v4l2loopback devices=4 video_nr=10,11,12,13 \
+    card_label="TitanCam0,TitanCam1,TitanCam2,TitanCam3" \
+    exclusive_caps=1 2>/dev/null || log "  WARN: v4l2loopback not loaded (install v4l2loopback-dkms)"
+
+# ─── 3. Python virtual environment ───────────────────────────────────
+log "[3/12] Setting up Python environment..."
+
+PYTHON=""
+for cmd in python3.12 python3.11 python3.10 python3; do
+    if command -v "$cmd" &>/dev/null; then
+        ver=$("$cmd" --version 2>&1 | grep -oP '\d+\.\d+')
+        major=$(echo "$ver" | cut -d. -f1)
+        minor=$(echo "$ver" | cut -d. -f2)
+        if [[ "$major" -ge 3 ]] && [[ "$minor" -ge 10 ]]; then
+            PYTHON="$cmd"
+            break
+        fi
+    fi
+done
+
+if [[ -z "$PYTHON" ]]; then
+    log "ERROR: Python 3.10+ not found. Install python3 >= 3.10."
+    exit 1
+fi
+
+if [[ ! -f "$VENV_DIR/bin/python3" ]]; then
+    log "  Creating Python venv at $VENV_DIR..."
+    "$PYTHON" -m venv "$VENV_DIR"
+fi
+
+"$VENV_DIR/bin/pip" install --upgrade pip -q 2>/dev/null || true
+
+if [[ -f "${TITAN_DIR}/requirements.txt" ]]; then
+    "$VENV_DIR/bin/pip" install -r "${TITAN_DIR}/requirements.txt" -q
+    log "  Python dependencies installed"
+else
+    "$VENV_DIR/bin/pip" install fastapi uvicorn[standard] httpx pydantic aiofiles pillow websockets uvloop httptools python-dotenv python-multipart requests -q
+    log "  Installed minimal Python dependencies"
+fi
+
+# ─── 4. Data directories ─────────────────────────────────────────────
+log "[4/12] Creating data directories..."
+mkdir -p "$DATA_DIR"/{devices,profiles,config,forge_gallery,gapps,logs,keybox,jobs,services}
+mkdir -p "$CVD_DIR"/{cf/bin,logs,images}
+mkdir -p /opt/titan/images
+mkdir -p /opt/titan/cache/{magisk,modules}
+mkdir -p /root/.android
+chmod 755 "$DATA_DIR"
+chown -R "$TITAN_USER":"$TITAN_USER" "$DATA_DIR" 2>/dev/null || true
+
+# ─── 5. Verify/link bundled Cuttlefish images ────────────────────────
+log "[5/12] Setting up Cuttlefish Android 14 images..."
+
+BUNDLED_IMAGES="${TITAN_DIR}/cuttlefish/images"
+BUNDLED_ARCHIVE="${TITAN_DIR}/images/titan-android14-cf-x86_64.tar.gz"
+
+# Priority 1: Direct bundled images (new V12 layout)
+if [[ -f "${BUNDLED_IMAGES}/boot.img" ]] || [[ -f "${BUNDLED_IMAGES}/super.img" ]]; then
+    IMG_COUNT=$(ls -1 "${BUNDLED_IMAGES}"/*.img 2>/dev/null | wc -l)
+    log "  ✓ Bundled VM images detected: ${IMG_COUNT} .img files"
+    # Images are already at the right place — just verify symlinks
+    if [[ "${BUNDLED_IMAGES}" != "${IMAGES_DIR}" ]]; then
+        # They are the same when INSTALL_PREFIX paths align
+        log "  Images at: ${BUNDLED_IMAGES}"
+    fi
+
+# Priority 2: Tarball archive (legacy build-image.sh output)
+elif [[ -f "$BUNDLED_ARCHIVE" ]]; then
+    if [[ ! -f "${IMAGES_DIR}/boot.img" ]] && [[ ! -f "${IMAGES_DIR}/super.img" ]]; then
+        log "  Extracting bundled image archive (~2.5 GB)..."
+        tar -xzf "$BUNDLED_ARCHIVE" -C /opt/titan/ --strip-components=0
+        EXTRACT_BASE="/opt/titan/titan-android14"
+        if [[ -d "$EXTRACT_BASE" ]]; then
+            if [[ -d "${EXTRACT_BASE}/images" ]]; then
+                cp -af "${EXTRACT_BASE}/images"/* "$IMAGES_DIR/" 2>/dev/null || true
+                log "  VM images installed to $IMAGES_DIR"
+            fi
+            if [[ -d "${EXTRACT_BASE}/host" ]]; then
+                cp -af "${EXTRACT_BASE}/host"/* "$CVD_DIR/cf/" 2>/dev/null || true
+                chmod +x "$CVD_DIR/cf/bin"/* 2>/dev/null || true
+                log "  CVD host tools installed to $CVD_DIR/cf/"
+            fi
+            rm -rf "$EXTRACT_BASE"
+        fi
+    else
+        log "  Images already extracted, skipping"
+    fi
+else
+    log "  No bundled images found (code-only install)"
+    log "  Run: titan-vmos setup-cuttlefish  OR  titan-vmos build-image"
+fi
+
+# Verify CVD host tools
+if [[ -f "${CVD_DIR}/cf/bin/launch_cvd" ]] || [[ -f "${CVD_DIR}/cf/bin/cvd_internal_start" ]]; then
+    CVD_BIN_COUNT=$(ls -1 "${CVD_DIR}/cf/bin/"* 2>/dev/null | wc -l)
+    log "  ✓ CVD host tools ready: ${CVD_BIN_COUNT} binaries at ${CVD_DIR}/cf/bin/"
+else
+    log "  ✗ CVD host tools not found at ${CVD_DIR}/cf/bin/"
+    log "    Run: titan-vmos setup-cuttlefish"
+fi
+
+# ─── 6. Stage Zygisk module data overlay ──────────────────────────────
+log "[6/12] Staging Zygisk modules (TrickyStore + PIF)..."
+
+DATA_OVERLAY_SRC="${TITAN_DIR}/data/zygisk_overlay"
+if [[ -d "$DATA_OVERLAY_SRC" ]] && [[ -n "$(ls -A "$DATA_OVERLAY_SRC" 2>/dev/null)" ]]; then
+    log "  Zygisk module overlay staged at $DATA_OVERLAY_SRC"
+else
+    log "  No Zygisk overlay found — modules installed at runtime via 'titan-vmos install-modules'"
+fi
+
+# ─── 7. Stage GApps APKs ─────────────────────────────────────────────
+log "[7/12] Staging GApps APKs..."
+
+# Check bundled gapps from package
+BUNDLED_GAPPS="${TITAN_DIR}/data/gapps"
+if [[ -d "$BUNDLED_GAPPS" ]] && [[ -n "$(ls -A "$BUNDLED_GAPPS"/*.apk 2>/dev/null)" ]]; then
+    APK_LIST=""
+    for apk in "$BUNDLED_GAPPS"/*.apk; do
+        [[ -s "$apk" ]] && APK_LIST="$APK_LIST $(basename "$apk")"
+    done
+    log "  ✓ GApps APKs ready:${APK_LIST}"
+else
+    log "  No bundled GApps APKs — bootstrap will auto-download at runtime"
+fi
+
+# ─── 8. Environment file ─────────────────────────────────────────────
+log "[8/12] Configuring environment..."
+
+if [[ ! -f "$ENV_FILE" ]]; then
+    if [[ -f "${TITAN_DIR}/.env.example" ]]; then
+        cp "${TITAN_DIR}/.env.example" "$ENV_FILE"
+    else
+        cat > "$ENV_FILE" <<ENVEOF
+TITAN_API_SECRET=changeme
+TITAN_API_PORT=${API_PORT}
+TITAN_DATA=${DATA_DIR}
+CVD_BIN_DIR=${CVD_DIR}/cf/bin
+CVD_HOME_BASE=${CVD_DIR}
+CVD_IMAGES_DIR=${CVD_DIR}/images
+TITAN_GPU_URL=http://127.0.0.1:8765
+TITAN_GPU_OLLAMA=http://127.0.0.1:11435
+TITAN_AGENT_MODEL=titan-agent:7b
+TITAN_VISION_MODEL=minicpm-v:8b
+TITAN_CORS_ORIGINS=https://localhost
+ENVEOF
+    fi
+    SECRET=$(python3 -c "import secrets; print(secrets.token_hex(32))" 2>/dev/null || openssl rand -hex 32)
+    sed -i "s|^TITAN_API_SECRET=.*|TITAN_API_SECRET=${SECRET}|" "$ENV_FILE"
+    sed -i "s|^TITAN_DATA=.*|TITAN_DATA=${DATA_DIR}|" "$ENV_FILE"
+    sed -i "s|^CVD_IMAGES_DIR=.*|CVD_IMAGES_DIR=${CVD_DIR}/images|" "$ENV_FILE"
+    sed -i "s|^CVD_BIN_DIR=.*|CVD_BIN_DIR=${CVD_DIR}/cf/bin|" "$ENV_FILE"
+    sed -i "s|^CVD_HOME_BASE=.*|CVD_HOME_BASE=${CVD_DIR}|" "$ENV_FILE"
+    log "  Created $ENV_FILE with unique API secret"
+else
+    log "  .env already exists — preserving"
+fi
+chmod 600 "$ENV_FILE"
+
+# ─── 9. SSL certificates ─────────────────────────────────────────────
+log "[9/12] Generating SSL certificates..."
+mkdir -p "$SSL_DIR"
+if [[ ! -f "${SSL_DIR}/cert.pem" ]]; then
+    openssl req -x509 -nodes -days 3650 -newkey rsa:2048 \
+        -keyout "${SSL_DIR}/key.pem" \
+        -out "${SSL_DIR}/cert.pem" \
+        -subj "/CN=titan.local/O=Titan-VMOS/C=US" 2>/dev/null
+    chmod 600 "${SSL_DIR}/key.pem"
+    log "  Self-signed SSL certificate generated (10-year)"
+else
+    log "  SSL cert already exists, skipping"
+fi
+
+# ─── 10. Systemd services ────────────────────────────────────────────
+log "[10/12] Configuring systemd services..."
+systemctl daemon-reload
+for svc in titan-api titan-scrcpy titan-nginx titan-recovery; do
+    systemctl enable "$svc" 2>/dev/null || true
+done
+
+# ─── 11. Docker images ───────────────────────────────────────────────
+log "[11/12] Pulling Docker images..."
+if systemctl is-active --quiet docker 2>/dev/null; then
+    docker pull scavin/ws-scrcpy:latest &>/dev/null &
+    docker pull nginx:alpine &>/dev/null &
+    docker pull searxng/searxng:latest &>/dev/null &
+    log "  Docker pulls started (background)"
+else
+    log "  Docker not running — images pulled on first 'titan-vmos start'"
+fi
+
+# ADB server
+if command -v adb &>/dev/null; then
+    adb start-server 2>/dev/null || true
+fi
+
+# ─── 12. Cuttlefish integration verification + health check ──────────
+log "[12/12] Post-install verification..."
+
+HEALTH_OK=0
+HEALTH_TOTAL=0
+
+check() {
+    HEALTH_TOTAL=$((HEALTH_TOTAL + 1))
+    if eval "$2" &>/dev/null; then
+        log "  ✓ $1"
+        HEALTH_OK=$((HEALTH_OK + 1))
+    else
+        log "  ✗ $1"
+    fi
+}
+
+check "Python venv"          "[[ -f '$VENV_DIR/bin/python3' ]]"
+check "FastAPI installed"    "'$VENV_DIR/bin/python3' -c 'import fastapi'"
+check "uvicorn installed"    "'$VENV_DIR/bin/python3' -c 'import uvicorn'"
+check ".env exists"          "[[ -f '$ENV_FILE' ]]"
+check "SSL cert exists"      "[[ -f '${SSL_DIR}/cert.pem' ]]"
+check "titan-vmos CLI"          "command -v titan-vmos"
+check "KVM available"        "[[ -e /dev/kvm ]]"
+check "Data dir exists"      "[[ -d '$DATA_DIR' ]]"
+check "systemd unit loaded"  "systemctl is-enabled titan-api"
+
+# Cuttlefish-specific checks
+check "CVD host tools"       "[[ -f '${CVD_DIR}/cf/bin/launch_cvd' ]] || [[ -f '${CVD_DIR}/cf/bin/cvd_internal_start' ]]"
+check "VM boot.img"          "[[ -f '${CVD_DIR}/images/boot.img' ]]"
+check "VM super.img"         "[[ -f '${CVD_DIR}/images/super.img' ]]"
+
+# GApps check
+GAPPS_OK=0
+for pkg in GmsCore Phonesky GoogleServicesFramework Chrome; do
+    ls "${DATA_DIR}/gapps/${pkg}"*.apk &>/dev/null && GAPPS_OK=$((GAPPS_OK + 1))
+done
+check "GApps APKs (4 core)" "[[ $GAPPS_OK -ge 3 ]]"
+
+# Keybox check
+check "Keybox available"     "[[ -f '${DATA_DIR}/keybox.xml' ]] || [[ -f '${DATA_DIR}/keybox/keybox.xml' ]]"
+
+# Determine install mode
+if [[ -f "${CVD_DIR}/images/boot.img" ]] || [[ -f "${CVD_DIR}/images/super.img" ]]; then
+    IMAGE_STATUS="PRE-CONFIGURED (Android 14 VM images + CVD host tools bundled)"
+else
+    IMAGE_STATUS="CODE-ONLY (run: titan-vmos setup-cuttlefish)"
+fi
+
+# ═══════════════════════════════════════════════════════════════════════
+log ""
+log "═══════════════════════════════════════════════════════════"
+log "  Titan VMOS V${VERSION} — Installation complete!"
+log "  Health: ${HEALTH_OK}/${HEALTH_TOTAL} checks passed"
+log "  Mode:   ${IMAGE_STATUS}"
+log ""
+log "  Install dir:   ${TITAN_DIR}"
+log "  Data dir:      ${DATA_DIR}"
+log "  CVD images:    ${CVD_DIR}/images"
+log "  CVD host:      ${CVD_DIR}/cf/bin"
+log "  Python venv:   ${VENV_DIR}"
+log "  Config:        ${ENV_FILE}"
+log ""
+log "  Quick start:"
+log "    titan-vmos start            # Start all services"
+log "    titan-vmos status           # Check health"
+log "    titan-vmos create-device    # Create Android 14 VM"
+log ""
+log "  Console:  https://localhost"
+log "  API:      http://localhost:${API_PORT}/docs"
+log "  CLI:      titan-vmos --help"
+log "═══════════════════════════════════════════════════════════"

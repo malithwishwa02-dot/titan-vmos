@@ -1,0 +1,13 @@
+[Desktop Entry]
+Name=Titan VMOS Console
+Comment=Titan V13.0 VMOS Pro Cloud Console
+GenericName=Android Device Console
+Exec=titan-vmos-console --no-sandbox %U
+Icon=titan-vmos-console
+Type=Application
+Terminal=false
+Categories=Development;Utility;
+Keywords=titan;android;vmos;cloud;antidetect;console;
+StartupWMClass=titan-vmos-console
+StartupNotify=true
+MimeType=x-scheme-handler/titan-vmos;

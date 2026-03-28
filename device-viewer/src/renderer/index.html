@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Titan Console</title>
+  <link rel="stylesheet" href="styles/phone-frame.css">
+</head>
+<body>
+  <div id="app">
+
+    <!-- ─── Titlebar ─── -->
+    <header id="titlebar">
+      <div class="tb-brand">
+        <div class="tb-icon">T</div>
+        <span class="tb-name">Titan Console</span>
+      </div>
+      <div class="tb-drag"></div>
+      <span class="conn-badge connecting" id="conn-badge">
+        <span class="conn-dot"></span>
+        <span class="conn-label" id="conn-label">Connecting</span>
+      </span>
+      <div class="tb-win">
+        <button class="win-btn" id="btn-minimize" title="Minimize">─</button>
+        <button class="win-btn" id="btn-maximize" title="Maximize">☐</button>
+        <button class="win-btn win-close" id="btn-close" title="Close">✕</button>
+      </div>
+    </header>
+
+    <!-- ─── Workspace ─── -->
+    <div id="workspace">
+
+      <!-- Viewport (phone body + screen) -->
+      <div id="viewport">
+        <div id="phone-body">
+          <div class="bezel-top">
+            <div class="earpiece"></div>
+            <div class="front-cam"></div>
+            <div class="front-cam-dot"></div>
+            <div class="sensor"></div>
+          </div>
+
+          <div id="screen-area">
+            <div id="screen-placeholder">
+              <div class="ph-spinner"></div>
+              <span class="ph-text">Connecting to device…</span>
+              <button id="btn-retry" class="ph-retry" style="display:none">Retry Connection</button>
+            </div>
+          </div>
+
+          <div class="bezel-bottom">
+            <div class="usb-port"></div>
+          </div>
+
+          <div class="hw-btn hw-power"   data-action="power"      title="Power"></div>
+          <div class="hw-btn hw-vol-up"   data-action="volumeUp"   title="Volume Up"></div>
+          <div class="hw-btn hw-vol-down" data-action="volumeDown" title="Volume Down"></div>
+        </div>
+      </div>
+
+      <!-- ─── Sidebar ─── -->
+      <nav id="sidebar">
+        <div class="sb-section">
+          <div class="sb-label">Navigation</div>
+          <button class="sb-btn" data-action="back" title="Back (Esc)">
+            <svg viewBox="0 0 24 24"><path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"/></svg>
+            <span>Back</span>
+          </button>
+          <button class="sb-btn sb-btn-home" data-action="home" title="Home">
+            <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="5" fill="none" stroke="currentColor" stroke-width="2"/></svg>
+            <span>Home</span>
+          </button>
+          <button class="sb-btn" data-action="recent" title="Recent Apps">
+            <svg viewBox="0 0 24 24"><rect x="5" y="5" width="14" height="14" rx="2" fill="none" stroke="currentColor" stroke-width="2"/></svg>
+            <span>Recent</span>
+          </button>
+        </div>
+
+        <div class="sb-section">
+          <div class="sb-label">Hardware</div>
+          <button class="sb-btn" data-action="power" title="Power">
+            <svg viewBox="0 0 24 24"><path d="M13 3h-2v10h2V3zm4.83 2.17l-1.42 1.42A6.92 6.92 0 0119 12c0 3.87-3.13 7-7 7s-7-3.13-7-7c0-2.27 1.08-4.28 2.76-5.56L6.34 5.05A8.94 8.94 0 003 12c0 4.97 4.03 9 9 9s9-4.03 9-9a8.94 8.94 0 00-3.17-6.83z"/></svg>
+            <span>Power</span>
+          </button>
+          <button class="sb-btn" data-action="volumeUp" title="Volume Up">
+            <svg viewBox="0 0 24 24"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3A4.5 4.5 0 0014 8.5v7a4.47 4.47 0 002.5-3.5zM14 3.23v2.06a6.51 6.51 0 010 13.42v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/></svg>
+            <span>Vol +</span>
+          </button>
+          <button class="sb-btn" data-action="volumeDown" title="Volume Down">
+            <svg viewBox="0 0 24 24"><path d="M18.5 12A4.5 4.5 0 0016 8.5v7c1.44-.63 2.5-2.04 2.5-3.5zM5 9v6h4l5 5V4L9 9H5z"/></svg>
+            <span>Vol −</span>
+          </button>
+        </div>
+
+        <div class="sb-section sb-tools">
+          <div class="sb-label">Tools</div>
+          <button class="sb-btn" data-action="rotate" title="Rotate Screen">
+            <svg viewBox="0 0 24 24"><path d="M7.11 8.53L5.7 7.11A8.93 8.93 0 004.07 11h2.02c.14-.87.49-1.72 1.02-2.47zM6.09 13H4.07c.17 1.39.72 2.73 1.62 3.89l1.41-1.42c-.52-.75-.87-1.59-1.01-2.47zm1.01 5.32c1.16.9 2.51 1.44 3.9 1.61V17.9c-.87-.15-1.71-.49-2.46-1.03L7.1 18.32zM13 4.07V1L8.45 5.55 13 10V6.09c2.84.48 5 2.94 5 5.91s-2.16 5.43-5 5.91v2.02c3.95-.49 7-3.85 7-7.93s-3.05-7.44-7-7.93z"/></svg>
+            <span>Rotate</span>
+          </button>
+          <button class="sb-btn" data-action="screenshot" title="Screenshot (F9)">
+            <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3.2"/><path d="M9 2L7.17 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2h-3.17L15 2H9zm3 15c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5z"/></svg>
+            <span>Screenshot</span>
+          </button>
+          <button class="sb-btn" data-action="restartScrcpy" title="Reconnect Display (F5)">
+            <svg viewBox="0 0 24 24"><path d="M17.65 6.35A7.958 7.958 0 0012 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08A5.99 5.99 0 0112 18c-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg>
+            <span>Reconnect</span>
+          </button>
+        </div>
+
+        <div class="sb-mode">
+          <button class="mode-btn is-active" data-display-mode="phone" title="Device Mode (Ctrl+1)">Device</button>
+          <button class="mode-btn" data-display-mode="fullscreen" title="Console Mode (Ctrl+2)">Console</button>
+        </div>
+      </nav>
+    </div>
+
+    <!-- ─── Footer ─── -->
+    <footer id="footer">
+      <span class="ft-device" id="ft-device">Android 14 · 0.0.0.0:6520</span>
+      <span class="ft-api" id="ft-api" title="Titan API backend">
+        <span class="api-dot" id="api-dot"></span>
+        <span id="api-label">API Offline</span>
+      </span>
+      <span class="ft-hint" id="ft-hint">Esc Back · F5 Restart · F9 Shot · F11 Fullscreen</span>
+    </footer>
+
+    <!-- ─── Toasts ─── -->
+    <div id="toast-container"></div>
+
+  </div>
+  <script src="js/controls.js"></script>
+</body>
+</html>

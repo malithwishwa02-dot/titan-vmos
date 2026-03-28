@@ -1,0 +1,21 @@
+[Unit]
+Description=Titan VMOS Device Recovery Watchdog
+Documentation=https://github.com/malithwishwa02-dot/titan-vmos
+After=titan-api.service
+Requires=titan-api.service
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/titan
+Environment=PYTHONPATH=/opt/titan/server:/opt/titan/core
+EnvironmentFile=-/opt/titan/.env
+ExecStart=/opt/titan/venv/bin/python3 -c "from device_recovery import DeviceRecoveryManager; import time; r=DeviceRecoveryManager(); r.start(); [time.sleep(3600) for _ in iter(int,1)]"
+Restart=on-failure
+RestartSec=30
+MemoryMax=256M
+CPUQuota=50%
+
+[Install]
+WantedBy=multi-user.target
+

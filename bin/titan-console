@@ -1,0 +1,56 @@
+#!/usr/bin/env bash
+# ═══════════════════════════════════════════════════════════════════════
+# titan-console — Launch Cuttlefish Desktop (Electron)
+#
+# Desktop-only mode: launches Cuttlefish Desktop app which embeds the
+# Titan Console. No localhost browser access.
+#
+# Usage:
+#   titan-console               # Launch Cuttlefish Desktop
+#   titan-console --port 8080   # Custom API port
+# ═══════════════════════════════════════════════════════════════════════
+set -euo pipefail
+
+TITAN_DIR="${TITAN_DIR:-/opt/titan}"
+API_PORT="${TITAN_API_PORT:-8080}"
+CUTTLEFISH_DESKTOP="/root/cuttlefish-desktop"
+
+# Source .env if available
+[[ -f "${TITAN_DIR}/.env" ]] && set -a && source "${TITAN_DIR}/.env" && set +a
+
+for arg in "$@"; do
+    case "$arg" in
+        --port)     shift; API_PORT="${1:-8080}" ;;
+        --port=*)   API_PORT="${arg#*=}" ;;
+        --help|-h)
+            echo "Usage: titan-console [--port PORT]"
+            echo "  Launches Cuttlefish Desktop (Electron) with embedded Titan Console."
+            echo "  --port PORT  Override API port (default: 8080)"
+            exit 0
+            ;;
+    esac
+done
+
+# Ensure API is running locally
+if ! curl -sf --connect-timeout 2 "http://127.0.0.1:${API_PORT}/health/live" >/dev/null 2>&1; then
+    echo "Titan API not running on 127.0.0.1:${API_PORT}. Starting..."
+    systemctl start titan-api 2>/dev/null || true
+    sleep 2
+    if ! curl -sf --connect-timeout 2 "http://127.0.0.1:${API_PORT}/health/live" >/dev/null 2>&1; then
+        echo "ERROR: Failed to start Titan API."
+        exit 1
+    fi
+fi
+
+# Launch Cuttlefish Desktop
+if [[ ! -d "${CUTTLEFISH_DESKTOP}" ]]; then
+    echo "ERROR: Cuttlefish Desktop not found at ${CUTTLEFISH_DESKTOP}"
+    exit 1
+fi
+
+cd "${CUTTLEFISH_DESKTOP}"
+[[ ! -d node_modules ]] && npm install
+
+export TITAN_API_PORT="${API_PORT}"
+echo "Launching Cuttlefish Desktop (desktop-only mode)..."
+exec npx electron --no-sandbox --disable-gpu-sandbox .
