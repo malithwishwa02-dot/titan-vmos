@@ -1,0 +1,401 @@
+#!/usr/bin/env bash
+# ═══════════════════════════════════════════════════════════════════════
+# titan-vmos — CLI entrypoint for Titan VMOS Antidetect Device Platform
+# ═══════════════════════════════════════════════════════════════════════
+set -euo pipefail
+
+TITAN_DIR="/opt/titan-v13-device"
+VENV_DIR="/opt/titan-v13-device/venv"
+DATA_DIR="${TITAN_DATA:-/opt/titan/data}"
+PYTHON="${VENV_DIR}/bin/python3"
+
+export PYTHONPATH="${TITAN_DIR}/server:${TITAN_DIR}/core${PYTHONPATH:+:$PYTHONPATH}"
+export TITAN_DATA="${DATA_DIR}"
+
+# Source .env if present
+if [[ -f "${TITAN_DIR}/.env" ]]; then
+    set -a
+    # shellcheck disable=SC1091
+    source "${TITAN_DIR}/.env"
+    set +a
+fi
+
+# ─── Helpers ──────────────────────────────────────────────────────────
+usage() {
+    cat <<EOF
+Titan VMOS — Antidetect Android Device Platform (v13.0.0) [Zero-Gaps]
+
+Usage: titan-vmos <command> [options]
+
+Commands:
+  start               Start all services + Cuttlefish Desktop app
+  stop                Stop all Titan VMOS services
+  restart             Restart all Titan VMOS services
+  status              Show service status and system health
+  desktop             Launch Titan Console (requires services running)
+  device              Launch Cuttlefish Device viewer (phone VM window)
+
+  api                 Start API server in foreground (debug mode)
+  devices             List running Cuttlefish VMs
+  create-device       Create a new Android VM
+  
+  setup-cuttlefish    Download + install Cuttlefish host tools and images
+  patch-boot          Patch boot.img with Magisk (Zygisk support)
+  install-modules     Pre-install TrickyStore + PIF Zygisk modules
+  
+  keybox <subcmd>     Keybox management (validate|check|install|status|rotate)
+  
+  genesis [device_id]  Start Genesis pipeline via API (interactive)
+  reset [device_id]    Factory reset device (wipe all persona data)
+  
+  audit               Run anti-detect audit on a device
+  trust-score         Compute trust score for a device
+  
+  config              Show current configuration
+  logs                Tail titan-api logs
+  version             Show version info
+
+Environment:
+  TITAN_DATA          Data directory (default: /opt/titan/data)
+  TITAN_API_PORT      API port (default: 8080)
+  TITAN_API_SECRET    API authentication secret
+
+EOF
+    exit "${1:-0}"
+}
+
+version_info() {
+    echo "Titan VMOS v13.0.0"
+    echo "  Install:    ${TITAN_DIR}"
+    echo "  Data:       ${DATA_DIR}"
+    echo "  Python:     $("${PYTHON}" --version 2>&1 || echo 'not found')"
+    echo "  Cuttlefish: ${CVD_BIN_DIR:-/opt/titan/cuttlefish/cf/bin}"
+    if command -v adb &>/dev/null; then
+        echo "  ADB:        $(adb version 2>&1 | head -1)"
+    fi
+    if [[ -e /dev/kvm ]]; then
+        echo "  KVM:        available"
+    else
+        echo "  KVM:        NOT AVAILABLE"
+    fi
+}
+
+cmd_stop() {
+    echo "Stopping Titan VMOS services..."
+    systemctl stop titan-nginx 2>/dev/null || true
+    systemctl stop titan-scrcpy 2>/dev/null || true
+    systemctl stop titan-api 2>/dev/null || true
+    echo "Services stopped."
+}
+
+cmd_start() {
+    echo "Starting Titan VMOS services (desktop-only mode)..."
+    systemctl start titan-api
+    systemctl start titan-scrcpy
+    systemctl start titan-nginx
+    echo "Services started. API bound to 127.0.0.1:8080 (local only)"
+    
+    # Auto-launch Cuttlefish Desktop if DISPLAY is available
+    if [[ -n "${DISPLAY:-}" ]]; then
+        echo "Launching Cuttlefish Desktop..."
+        cmd_desktop &
+    else
+        echo "No DISPLAY set — run 'titan-vmos desktop' manually when GUI is available."
+    fi
+}
+
+cmd_restart() {
+    cmd_stop
+    sleep 1
+    cmd_start
+}
+
+ensure_venv() {
+    if [[ ! -f "${PYTHON}" ]]; then
+        echo "ERROR: Python venv not found at ${VENV_DIR}"
+        echo "  Run: dpkg --configure -a  (or reinstall titan-vmos)"
+        exit 1
+    fi
+}
+
+# ─── Commands ─────────────────────────────────────────────────────────
+# cmd_start already defined above; do not redefine here (avoids recursion)
+
+cmd_status() {
+    echo "═══ Titan VMOS Service Status ═══"
+    for svc in titan-api titan-scrcpy titan-nginx; do
+        state=$(systemctl is-active "$svc" 2>/dev/null || echo "inactive")
+        printf "  %-20s %s\n" "$svc" "$state"
+    done
+    echo ""
+
+    echo "═══ System Health ═══"
+    # KVM
+    if [[ -e /dev/kvm ]]; then
+        echo "  KVM:          OK"
+    else
+        echo "  KVM:          MISSING (/dev/kvm not found)"
+    fi
+
+    # Docker
+    if systemctl is-active --quiet docker 2>/dev/null; then
+        echo "  Docker:       running"
+    else
+        echo "  Docker:       stopped"
+    fi
+
+    # ADB
+    if command -v adb &>/dev/null; then
+        device_count=$(adb devices 2>/dev/null | grep -c 'device$' || echo 0)
+        echo "  ADB devices:  ${device_count}"
+    else
+        echo "  ADB:          not installed"
+    fi
+
+    # Disk
+    disk_usage=$(df -h /opt/titan 2>/dev/null | tail -1 | awk '{print $5}' || echo "?")
+    echo "  Disk (/opt):  ${disk_usage} used"
+
+    # Memory
+    mem_free=$(free -h 2>/dev/null | awk '/Mem:/{print $4}' || echo "?")
+    echo "  RAM free:     ${mem_free}"
+}
+
+cmd_api() {
+    ensure_venv
+    echo "Starting API in foreground — desktop-only (127.0.0.1)..."
+    cd "${TITAN_DIR}"
+    exec "${VENV_DIR}/bin/uvicorn" server.titan_api:app \
+        --host 127.0.0.1 --port "${TITAN_API_PORT:-8080}" \
+        --workers 1 --reload
+}
+
+cmd_devices() {
+    ensure_venv
+    PORT="${TITAN_API_PORT:-8080}"
+    if [[ -z "${TITAN_API_SECRET:-}" ]]; then
+        echo "ERROR: TITAN_API_SECRET environment variable not set"
+        return 1
+    fi
+    curl -sf "http://127.0.0.1:${PORT}/api/devices" \
+        -H "Authorization: Bearer ${TITAN_API_SECRET}" \
+        2>/dev/null | python3 -m json.tool 2>/dev/null \
+        || echo "API not running or unauthorized. Start with: titan-vmos start"
+}
+
+cmd_create_device() {
+    ensure_venv
+    PORT="${TITAN_API_PORT:-8080}"
+    if [[ -z "${TITAN_API_SECRET:-}" ]]; then
+        echo "ERROR: TITAN_API_SECRET environment variable not set"
+        return 1
+    fi
+    response=$(curl -sS -w "\n%{http_code}" -X POST "http://127.0.0.1:${PORT}/api/devices" \
+        -H "Content-Type: application/json" \
+        -H "Authorization: Bearer ${TITAN_API_SECRET}" \
+        -d '{}' 2>&1)
+    code=$(echo "$response" | tail -n1)
+    body=$(echo "$response" | sed '$d')
+    if [[ "$code" == "200" || "$code" == "201" ]]; then
+        echo "$body" | python3 -m json.tool 2>/dev/null || echo "$body"
+    else
+        echo "create-device failed: HTTP $code"
+        echo "$body"
+        echo "Check /var/log/syslog or journalctl -u titan-api for root cause."
+        return 1
+    fi
+}
+
+cmd_setup_cuttlefish() {
+    if [[ -f "${TITAN_DIR}/scripts/setup_cuttlefish.sh" ]]; then
+        bash "${TITAN_DIR}/scripts/setup_cuttlefish.sh"
+    else
+        echo "ERROR: setup_cuttlefish.sh not found at ${TITAN_DIR}/scripts/"
+        exit 1
+    fi
+}
+
+cmd_patch_boot() {
+    if [[ -f "${TITAN_DIR}/build/patch-boot-magisk.sh" ]]; then
+        bash "${TITAN_DIR}/build/patch-boot-magisk.sh" "$@"
+    else
+        echo "ERROR: patch-boot-magisk.sh not found"
+        exit 1
+    fi
+}
+
+cmd_install_modules() {
+    if [[ -f "${TITAN_DIR}/build/install-zygisk-modules.sh" ]]; then
+        bash "${TITAN_DIR}/build/install-zygisk-modules.sh" "$@"
+    else
+        echo "ERROR: install-zygisk-modules.sh not found"
+        exit 1
+    fi
+}
+
+cmd_keybox() {
+    ensure_venv
+    exec "${PYTHON}" "${TITAN_DIR}/bin/titan-keybox" "$@"
+}
+
+cmd_audit() {
+    ensure_venv
+    local device="${1:-127.0.0.1:6520}"
+    PORT="${TITAN_API_PORT:-8080}"
+    curl -sf "http://127.0.0.1:${PORT}/api/stealth/audit?device_id=${device}" 2>/dev/null \
+        | python3 -m json.tool 2>/dev/null \
+        || echo "API not running or device not found."
+}
+
+cmd_trust_score() {
+    ensure_venv
+    local device="${1:-127.0.0.1:6520}"
+    PORT="${TITAN_API_PORT:-8080}"
+    curl -sf "http://127.0.0.1:${PORT}/api/genesis/trust-score?device_id=${device}" 2>/dev/null \
+        | python3 -m json.tool 2>/dev/null \
+        || echo "API not running or device not found."
+}
+
+cmd_genesis() {
+    ensure_venv
+    local device="${1:-dev-cvd001}"
+    PORT="${TITAN_API_PORT:-8080}"
+    if [[ -z "${TITAN_API_SECRET:-}" ]]; then
+        echo "ERROR: TITAN_API_SECRET environment variable not set"
+        return 1
+    fi
+    echo "Starting Genesis pipeline for device: ${device}"
+    echo "Use the Cuttlefish Desktop app for the full interactive experience."
+    echo ""
+    response=$(curl -sS -w "\n%{http_code}" -X POST "http://127.0.0.1:${PORT}/api/genesis/pipeline/${device}" \
+        -H "Content-Type: application/json" \
+        -H "Authorization: Bearer ${TITAN_API_SECRET}" \
+        -d '{}' 2>&1)
+    code=$(echo "$response" | tail -n1)
+    body=$(echo "$response" | sed '$d')
+    if [[ "$code" == "200" ]]; then
+        echo "$body" | python3 -m json.tool 2>/dev/null || echo "$body"
+        job_id=$(echo "$body" | python3 -c "import sys,json; print(json.load(sys.stdin).get('job_id',''))" 2>/dev/null || true)
+        if [[ -n "$job_id" ]]; then
+            echo ""
+            echo "Poll status: curl http://127.0.0.1:${PORT}/api/genesis/pipeline-status/${job_id}"
+        fi
+    else
+        echo "Genesis start failed: HTTP $code"
+        echo "$body"
+        return 1
+    fi
+}
+
+cmd_reset() {
+    ensure_venv
+    local device="${1:-dev-cvd001}"
+    PORT="${TITAN_API_PORT:-8080}"
+    if [[ -z "${TITAN_API_SECRET:-}" ]]; then
+        echo "ERROR: TITAN_API_SECRET environment variable not set"
+        return 1
+    fi
+    echo "Factory resetting device: ${device} (wipe all persona data)..."
+    response=$(curl -sS -w "\n%{http_code}" -X POST "http://127.0.0.1:${PORT}/api/genesis/pipeline/${device}" \
+        -H "Content-Type: application/json" \
+        -H "Authorization: Bearer ${TITAN_API_SECRET}" \
+        -d '{"skip_patch": true, "skip_wipe": false}' 2>&1)
+    code=$(echo "$response" | tail -n1)
+    body=$(echo "$response" | sed '$d')
+    if [[ "$code" == "200" ]]; then
+        echo "Factory reset initiated."
+        echo "$body" | python3 -m json.tool 2>/dev/null || echo "$body"
+    else
+        echo "Factory reset failed: HTTP $code"
+        echo "$body"
+        return 1
+    fi
+}
+
+cmd_config() {
+    echo "═══ Titan VMOS Configuration ═══"
+    echo "  Install dir:   ${TITAN_DIR}"
+    echo "  Data dir:      ${DATA_DIR}"
+    echo "  API port:      ${TITAN_API_PORT:-8080}"
+    echo "  CVD bin:       ${CVD_BIN_DIR:-/opt/titan/cuttlefish/cf/bin}"
+    echo "  CVD images:    ${CVD_IMAGES_DIR:-/opt/titan/cuttlefish/images}"
+    echo "  GPU Ollama:    ${TITAN_GPU_OLLAMA:-http://127.0.0.1:11435}"
+    echo ""
+    if [[ -f "${TITAN_DIR}/.env" ]]; then
+        echo "  .env loaded from: ${TITAN_DIR}/.env"
+    else
+        echo "  WARNING: No .env file found"
+    fi
+}
+
+cmd_logs() {
+    journalctl -u titan-api -f --no-pager
+}
+
+# ─── Desktop App Launcher ─────────────────────────────────────────────
+CUTTLEFISH_DESKTOP="/opt/titan-v13-device/device-viewer"
+
+cmd_desktop() {
+    # Ensure API is running
+    if ! curl -sf http://127.0.0.1:8080/health/live >/dev/null 2>&1; then
+        echo "Titan API not running. Starting services first..."
+        systemctl start titan-api
+        sleep 2
+    fi
+    
+    TITAN_DESKTOP="/opt/titan-v11.3-device/desktop"
+    if [[ ! -d "${TITAN_DESKTOP}" ]]; then
+        echo "ERROR: Titan Console not found at ${TITAN_DESKTOP}"
+        exit 1
+    fi
+    
+    cd "${TITAN_DESKTOP}"
+    [[ ! -d node_modules ]] && npm install
+    echo "Launching Titan Console..."
+    exec npx electron --no-sandbox --disable-gpu-sandbox .
+}
+
+cmd_device() {
+    if [[ ! -d "${CUTTLEFISH_DESKTOP}" ]]; then
+        echo "ERROR: Cuttlefish Desktop not found at ${CUTTLEFISH_DESKTOP}"
+        exit 1
+    fi
+    
+    cd "${CUTTLEFISH_DESKTOP}"
+    [[ ! -d node_modules ]] && npm install
+    echo "Launching Cuttlefish Device viewer..."
+    exec npx electron --no-sandbox --disable-gpu-sandbox .
+}
+
+# ─── Dispatch ─────────────────────────────────────────────────────────
+CMD="${1:-}"
+shift || true
+
+case "$CMD" in
+    start)              cmd_start ;;
+    stop)               cmd_stop ;;
+    restart)            cmd_restart ;;
+    status)             cmd_status ;;
+    desktop|gui)        cmd_desktop ;;
+    device|phone)       cmd_device ;;
+    api)                cmd_api ;;
+    devices|ls)         cmd_devices ;;
+    create-device|create) cmd_create_device ;;
+    setup-cuttlefish)   cmd_setup_cuttlefish ;;
+    patch-boot)         cmd_patch_boot "$@" ;;
+    install-modules)    cmd_install_modules "$@" ;;
+    keybox|kb)          cmd_keybox "$@" ;;
+    genesis|forge)      cmd_genesis "$@" ;;
+    reset|wipe)         cmd_reset "$@" ;;
+    audit)              cmd_audit "$@" ;;
+    trust-score|trust)  cmd_trust_score "$@" ;;
+    config|cfg)         cmd_config ;;
+    logs|log)           cmd_logs ;;
+    version|-v|--version) version_info ;;
+    help|-h|--help)     usage 0 ;;
+    "")                 usage 0 ;;
+    *)
+        echo "Unknown command: $CMD"
+        usage 1
+        ;;
+esac
