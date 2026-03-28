@@ -1,0 +1,28 @@
+# Practical Coding Agent Instructions - Part 3: Debugging and Operations
+
+## 1. Assume Nothing, Verify Everything
+- When debugging, do not assume a component is working. Verify its status and output directly.
+- Use the available tools to check the health of services, inspect logs, and query API endpoints.
+
+## 2. Root Cause Analysis
+- Do not just fix the symptom of a bug. Investigate the root cause.
+- If an API call fails, check the logs of the API server. If a device is not behaving correctly, use ADB to inspect its state and logs. For example, after pushing a file to an Android device, always run `restorecon -R` to fix potential SELinux context issues.
+
+## 3. Structured Debugging Workflow
+- Follow a structured approach to debugging:
+    1.  **Reproduce the issue**: Identify the exact steps to trigger the bug.
+    2.  **Gather context**: Collect logs, error messages, and application state.
+    3.  **Formulate a hypothesis**: Based on the context, what is the likely cause?
+    4.  **Test the hypothesis**: Make a targeted change to test your theory.
+    5.  **Implement the fix**: Once the cause is confirmed, implement a robust solution.
+    6.  **Verify the fix**: Run tests and manual checks to ensure the bug is resolved and no new issues have been introduced.
+
+## 4. Never Skip a Failing Step
+- In an automated sequence or script, never skip a failing step. Implement retry logic with exponential backoff for transient errors.
+- If a step repeatedly fails, halt the process and report the failure. The goal is a reliable system, not one that silently fails.
+
+## 5. Operational Awareness
+- Be aware that you are working on a live or production-like system.
+- Before performing destructive operations (e.g., deleting data, reformatting a device), ensure you have a clear reason and have taken appropriate backups if necessary.
+- Monitor system resources (CPU, memory) after deploying changes to ensure they do not introduce performance regressions.
+

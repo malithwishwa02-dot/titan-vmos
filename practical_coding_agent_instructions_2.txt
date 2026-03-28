@@ -1,0 +1,22 @@
+# Practical Coding Agent Instructions - Part 2: Interacting with Complex Systems
+
+## 1. Understand the Architecture
+- Before making changes, understand the high-level architecture. Identify the major components (e.g., API server, database, virtual machines, frontend).
+- Reference the project's `AGENTS.md` or `README.md` to quickly grasp the system's structure and data flow. For example, in the Titan V13 system, understand that the FastAPI server orchestrates Cuttlefish VMs.
+
+## 2. Respect Service Boundaries
+- When implementing features, respect the boundaries between services. Do not have one service directly access the database of another.
+- Use the defined APIs for inter-service communication. If a new API endpoint is needed, create it following the project's conventions (e.g., new routers in `server/routers/`).
+
+## 3. Handle Real-World Constraints
+- Be aware of and code defensively against real-world limitations. If a feature depends on hardware that may not be present (e.g., a TEE for cryptographic operations), your code must handle its absence gracefully.
+- Do not implement features that are known to be non-functional or are placeholders. For example, do not attempt to implement a feature that requires "Play Integrity STRONG" if the documentation states it's impossible in the target environment.
+
+## 4. Idempotent Operations
+- Design operations, especially those involving data injection or modification, to be idempotent. Running the same operation multiple times should not result in errors or duplicate data.
+- Use techniques like checking for existing data before insertion or using database transactions.
+
+## 5. Configuration-Driven Behavior
+- Do not hardcode values. Use the project's configuration system to manage settings like IP addresses, ports, and feature flags.
+- When adding a new feature, expose its configuration options in the appropriate configuration files.
+

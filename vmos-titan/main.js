@@ -172,7 +172,7 @@ function startBuiltinServer() {
 
       // ── Health ──────────────────────────────────────────────────────
       if (p === '/api/health') {
-        return send({ status: 'ok', version: '1.0.0' });
+        return send({ status: 'ok', version: '2.0.0' });
       }
 
       if (!ak || !sk) return send({ error: 'Credentials not configured' }, 401);
@@ -3143,8 +3143,8 @@ function createMenu() {
           dialog.showMessageBox(mainWindow, {
             type: 'info',
             title: 'About VMOS Titan',
-            message: 'VMOS Titan v1.0.0',
-            detail: 'Professional VMOS Pro cloud device management with Genesis Studio integration.\n\nBuilt on Electron + Alpine.js + Tailwind CSS.'
+            message: 'VMOS Titan v2.0.0',
+            detail: 'Professional VMOS Pro cloud device management with Genesis Studio integration.\nIncludes ops-web localhost console.\n\nBuilt on Electron + Alpine.js + Tailwind CSS.'
           });
         }}
       ]

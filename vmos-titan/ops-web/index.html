@@ -1,0 +1,667 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>VMOS Titan Ops-Web</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  :root{--bg:#0a0e17;--card:#111827;--accent:#a855f7;--cyan:#06b6d4;--green:#22c55e;--red:#ef4444;--yellow:#eab308}
+  body{background:var(--bg);color:#e2e8f0;font-family:'Inter',system-ui,sans-serif;margin:0}
+  .btn{padding:.5rem 1rem;border-radius:.5rem;font-size:.8rem;font-weight:600;cursor:pointer;transition:all .15s;border:none;color:#fff}
+  .btn:hover{transform:translateY(-1px)} .btn:disabled{opacity:.4;cursor:not-allowed;transform:none}
+  .btn-purple{background:linear-gradient(135deg,#7c3aed,#a855f7)}
+  .btn-cyan{background:linear-gradient(135deg,#0891b2,#06b6d4)}
+  .btn-green{background:linear-gradient(135deg,#16a34a,#22c55e)}
+  .btn-red{background:linear-gradient(135deg,#dc2626,#ef4444)}
+  .btn-dark{background:#374151} .btn-dark:hover{background:#4b5563}
+  .inp{width:100%;background:#1e293b;border:1px solid #374151;border-radius:.5rem;padding:.5rem .75rem;font-size:.85rem;color:#fff}
+  .inp:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 2px rgba(168,85,247,.15)}
+  .card{background:var(--card);border:1px solid #1f2937;border-radius:.75rem;padding:1.25rem}
+  .log-box{font-family:'JetBrains Mono',monospace;font-size:11px;background:#0f172a;color:#94a3b8;border:1px solid #1e293b;border-radius:.5rem;padding:.75rem;white-space:pre-wrap;overflow-y:auto;max-height:400px}
+  .status-10{color:var(--green)} .status-11,.status-12,.status-20{color:var(--yellow)}
+  .status-14,.status-18{color:#9ca3af} .status-21,.status-22{color:var(--red)}
+  .tab{padding:.5rem 1rem;cursor:pointer;border-bottom:2px solid transparent;font-size:.85rem;font-weight:500;color:#9ca3af;transition:all .15s}
+  .tab:hover{color:#e2e8f0} .tab.active{color:var(--accent);border-bottom-color:var(--accent)}
+  .gradient-text{background:linear-gradient(135deg,#a855f7,#06b6d4);-webkit-background-clip:text;-webkit-text-fill-color:transparent}
+  .pulse{animation:pulse 2s infinite} @keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
+  .scrollbar::-webkit-scrollbar{width:5px} .scrollbar::-webkit-scrollbar-thumb{background:#334155;border-radius:3px}
+</style>
+</head>
+<body class="min-h-screen">
+<header class="border-b border-gray-800 px-6 py-3 flex items-center justify-between" style="background:#0d1117">
+  <div class="flex items-center gap-3">
+    <div class="w-9 h-9 rounded-lg bg-gradient-to-br from-purple-500 to-cyan-500 flex items-center justify-center text-sm font-bold">T</div>
+    <div><h1 class="text-base font-bold gradient-text">VMOS Titan Ops-Web</h1><p class="text-[10px] text-gray-500">v2.0 — Localhost Operations Console</p></div>
+  </div>
+  <div class="flex items-center gap-3">
+    <span id="conn-status" class="text-xs text-gray-500">Connecting...</span>
+    <button onclick="refreshInstances()" class="btn btn-dark text-xs py-1 px-3">↻ Refresh</button>
+  </div>
+</header>
+<nav class="border-b border-gray-800 flex gap-1 px-6" style="background:#0d1117">
+  <div class="tab active" onclick="switchTab('dashboard',this)">Dashboard</div>
+  <div class="tab" onclick="switchTab('devices',this)">Devices</div>
+  <div class="tab" onclick="switchTab('shell',this)">Shell</div>
+  <div class="tab" onclick="switchTab('genesis',this)">Genesis</div>
+  <div class="tab" onclick="switchTab('apps',this)">Apps</div>
+  <div class="tab" onclick="switchTab('identity',this)">Identity</div>
+  <div class="tab" onclick="switchTab('network',this)">Network</div>
+  <div class="tab" onclick="switchTab('tools',this)">Tools</div>
+</nav>
+<main class="p-6 overflow-y-auto scrollbar" style="height:calc(100vh - 100px)">
+  <section id="tab-dashboard">
+    <div class="grid grid-cols-4 gap-4 mb-6">
+      <div class="card"><p class="text-xs text-gray-400 uppercase mb-1">Total Instances</p><p class="text-2xl font-bold" id="stat-total">—</p></div>
+      <div class="card"><p class="text-xs text-gray-400 uppercase mb-1">Running</p><p class="text-2xl font-bold text-green-400" id="stat-running">—</p></div>
+      <div class="card"><p class="text-xs text-gray-400 uppercase mb-1">Stopped / Error</p><p class="text-2xl font-bold text-yellow-400" id="stat-stopped">—</p></div>
+      <div class="card"><p class="text-xs text-gray-400 uppercase mb-1">Server Uptime</p><p class="text-2xl font-bold text-purple-400" id="stat-uptime">—</p></div>
+    </div>
+    <div class="card">
+      <h3 class="text-sm font-semibold text-gray-400 uppercase mb-3">Instance Fleet</h3>
+      <table class="w-full text-sm"><thead><tr class="text-xs text-gray-500 border-b border-gray-700"><th class="text-left py-2 px-3">Pad Code</th><th class="text-left py-2">Status</th><th class="text-left py-2">Android</th><th class="text-left py-2">Image</th><th class="text-left py-2">ADB</th><th class="text-right py-2 px-3">Actions</th></tr></thead><tbody id="fleet-table"></tbody></table>
+      <p id="fleet-empty" class="text-center text-gray-500 py-8 hidden">No instances found. Check credentials.</p>
+    </div>
+  </section>
+  <section id="tab-devices" class="hidden">
+    <div class="grid grid-cols-2 gap-6">
+      <div class="card">
+        <h3 class="text-sm font-semibold text-gray-400 uppercase mb-3">Device Inspector</h3>
+        <div class="mb-3"><label class="text-xs text-gray-500 block mb-1">Pad Code</label>
+          <div class="flex gap-2"><input id="inspect-pad" class="inp" placeholder="ACP2509244LGV1MV"><button onclick="inspectDevice()" class="btn btn-purple text-xs whitespace-nowrap">Inspect</button></div>
+        </div>
+        <div id="inspect-result" class="log-box scrollbar" style="min-height:200px">Select a device to inspect...</div>
+      </div>
+      <div class="card">
+        <h3 class="text-sm font-semibold text-gray-400 uppercase mb-3">Screenshot</h3>
+        <div class="mb-3"><div class="flex gap-2"><input id="screenshot-pad" class="inp" placeholder="ACP2509244LGV1MV"><button onclick="takeScreenshot()" class="btn btn-cyan text-xs whitespace-nowrap">📸 Capture</button></div></div>
+        <div id="screenshot-area" class="flex items-center justify-center bg-gray-900 rounded-lg" style="min-height:300px"><p class="text-gray-600 text-sm">No screenshot</p></div>
+      </div>
+    </div>
+  </section>
+  <section id="tab-shell" class="hidden">
+    <div class="card">
+      <h3 class="text-sm font-semibold text-gray-400 uppercase mb-3">Remote Shell</h3>
+      <div class="grid grid-cols-4 gap-3 mb-3">
+        <div class="col-span-1"><label class="text-xs text-gray-500 block mb-1">Target Device</label><select id="shell-device" class="inp"></select></div>
+        <div class="col-span-3"><label class="text-xs text-gray-500 block mb-1">Command</label>
+          <div class="flex gap-2"><input id="shell-cmd" class="inp" placeholder="getprop ro.build.fingerprint" onkeydown="if(event.key==='Enter')runShell()"><button onclick="runShell()" class="btn btn-green text-xs whitespace-nowrap">▶ Run</button></div>
+        </div>
+      </div>
+      <div class="flex gap-2 mb-3 flex-wrap">
+        <button onclick="quickCmd('getprop ro.build.fingerprint')" class="btn btn-dark text-xs py-1">fingerprint</button>
+        <button onclick="quickCmd('getprop ro.product.model')" class="btn btn-dark text-xs py-1">model</button>
+        <button onclick="quickCmd('getprop ro.boot.verifiedbootstate')" class="btn btn-dark text-xs py-1">verified boot</button>
+        <button onclick="quickCmd('getenforce')" class="btn btn-dark text-xs py-1">SELinux</button>
+        <button onclick="quickCmd('settings get secure android_id')" class="btn btn-dark text-xs py-1">android_id</button>
+        <button onclick="quickCmd('dumpsys battery')" class="btn btn-dark text-xs py-1">battery</button>
+        <button onclick="quickCmd('ls -la /data/system_ce/0/accounts_ce.db 2>/dev/null && echo EXISTS || echo MISSING')" class="btn btn-dark text-xs py-1">accounts DB</button>
+        <button onclick="quickCmd('ls /data/system/usagestats/0/daily/ 2>/dev/null | wc -l')" class="btn btn-dark text-xs py-1">usage days</button>
+        <button onclick="quickCmd('wc -c < /data/data/com.google.android.gms/databases/tapandpay.db 2>/dev/null || echo MISSING')" class="btn btn-dark text-xs py-1">wallet DB</button>
+      </div>
+      <div id="shell-output" class="log-box scrollbar" style="min-height:300px">Output will appear here...</div>
+    </div>
+  </section>
+  <section id="tab-genesis" class="hidden">
+    <!-- Full Pipeline Form + Phase Monitor -->
+    <div class="grid grid-cols-3 gap-4">
+      <!-- Column 1: Identity & Device Config -->
+      <div class="card space-y-3">
+        <h3 class="text-sm font-semibold gradient-text uppercase mb-1">Genesis Pipeline</h3>
+        <p class="text-[10px] text-gray-500 mb-2">11-phase identity forge → stealth → inject → wallet → trust audit</p>
+        <div><label class="text-[10px] text-gray-500 block mb-0.5">Target Device</label><select id="gen-device" class="inp"></select></div>
+        <div class="grid grid-cols-2 gap-2">
+          <div><label class="text-[10px] text-gray-500 block mb-0.5">Full Name</label><input id="gen-name" class="inp" placeholder="John Smith"></div>
+          <div><label class="text-[10px] text-gray-500 block mb-0.5">Email</label><input id="gen-email" class="inp" placeholder="j.smith@gmail.com"></div>
+        </div>
+        <div class="grid grid-cols-2 gap-2">
+          <div><label class="text-[10px] text-gray-500 block mb-0.5">Phone</label><input id="gen-phone" class="inp" placeholder="+12135551234"></div>
+          <div><label class="text-[10px] text-gray-500 block mb-0.5">DOB</label><input id="gen-dob" class="inp" placeholder="1992-05-15"></div>
+        </div>
+        <div class="grid grid-cols-3 gap-2">
+          <div><label class="text-[10px] text-gray-500 block mb-0.5">Street</label><input id="gen-street" class="inp" placeholder="123 Main St"></div>
+          <div><label class="text-[10px] text-gray-500 block mb-0.5">City</label><input id="gen-city" class="inp" placeholder="Los Angeles"></div>
+          <div><label class="text-[10px] text-gray-500 block mb-0.5">State</label><input id="gen-state" class="inp" placeholder="CA"></div>
+        </div>
+        <div class="grid grid-cols-3 gap-2">
+          <div><label class="text-[10px] text-gray-500 block mb-0.5">ZIP</label><input id="gen-zip" class="inp" placeholder="90001"></div>
+          <div><label class="text-[10px] text-gray-500 block mb-0.5">Country</label>
+            <select id="gen-country" class="inp"><option>US</option><option>GB</option><option>DE</option><option>FR</option><option>CA</option><option>AU</option><option>JP</option><option>BR</option><option>IN</option></select>
+          </div>
+          <div><label class="text-[10px] text-gray-500 block mb-0.5">Gender</label><select id="gen-gender" class="inp"><option value="M">Male</option><option value="F">Female</option></select></div>
+        </div>
+        <hr class="border-gray-700">
+        <div class="grid grid-cols-2 gap-2">
+          <div><label class="text-[10px] text-gray-500 block mb-0.5">Google Email</label><input id="gen-gemail" class="inp" placeholder="account@gmail.com"></div>
+          <div><label class="text-[10px] text-gray-500 block mb-0.5">Google Password</label><input id="gen-gpass" class="inp" type="password" placeholder="password"></div>
+        </div>
+        <hr class="border-gray-700">
+        <div class="grid grid-cols-2 gap-2">
+          <div><label class="text-[10px] text-gray-500 block mb-0.5">Card Number</label><input id="gen-cc" class="inp" placeholder="4111111111111111"></div>
+          <div><label class="text-[10px] text-gray-500 block mb-0.5">Exp (MM/YYYY)</label><input id="gen-ccexp" class="inp" placeholder="12/2028"></div>
+        </div>
+        <div class="grid grid-cols-2 gap-2">
+          <div><label class="text-[10px] text-gray-500 block mb-0.5">CVV</label><input id="gen-cccvv" class="inp" placeholder="123"></div>
+          <div><label class="text-[10px] text-gray-500 block mb-0.5">Cardholder</label><input id="gen-ccholder" class="inp" placeholder="JOHN SMITH"></div>
+        </div>
+        <hr class="border-gray-700">
+        <div class="grid grid-cols-2 gap-2">
+          <div><label class="text-[10px] text-gray-500 block mb-0.5">Device Model</label>
+            <select id="gen-model" class="inp"><option value="samsung_s25_ultra">Samsung S25 Ultra</option><option value="samsung_s24">Samsung S24</option><option value="pixel_9_pro">Pixel 9 Pro</option><option value="pixel_8a">Pixel 8a</option><option value="oneplus_13">OnePlus 13</option><option value="xiaomi_15">Xiaomi 15</option></select>
+          </div>
+          <div><label class="text-[10px] text-gray-500 block mb-0.5">Carrier</label>
+            <select id="gen-carrier" class="inp"><option value="tmobile_us">T-Mobile US</option><option value="att_us">AT&T US</option><option value="verizon_us">Verizon US</option><option value="ee_uk">EE UK</option><option value="vodafone_de">Vodafone DE</option></select>
+          </div>
+        </div>
+        <div class="grid grid-cols-3 gap-2">
+          <div><label class="text-[10px] text-gray-500 block mb-0.5">Location</label>
+            <select id="gen-location" class="inp"><option value="la">Los Angeles</option><option value="nyc">New York</option><option value="chicago">Chicago</option><option value="miami">Miami</option><option value="london">London</option><option value="berlin">Berlin</option></select>
+          </div>
+          <div><label class="text-[10px] text-gray-500 block mb-0.5">Age (days)</label><input id="gen-age" class="inp" type="number" value="120" min="7" max="900"></div>
+          <div><label class="text-[10px] text-gray-500 block mb-0.5">Proxy URL</label><input id="gen-proxy" class="inp" placeholder="socks5://user:pass@ip:port"></div>
+        </div>
+        <div class="flex gap-2 items-center">
+          <label class="text-[10px] text-gray-400 flex items-center gap-1"><input type="checkbox" id="gen-skip-wipe"> Skip Wipe</label>
+          <label class="text-[10px] text-gray-400 flex items-center gap-1"><input type="checkbox" id="gen-skip-patch"> Skip Patch</label>
+        </div>
+        <button onclick="startGenesisPipeline()" id="gen-start-btn" class="btn btn-purple w-full text-sm py-2">🚀 Launch Full Genesis Pipeline</button>
+        <button onclick="quickGenesis()" class="btn btn-dark w-full text-xs">⚡ Quick Wipe + Patch Only</button>
+      </div>
+
+      <!-- Column 2: Phase Progress Monitor -->
+      <div class="card">
+        <div class="flex items-center justify-between mb-3">
+          <h3 class="text-sm font-semibold text-gray-400 uppercase">Phase Progress</h3>
+          <div id="gen-trust-badge" class="hidden px-3 py-1 rounded-full text-sm font-bold" style="background:#1e293b">
+            <span id="gen-trust-score">—</span>/100 <span id="gen-trust-grade" class="text-xs ml-1">—</span>
+          </div>
+        </div>
+        <div id="gen-status-bar" class="text-xs text-gray-500 mb-3 flex items-center gap-2">
+          <span id="gen-pipeline-status">Idle — configure and launch</span>
+        </div>
+        <div id="gen-phases" class="space-y-1.5">
+          <div class="text-xs text-gray-600 text-center py-8">Launch a pipeline to see phase progress</div>
+        </div>
+        <div class="mt-3 pt-3 border-t border-gray-800">
+          <h4 class="text-[10px] text-gray-500 uppercase mb-1">Active Job</h4>
+          <div class="text-xs text-gray-400" id="gen-job-info">No active job</div>
+        </div>
+      </div>
+
+      <!-- Column 3: Log + Job History -->
+      <div class="space-y-4">
+        <div class="card">
+          <h3 class="text-sm font-semibold text-gray-400 uppercase mb-2">Pipeline Log</h3>
+          <div id="gen-log" class="log-box scrollbar" style="min-height:250px;max-height:350px">Pipeline output appears here...</div>
+        </div>
+        <div class="card">
+          <div class="flex items-center justify-between mb-2">
+            <h3 class="text-sm font-semibold text-gray-400 uppercase">Job History</h3>
+            <button onclick="loadGenesisJobs()" class="btn btn-dark text-[10px] py-0.5 px-2">↻</button>
+          </div>
+          <div id="gen-jobs" class="space-y-1 max-h-48 overflow-y-auto scrollbar">
+            <div class="text-xs text-gray-600 text-center py-4">Click refresh to load history</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── Apps Tab ── -->
+  <section id="tab-apps" class="hidden">
+    <div class="grid grid-cols-2 gap-6">
+      <div class="card">
+        <h3 class="text-sm font-semibold text-gray-400 uppercase mb-3">App Management</h3>
+        <div class="space-y-3">
+          <div><label class="text-xs text-gray-500 block mb-1">Device</label><select id="app-device" class="inp"></select></div>
+          <div><label class="text-xs text-gray-500 block mb-1">Package Name</label><input id="app-pkg" class="inp" placeholder="com.example.app"></div>
+          <div><label class="text-xs text-gray-500 block mb-1">APK URL (for install)</label><input id="app-url" class="inp" placeholder="https://example.com/app.apk"></div>
+          <div class="flex items-center gap-2"><input type="checkbox" id="app-autogrant" checked><label for="app-autogrant" class="text-xs text-gray-400">Auto-grant permissions</label></div>
+          <div class="grid grid-cols-4 gap-2">
+            <button onclick="appInstall()" class="btn btn-green text-xs">Install</button>
+            <button onclick="appUninstall()" class="btn btn-red text-xs">Uninstall</button>
+            <button onclick="appStart()" class="btn btn-cyan text-xs">Start</button>
+            <button onclick="appStop()" class="btn btn-dark text-xs">Stop</button>
+          </div>
+          <div class="flex gap-2">
+            <button onclick="appList()" class="btn btn-purple text-xs w-full">📋 List Installed Apps</button>
+            <button onclick="appClearAll()" class="btn btn-dark text-xs w-full">🧹 Clear All Processes</button>
+          </div>
+        </div>
+      </div>
+      <div class="card">
+        <h3 class="text-sm font-semibold text-gray-400 uppercase mb-3">Installed Apps</h3>
+        <div id="app-list-result" class="log-box scrollbar" style="min-height:350px">Click "List Installed Apps" to populate...</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── Identity Tab ── -->
+  <section id="tab-identity" class="hidden">
+    <div class="grid grid-cols-3 gap-6">
+      <div class="card">
+        <h3 class="text-sm font-semibold text-gray-400 uppercase mb-3">SIM Card</h3>
+        <div class="space-y-2">
+          <div><label class="text-xs text-gray-500 block mb-1">Device</label><select id="sim-device" class="inp"></select></div>
+          <div><label class="text-xs text-gray-500 block mb-1">Country Code</label>
+            <select id="sim-country" class="inp"><option value="US">US (+1)</option><option value="GB">GB (+44)</option><option value="DE">DE (+49)</option><option value="FR">FR (+33)</option><option value="CA">CA (+1)</option><option value="AU">AU (+61)</option><option value="JP">JP (+81)</option><option value="BR">BR (+55)</option><option value="IN">IN (+91)</option></select>
+          </div>
+          <div class="grid grid-cols-2 gap-2">
+            <div><label class="text-xs text-gray-500 block mb-1">ICCID</label><input id="sim-iccid" class="inp" placeholder="Auto"></div>
+            <div><label class="text-xs text-gray-500 block mb-1">IMSI</label><input id="sim-imsi" class="inp" placeholder="Auto"></div>
+          </div>
+          <div><label class="text-xs text-gray-500 block mb-1">Operator</label><input id="sim-operator" class="inp" placeholder="T-Mobile"></div>
+          <div><label class="text-xs text-gray-500 block mb-1">Phone Number</label><input id="sim-phone" class="inp" placeholder="+12025551234"></div>
+          <button onclick="setSim()" class="btn btn-purple w-full text-xs">📱 Apply SIM</button>
+          <p class="text-[10px] text-gray-600">⚠ Requires restart</p>
+        </div>
+      </div>
+      <div class="card">
+        <h3 class="text-sm font-semibold text-gray-400 uppercase mb-3">WiFi</h3>
+        <div class="space-y-2">
+          <div><label class="text-xs text-gray-500 block mb-1">Device</label><select id="wifi-device" class="inp"></select></div>
+          <div><label class="text-xs text-gray-500 block mb-1">SSID</label><input id="wifi-ssid" class="inp" placeholder="HomeWiFi-5G"></div>
+          <div><label class="text-xs text-gray-500 block mb-1">BSSID</label><input id="wifi-bssid" class="inp" placeholder="AA:BB:CC:DD:EE:FF"></div>
+          <div><label class="text-xs text-gray-500 block mb-1">MAC Address</label><input id="wifi-mac" class="inp" placeholder="AA:BB:CC:DD:EE:00"></div>
+          <div class="grid grid-cols-2 gap-2">
+            <div><label class="text-xs text-gray-500 block mb-1">IP</label><input id="wifi-ip" class="inp" placeholder="192.168.1.105"></div>
+            <div><label class="text-xs text-gray-500 block mb-1">Gateway</label><input id="wifi-gw" class="inp" placeholder="192.168.1.1"></div>
+          </div>
+          <div class="grid grid-cols-2 gap-2">
+            <div><label class="text-xs text-gray-500 block mb-1">DNS</label><input id="wifi-dns" class="inp" placeholder="8.8.8.8"></div>
+            <div><label class="text-xs text-gray-500 block mb-1">Signal (dBm)</label><input id="wifi-signal" class="inp" type="number" value="-55"></div>
+          </div>
+          <button onclick="setWifi()" class="btn btn-cyan w-full text-xs">📶 Apply WiFi</button>
+        </div>
+      </div>
+      <div class="card">
+        <h3 class="text-sm font-semibold text-gray-400 uppercase mb-3">Bluetooth & Battery</h3>
+        <div class="space-y-2">
+          <div><label class="text-xs text-gray-500 block mb-1">Device</label><select id="bt-device" class="inp"></select></div>
+          <div><label class="text-xs text-gray-500 block mb-1">BT MAC</label><input id="bt-mac" class="inp" placeholder="AA:BB:CC:DD:EE:FF"></div>
+          <div><label class="text-xs text-gray-500 block mb-1">BT Name</label><input id="bt-name" class="inp" placeholder="Galaxy S25 Ultra"></div>
+          <button onclick="setBluetooth()" class="btn btn-purple w-full text-xs">🔵 Apply Bluetooth</button>
+          <hr class="border-gray-700 my-3">
+          <div><label class="text-xs text-gray-500 block mb-1">Battery Level (%)</label><input id="bat-level" class="inp" type="number" value="72" min="1" max="100"></div>
+          <div class="flex items-center gap-2"><input type="checkbox" id="bat-charging"><label for="bat-charging" class="text-xs text-gray-400">Charging</label></div>
+          <button onclick="setBattery()" class="btn btn-green w-full text-xs">🔋 Set Battery</button>
+          <hr class="border-gray-700 my-3">
+          <button onclick="resetGaid()" class="btn btn-dark w-full text-xs">🔄 Reset GAID</button>
+        </div>
+      </div>
+    </div>
+    <div class="grid grid-cols-2 gap-6 mt-6">
+      <div class="card">
+        <h3 class="text-sm font-semibold text-gray-400 uppercase mb-3">Locale & Timezone</h3>
+        <div class="space-y-2">
+          <div><label class="text-xs text-gray-500 block mb-1">Device</label><select id="locale-device" class="inp"></select></div>
+          <div class="grid grid-cols-2 gap-2">
+            <div><label class="text-xs text-gray-500 block mb-1">Timezone</label>
+              <select id="locale-tz" class="inp"><option>America/New_York</option><option>America/Chicago</option><option>America/Denver</option><option>America/Los_Angeles</option><option>Europe/London</option><option>Europe/Berlin</option><option>Europe/Paris</option><option>Asia/Tokyo</option><option>Asia/Shanghai</option><option>Australia/Sydney</option></select>
+            </div>
+            <div><label class="text-xs text-gray-500 block mb-1">Language</label>
+              <select id="locale-lang" class="inp"><option value="en-US">English (US)</option><option value="en-GB">English (UK)</option><option value="de-DE">German</option><option value="fr-FR">French</option><option value="ja-JP">Japanese</option><option value="pt-BR">Portuguese (BR)</option><option value="es-ES">Spanish</option></select>
+            </div>
+          </div>
+          <button onclick="setLocale()" class="btn btn-purple w-full text-xs">🌐 Apply Locale</button>
+        </div>
+      </div>
+      <div class="card">
+        <h3 class="text-sm font-semibold text-gray-400 uppercase mb-3">Data Injection</h3>
+        <div class="space-y-2">
+          <div><label class="text-xs text-gray-500 block mb-1">Device</label><select id="inject-device" class="inp"></select></div>
+          <div><label class="text-xs text-gray-500 block mb-1">Contacts JSON</label><textarea id="inject-contacts" class="inp" rows="3" placeholder='[{"name":"John Doe","phone":"+12025551234"}]' style="resize:vertical;font-family:monospace;font-size:11px"></textarea></div>
+          <button onclick="injectContacts()" class="btn btn-cyan w-full text-xs">👥 Inject Contacts</button>
+          <div><label class="text-xs text-gray-500 block mb-1">SMS JSON</label><textarea id="inject-sms" class="inp" rows="3" placeholder='{"phoneNumber":"+12025551234","content":"Hey!"}' style="resize:vertical;font-family:monospace;font-size:11px"></textarea></div>
+          <button onclick="injectSms()" class="btn btn-green w-full text-xs">💬 Inject SMS</button>
+        </div>
+      </div>
+    </div>
+    <div id="identity-log" class="card mt-4"><h4 class="text-xs text-gray-500 uppercase mb-2">Identity Operations Log</h4><div id="identity-log-box" class="log-box scrollbar" style="min-height:100px">Results appear here...</div></div>
+  </section>
+
+  <!-- ── Network Tab ── -->
+  <section id="tab-network" class="hidden">
+    <div class="grid grid-cols-2 gap-6">
+      <div class="card">
+        <h3 class="text-sm font-semibold text-gray-400 uppercase mb-3">Proxy Configuration</h3>
+        <div class="space-y-2">
+          <div><label class="text-xs text-gray-500 block mb-1">Device</label><select id="proxy-device" class="inp"></select></div>
+          <div class="grid grid-cols-2 gap-2">
+            <div><label class="text-xs text-gray-500 block mb-1">Proxy Type</label>
+              <select id="proxy-type" class="inp"><option value="proxy">Proxy</option><option value="vpn">VPN</option></select>
+            </div>
+            <div><label class="text-xs text-gray-500 block mb-1">Protocol</label>
+              <select id="proxy-proto" class="inp"><option value="socks5">SOCKS5</option><option value="http-relay">HTTP</option></select>
+            </div>
+          </div>
+          <div><label class="text-xs text-gray-500 block mb-1">Host</label><input id="proxy-host" class="inp" placeholder="proxy.example.com"></div>
+          <div class="grid grid-cols-3 gap-2">
+            <div><label class="text-xs text-gray-500 block mb-1">Port</label><input id="proxy-port" class="inp" type="number" placeholder="1080"></div>
+            <div><label class="text-xs text-gray-500 block mb-1">Username</label><input id="proxy-user" class="inp" placeholder="user"></div>
+            <div><label class="text-xs text-gray-500 block mb-1">Password</label><input id="proxy-pass" class="inp" type="password" placeholder="pass"></div>
+          </div>
+          <div class="flex gap-2">
+            <button onclick="setProxy()" class="btn btn-purple w-full text-xs">🔒 Set Proxy</button>
+            <button onclick="queryProxy()" class="btn btn-dark w-full text-xs">🔍 Query Current</button>
+          </div>
+        </div>
+      </div>
+      <div class="card">
+        <h3 class="text-sm font-semibold text-gray-400 uppercase mb-3">Smart IP & Bandwidth</h3>
+        <div class="space-y-2">
+          <div><label class="text-xs text-gray-500 block mb-1">Device</label><select id="net-device" class="inp"></select></div>
+          <button onclick="smartIp()" class="btn btn-cyan w-full text-xs">🌐 Smart IP (Auto-config SIM/GPS by proxy)</button>
+          <hr class="border-gray-700 my-2">
+          <div class="grid grid-cols-2 gap-2">
+            <div><label class="text-xs text-gray-500 block mb-1">Upload (Mbps, 0=∞)</label><input id="bw-up" class="inp" type="number" value="0"></div>
+            <div><label class="text-xs text-gray-500 block mb-1">Download (Mbps, 0=∞)</label><input id="bw-down" class="inp" type="number" value="0"></div>
+          </div>
+          <p class="text-[10px] text-gray-600">Set -1 to block internet completely</p>
+          <button onclick="setBandwidth()" class="btn btn-dark w-full text-xs">📊 Set Bandwidth</button>
+          <hr class="border-gray-700 my-2">
+          <div><label class="text-xs text-gray-500 block mb-1">Check IP</label>
+            <div class="flex gap-2"><input id="check-ip-input" class="inp" placeholder="Proxy URL to verify"><button onclick="checkIp()" class="btn btn-dark text-xs whitespace-nowrap">Check</button></div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="card mt-4">
+      <h3 class="text-sm font-semibold text-gray-400 uppercase mb-3">Touch & Input Control</h3>
+      <div class="grid grid-cols-3 gap-6">
+        <div class="space-y-2">
+          <div><label class="text-xs text-gray-500 block mb-1">Device</label><select id="touch-device" class="inp"></select></div>
+          <div class="grid grid-cols-2 gap-2">
+            <div><label class="text-xs text-gray-500 block mb-1">X</label><input id="touch-x" class="inp" type="number" value="540"></div>
+            <div><label class="text-xs text-gray-500 block mb-1">Y</label><input id="touch-y" class="inp" type="number" value="960"></div>
+          </div>
+          <button onclick="sendTouch()" class="btn btn-cyan w-full text-xs">👆 Tap</button>
+        </div>
+        <div class="space-y-2">
+          <div><label class="text-xs text-gray-500 block mb-1">Swipe (startY → endY)</label></div>
+          <div class="grid grid-cols-2 gap-2">
+            <div><label class="text-xs text-gray-500 block mb-1">Start Y</label><input id="swipe-sy" class="inp" type="number" value="1500"></div>
+            <div><label class="text-xs text-gray-500 block mb-1">End Y</label><input id="swipe-ey" class="inp" type="number" value="500"></div>
+          </div>
+          <button onclick="sendSwipe()" class="btn btn-purple w-full text-xs">↕ Swipe</button>
+        </div>
+        <div class="space-y-2">
+          <div><label class="text-xs text-gray-500 block mb-1">Text Input</label><input id="input-text" class="inp" placeholder="Type text..."></div>
+          <button onclick="sendText()" class="btn btn-green w-full text-xs">⌨️ Type Text</button>
+          <div class="flex gap-2 mt-2">
+            <button onclick="sendKey(3)" class="btn btn-dark text-xs flex-1">HOME</button>
+            <button onclick="sendKey(4)" class="btn btn-dark text-xs flex-1">BACK</button>
+            <button onclick="sendKey(187)" class="btn btn-dark text-xs flex-1">RECENT</button>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div id="network-log" class="card mt-4"><h4 class="text-xs text-gray-500 uppercase mb-2">Network Operations Log</h4><div id="network-log-box" class="log-box scrollbar" style="min-height:100px">Results appear here...</div></div>
+  </section>
+
+  <!-- ── Tools Tab ── -->
+    <div class="grid grid-cols-2 gap-6">
+      <div class="card">
+        <h3 class="text-sm font-semibold text-gray-400 uppercase mb-3">GPS Injection</h3>
+        <div class="space-y-3">
+          <div><label class="text-xs text-gray-500 block mb-1">Device</label><select id="gps-device" class="inp"></select></div>
+          <div class="grid grid-cols-2 gap-3"><div><label class="text-xs text-gray-500 block mb-1">Latitude</label><input id="gps-lat" class="inp" value="40.7580"></div><div><label class="text-xs text-gray-500 block mb-1">Longitude</label><input id="gps-lng" class="inp" value="-73.9855"></div></div>
+          <div class="flex gap-2 flex-wrap">
+            <button onclick="setGps(40.7580,-73.9855)" class="btn btn-dark text-xs py-1">NYC</button>
+            <button onclick="setGps(34.0522,-118.2437)" class="btn btn-dark text-xs py-1">LA</button>
+            <button onclick="setGps(51.5074,-0.1278)" class="btn btn-dark text-xs py-1">London</button>
+            <button onclick="setGps(52.5200,13.4050)" class="btn btn-dark text-xs py-1">Berlin</button>
+            <button onclick="setGps(48.8566,2.3522)" class="btn btn-dark text-xs py-1">Paris</button>
+          </div>
+          <button onclick="injectGps()" class="btn btn-cyan w-full">📍 Inject GPS</button>
+        </div>
+      </div>
+      <div class="card">
+        <h3 class="text-sm font-semibold text-gray-400 uppercase mb-3">Batch Actions</h3>
+        <div class="space-y-3">
+          <button onclick="batchRestart()" class="btn btn-green w-full">↻ Restart All Running</button>
+          <button onclick="batchScreenshot()" class="btn btn-cyan w-full">📸 Screenshot All</button>
+          <div><label class="text-xs text-gray-500 block mb-1">One-Key New Device</label>
+            <div class="flex gap-2"><select id="newdev-device" class="inp"></select><button onclick="oneKeyNew()" class="btn btn-purple text-xs whitespace-nowrap">🔄 New Identity</button></div>
+          </div>
+        </div>
+        <div class="mt-4"><h4 class="text-xs text-gray-500 uppercase mb-2">Results</h4><div id="tools-log" class="log-box scrollbar" style="min-height:150px">Results appear here...</div></div>
+      </div>
+    </div>
+  </section>
+</main>
+<script>
+const API='';let instances=[];
+const SM={10:'Running',11:'Restarting',12:'Resetting',13:'Upgrading',14:'Abnormal',15:'Not Ready',18:'Shutdown',20:'Booting',22:'Boot Failed'};
+function st(s){return SM[s]||'Unknown('+s+')'}
+function switchTab(n,el){document.querySelectorAll('[id^="tab-"]').forEach(s=>s.classList.add('hidden'));document.getElementById('tab-'+n)?.classList.remove('hidden');document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));if(el)el.classList.add('active')}
+async function api(p,o={}){try{const r=await fetch(API+p,{method:o.method||'GET',headers:o.body?{'Content-Type':'application/json'}:{},body:o.body?JSON.stringify(o.body):undefined});return await r.json()}catch(e){return{error:e.message}}}
+async function refreshInstances(){
+  const h=await api('/api/health');
+  if(h.uptime)document.getElementById('stat-uptime').textContent=Math.round(h.uptime)+'s';
+  const r=await api('/api/instances');
+  if(r.error){document.getElementById('conn-status').textContent='⚠ '+r.error;document.getElementById('conn-status').className='text-xs text-red-400';return}
+  instances=r.instances||[];
+  document.getElementById('conn-status').textContent='✓ Connected ('+instances.length+' devices)';
+  document.getElementById('conn-status').className='text-xs text-green-400';
+  const run=instances.filter(i=>i.status==10).length;
+  document.getElementById('stat-total').textContent=instances.length;
+  document.getElementById('stat-running').textContent=run;
+  document.getElementById('stat-stopped').textContent=instances.length-run;
+  const tb=document.getElementById('fleet-table');
+  if(!instances.length){tb.innerHTML='';document.getElementById('fleet-empty').classList.remove('hidden');return}
+  document.getElementById('fleet-empty').classList.add('hidden');
+  tb.innerHTML=instances.map(i=>'<tr class="border-b border-gray-800 hover:bg-gray-800/50"><td class="py-2 px-3 font-mono text-xs">'+i.padCode+'</td><td class="py-2"><span class="status-'+i.status+' text-xs font-semibold">'+st(i.status)+'</span></td><td class="py-2 text-xs text-gray-400">Android '+(i.androidVersion||'?')+'</td><td class="py-2 text-xs text-gray-500">'+(i.imageVersion||'—')+'</td><td class="py-2 text-xs">'+(i.adbOpen==='1'?'<span class="text-green-400">ON</span>':'<span class="text-gray-600">OFF</span>')+'</td><td class="py-2 px-3 text-right"><button onclick="restartDev(\''+i.padCode+'\')" class="btn btn-dark text-xs py-1 px-2">↻</button> <button onclick="inspectDev(\''+i.padCode+'\')" class="btn btn-dark text-xs py-1 px-2">🔍</button> <button onclick="ssDev(\''+i.padCode+'\')" class="btn btn-dark text-xs py-1 px-2">📸</button></td></tr>').join('');
+  ['shell-device','gen-device','gps-device','newdev-device','app-device','sim-device','wifi-device','bt-device','locale-device','inject-device','proxy-device','net-device','touch-device'].forEach(id=>{const el=document.getElementById(id);if(el)el.innerHTML=instances.map(i=>'<option value="'+i.padCode+'">'+i.padCode+' ('+st(i.status)+')</option>').join('')});
+}
+async function restartDev(p){const r=await api('/api/instances/'+p+'/restart',{method:'POST'});alert(r.ok?'Restart initiated':'Failed: '+(r.error||r.msg));setTimeout(refreshInstances,3000)}
+async function inspectDevice(){const p=document.getElementById('inspect-pad').value.trim();if(!p)return;const el=document.getElementById('inspect-result');el.textContent='Loading...';const r=await api('/api/instances/'+p+'/info');el.textContent=JSON.stringify(r,null,2)}
+function inspectDev(p){document.getElementById('inspect-pad').value=p;switchTab('devices',document.querySelectorAll('.tab')[1]);inspectDevice()}
+async function takeScreenshot(){const p=document.getElementById('screenshot-pad').value.trim();if(!p)return;const a=document.getElementById('screenshot-area');a.innerHTML='<p class="text-gray-500 text-sm pulse">Capturing...</p>';const r=await api('/api/instances/'+p+'/screenshot');if(r.url)a.innerHTML='<img src="'+r.url+'" class="max-h-96 rounded-lg shadow-lg">';else a.innerHTML='<p class="text-red-400 text-sm">Screenshot failed</p>'}
+function ssDev(p){document.getElementById('screenshot-pad').value=p;switchTab('devices',document.querySelectorAll('.tab')[1]);takeScreenshot()}
+async function runShell(){const p=document.getElementById('shell-device').value,cmd=document.getElementById('shell-cmd').value.trim();if(!p||!cmd)return;const out=document.getElementById('shell-output');out.textContent+='\n$ '+cmd+'\n';out.scrollTop=out.scrollHeight;const r=await api('/api/instances/'+p+'/shell',{method:'POST',body:{command:cmd}});out.textContent+=(r.output||r.error||'No output')+'\n';out.scrollTop=out.scrollHeight}
+function quickCmd(c){document.getElementById('shell-cmd').value=c;runShell()}
+async function quickGenesis(){
+  const p=document.getElementById('gen-device').value;
+  const cc=document.getElementById('gen-country').value;
+  if(!p)return;
+  const log=document.getElementById('gen-log');
+  const add=m=>{log.textContent+='['+new Date().toLocaleTimeString()+'] '+m+'\n';log.scrollTop=log.scrollHeight};
+  add('Starting quick identity wipe + patch...');
+  add('Step 1/3: One-key new device...');
+  const r1=await api('/api/instances/'+p+'/one-key-new',{method:'POST',body:{country:cc}});
+  add(r1.ok?'Done: New identity applied':'Warning: '+(r1.msg||r1.error||JSON.stringify(r1)));
+  add('Step 2/3: Waiting 15s...');
+  await new Promise(r=>setTimeout(r,15000));
+  add('Step 3/3: Verifying...');
+  const r3=await api('/api/instances/'+p+'/shell',{method:'POST',body:{command:'echo FP=$(getprop ro.build.fingerprint); echo MODEL=$(getprop ro.product.model); echo VBS=$(getprop ro.boot.verifiedbootstate)'}});
+  add('Result: '+(r3.output||r3.error||'No output'));
+  add('Complete')
+}
+
+// ── Full Genesis Pipeline ──
+const GEN_PHASES=['Wipe','Stealth Patch','Network/Proxy','Forge Profile','Google Account','Inject Data','Wallet/GPay','Provincial Layer','Post-Harden','Attestation','Trust Audit'];
+let genPollTimer=null;
+let genActiveJobId=null;
+
+function genLog(m){const el=document.getElementById('gen-log');el.textContent+='['+new Date().toLocaleTimeString()+'] '+m+'\n';el.scrollTop=el.scrollHeight}
+
+function renderPhases(phases){
+  const c=document.getElementById('gen-phases');
+  if(!phases||!phases.length){c.innerHTML='<div class="text-xs text-gray-600 text-center py-8">Launch a pipeline to see phase progress</div>';return}
+  c.innerHTML=phases.map((p,i)=>{
+    const colors={done:'bg-green-500',running:'bg-purple-500 pulse',failed:'bg-red-500',warn:'bg-yellow-500',skipped:'bg-gray-600',pending:'bg-gray-700'};
+    const icons={done:'✓',running:'⟳',failed:'✗',warn:'⚠',skipped:'—',pending:'·'};
+    const s=p.status||'pending';
+    const bg=colors[s]||'bg-gray-700';
+    const icon=icons[s]||'·';
+    const name=p.name||GEN_PHASES[i]||('Phase '+i);
+    return '<div class="flex items-center gap-2"><div class="w-5 h-5 rounded '+bg+' flex items-center justify-center text-[10px] font-bold shrink-0">'+icon+'</div><div class="flex-1 min-w-0"><div class="flex items-center justify-between"><span class="text-xs font-medium '+(s==='running'?'text-purple-300':s==='done'?'text-green-300':s==='failed'?'text-red-300':'text-gray-400')+'">'+i+'. '+name+'</span><span class="text-[10px] text-gray-500 uppercase">'+s+'</span></div>'+(p.notes?'<div class="text-[10px] text-gray-500 truncate">'+p.notes+'</div>':'')+'</div></div>'
+  }).join('')
+}
+
+function updateTrustBadge(score,grade){
+  const badge=document.getElementById('gen-trust-badge');
+  const scoreEl=document.getElementById('gen-trust-score');
+  const gradeEl=document.getElementById('gen-trust-grade');
+  if(score>0){
+    badge.classList.remove('hidden');
+    scoreEl.textContent=score;
+    gradeEl.textContent=grade||'';
+    const c=score>=90?'text-green-400':score>=70?'text-yellow-400':score>=50?'text-orange-400':'text-red-400';
+    scoreEl.className=c+' font-bold';gradeEl.className='text-xs ml-1 '+c;
+  }else{badge.classList.add('hidden')}
+}
+
+async function startGenesisPipeline(){
+  const p=document.getElementById('gen-device').value;
+  if(!p)return alert('Select a target device');
+  const btn=document.getElementById('gen-start-btn');
+  btn.disabled=true;btn.textContent='⏳ Launching...';
+  document.getElementById('gen-log').textContent='';
+
+  const body={
+    pad_code:p,
+    name:document.getElementById('gen-name').value.trim(),
+    email:document.getElementById('gen-email').value.trim(),
+    phone:document.getElementById('gen-phone').value.trim(),
+    dob:document.getElementById('gen-dob').value.trim(),
+    street:document.getElementById('gen-street').value.trim(),
+    city:document.getElementById('gen-city').value.trim(),
+    state:document.getElementById('gen-state').value.trim(),
+    zip:document.getElementById('gen-zip').value.trim(),
+    country:document.getElementById('gen-country').value,
+    gender:document.getElementById('gen-gender').value,
+    cc_number:document.getElementById('gen-cc').value.trim(),
+    cc_exp:document.getElementById('gen-ccexp').value.trim(),
+    cc_cvv:document.getElementById('gen-cccvv').value.trim(),
+    cc_holder:document.getElementById('gen-ccholder').value.trim(),
+    google_email:document.getElementById('gen-gemail').value.trim(),
+    google_password:document.getElementById('gen-gpass').value.trim(),
+    proxy_url:document.getElementById('gen-proxy').value.trim(),
+    device_model:document.getElementById('gen-model').value,
+    carrier:document.getElementById('gen-carrier').value,
+    location:document.getElementById('gen-location').value,
+    age_days:parseInt(document.getElementById('gen-age').value)||120,
+    skip_wipe:document.getElementById('gen-skip-wipe').checked,
+    skip_patch:document.getElementById('gen-skip-patch').checked,
+  };
+
+  genLog('Launching full Genesis pipeline on '+p+'...');
+  const r=await api('/api/vmos-genesis/pipeline',{method:'POST',body});
+  if(r.job_id){
+    genActiveJobId=r.job_id;
+    genLog('Pipeline started — Job ID: '+r.job_id);
+    document.getElementById('gen-job-info').textContent='Job '+r.job_id+' on '+p;
+    document.getElementById('gen-pipeline-status').innerHTML='<span class="pulse text-purple-400">● Running</span> Job: '+r.job_id;
+    renderPhases(GEN_PHASES.map((n,i)=>({name:n,status:'pending',notes:''})));
+    if(genPollTimer)clearInterval(genPollTimer);
+    genPollTimer=setInterval(()=>pollGenesisPipeline(r.job_id),2000);
+    btn.textContent='⏳ Pipeline Running...';
+  }else{
+    genLog('ERROR: '+(r.error||r.detail||r.msg||JSON.stringify(r)));
+    btn.disabled=false;btn.textContent='🚀 Launch Full Genesis Pipeline';
+  }
+}
+
+async function pollGenesisPipeline(jobId){
+  const r=await api('/api/vmos-genesis/pipeline-status/'+jobId);
+  if(r.error||r.detail){
+    genLog('Poll error: '+(r.error||r.detail));return
+  }
+  // Render phases
+  if(r.phases)renderPhases(r.phases);
+  // Update trust score
+  if(r.trust_score)updateTrustBadge(r.trust_score,r.grade);
+  // Stream new log entries
+  if(r.log&&Array.isArray(r.log)){
+    const logEl=document.getElementById('gen-log');
+    const existing=logEl.textContent.split('\n').length;
+    r.log.slice(Math.max(0,existing-5)).forEach(l=>{
+      if(!logEl.textContent.includes(l.substring(0,40)))genLog(l)
+    })
+  }
+  // Check completion
+  if(r.status==='completed'||r.status==='failed'){
+    clearInterval(genPollTimer);genPollTimer=null;
+    const isOk=r.status==='completed';
+    document.getElementById('gen-pipeline-status').innerHTML=(isOk?'<span class="text-green-400">● Completed</span>':'<span class="text-red-400">● Failed</span>')+' — Job: '+jobId;
+    genLog('Pipeline '+r.status+(r.trust_score?' — Trust: '+r.trust_score+'/100 ('+r.grade+')':''));
+    const btn=document.getElementById('gen-start-btn');btn.disabled=false;btn.textContent='🚀 Launch Full Genesis Pipeline';
+    loadGenesisJobs();
+  }
+}
+
+async function loadGenesisJobs(){
+  const r=await api('/api/vmos-genesis/jobs?limit=10');
+  const el=document.getElementById('gen-jobs');
+  const jobs=Array.isArray(r)?r:(r.jobs||[]);
+  if(!jobs.length){el.innerHTML='<div class="text-xs text-gray-600 text-center py-4">No jobs found</div>';return}
+  el.innerHTML=jobs.map(j=>{
+    const sc=j.trust_score||0;const gr=j.grade||'';
+    const st=j.status==='completed'?'text-green-400':j.status==='running'?'text-purple-400 pulse':'text-red-400';
+    const ts=j.started_at?new Date(j.started_at*1000).toLocaleString():'—';
+    return '<div class="flex items-center justify-between py-1.5 px-2 rounded hover:bg-gray-800 cursor-pointer text-xs" onclick="pollGenesisPipeline(\''+j.job_id+'\')"><div class="flex items-center gap-2"><span class="'+st+' font-mono">'+j.job_id+'</span><span class="text-gray-500">'+(j.pad_code||'')+'</span></div><div class="flex items-center gap-2"><span class="text-gray-400">'+ts+'</span>'+(sc?'<span class="font-bold '+(sc>=85?'text-green-400':sc>=70?'text-yellow-400':'text-red-400')+'">'+sc+'</span>':'')+'</div></div>'
+  }).join('')
+}
+function setGps(a,b){document.getElementById('gps-lat').value=a;document.getElementById('gps-lng').value=b}
+async function injectGps(){const p=document.getElementById('gps-device').value,lat=parseFloat(document.getElementById('gps-lat').value),lng=parseFloat(document.getElementById('gps-lng').value);if(!p||isNaN(lat)||isNaN(lng))return;const r=await api('/api/instances/'+p+'/gps',{method:'POST',body:{lat,lng}});document.getElementById('tools-log').textContent+='[GPS] '+p+': '+(r.ok?'ok':'fail')+' ('+lat+', '+lng+')\n'}
+async function batchRestart(){const c=instances.filter(i=>i.status==10).map(i=>i.padCode);if(!c.length)return alert('No running instances');const r=await api('/api/batch/restart',{method:'POST',body:{padCodes:c}});document.getElementById('tools-log').textContent+='[Batch Restart] '+c.length+' devices: '+(r.ok?'ok':r.msg||r.error)+'\n';setTimeout(refreshInstances,5000)}
+async function batchScreenshot(){const c=instances.filter(i=>i.status==10).map(i=>i.padCode);if(!c.length)return alert('No running instances');const r=await api('/api/batch/screenshot',{method:'POST',body:{padCodes:c}});document.getElementById('tools-log').textContent+='[Batch Screenshot] '+(r.ok?'ok':r.error)+'\n'}
+async function oneKeyNew(){const p=document.getElementById('newdev-device').value;if(!p)return;const r=await api('/api/instances/'+p+'/one-key-new',{method:'POST',body:{country:'US'}});document.getElementById('tools-log').textContent+='[One-Key New] '+p+': '+(r.ok?'ok':r.msg||r.error)+'\n'}
+
+// ── App Management ──
+function logApp(m){const el=document.getElementById('app-list-result');el.textContent+=m+'\n';el.scrollTop=el.scrollHeight}
+async function appInstall(){const p=document.getElementById('app-device').value,url=document.getElementById('app-url').value.trim();if(!p||!url)return alert('Device and APK URL required');const ag=document.getElementById('app-autogrant').checked;logApp('[Install] '+url+' → '+p+'...');const r=await api('/api/apps/install',{method:'POST',body:{padCodes:[p],url,autoGrant:ag}});logApp('  Result: '+(r.ok?'OK (task dispatched)':r.msg||r.error))}
+async function appUninstall(){const p=document.getElementById('app-device').value,pkg=document.getElementById('app-pkg').value.trim();if(!p||!pkg)return alert('Device and package name required');logApp('[Uninstall] '+pkg+' from '+p);const r=await api('/api/apps/uninstall',{method:'POST',body:{padCodes:[p],packageName:pkg}});logApp('  Result: '+(r.ok?'OK':r.msg||r.error))}
+async function appStart(){const p=document.getElementById('app-device').value,pkg=document.getElementById('app-pkg').value.trim();if(!p||!pkg)return alert('Device and package name required');logApp('[Start] '+pkg+' on '+p);const r=await api('/api/apps/start',{method:'POST',body:{padCodes:[p],packageName:pkg}});logApp('  Result: '+(r.ok?'OK':r.msg||r.error))}
+async function appStop(){const p=document.getElementById('app-device').value,pkg=document.getElementById('app-pkg').value.trim();if(!p||!pkg)return alert('Device and package name required');logApp('[Stop] '+pkg+' on '+p);const r=await api('/api/apps/stop',{method:'POST',body:{padCodes:[p],packageName:pkg}});logApp('  Result: '+(r.ok?'OK':r.msg||r.error))}
+async function appList(){const p=document.getElementById('app-device').value;if(!p)return;const el=document.getElementById('app-list-result');el.textContent='Loading...';const r=await api('/api/apps/list',{method:'POST',body:{padCode:p}});if(r.ok&&Array.isArray(r.apps)){el.textContent='Installed apps on '+p+':\n\n'+r.apps.map(a=>typeof a==='string'?a:(a.packageName||a.appName||JSON.stringify(a))).join('\n')}else{el.textContent='Error: '+(r.error||r.msg||JSON.stringify(r))}}
+async function appClearAll(){const p=document.getElementById('app-device').value;if(!p)return;logApp('[Clear Processes] '+p);const r=await api('/api/apps/clear-processes',{method:'POST',body:{padCodes:[p]}});logApp('  Result: '+(r.ok?'OK':r.msg||r.error))}
+
+// ── Identity: SIM ──
+function logId(m){const el=document.getElementById('identity-log-box');el.textContent+=m+'\n';el.scrollTop=el.scrollHeight}
+async function setSim(){const p=document.getElementById('sim-device').value;if(!p)return;const d={countryCode:document.getElementById('sim-country').value};const iccid=document.getElementById('sim-iccid').value.trim();if(iccid)d.iccid=iccid;const imsi=document.getElementById('sim-imsi').value.trim();if(imsi)d.imsi=imsi;const op=document.getElementById('sim-operator').value.trim();if(op)d.operatorName=op;const ph=document.getElementById('sim-phone').value.trim();if(ph)d.phoneNumber=ph;logId('[SIM] '+p+' → '+JSON.stringify(d));const r=await api('/api/instances/'+p+'/sim',{method:'POST',body:d});logId('  Result: '+(r.ok?'OK (restart required)':r.msg||r.error))}
+
+// ── Identity: WiFi ──
+async function setWifi(){const p=document.getElementById('wifi-device').value;if(!p)return;const d={};const f=(id,k)=>{const v=document.getElementById(id).value.trim();if(v)d[k]=v};f('wifi-ssid','ssid');f('wifi-bssid','bssid');f('wifi-mac','macAddress');f('wifi-ip','ip');f('wifi-gw','gateway');f('wifi-dns','dns');const sig=document.getElementById('wifi-signal').value;if(sig)d.signalStrength=parseInt(sig);logId('[WiFi] '+p+' → '+JSON.stringify(d));const r=await api('/api/instances/'+p+'/wifi',{method:'POST',body:d});logId('  Result: '+(r.ok?'OK':r.msg||r.error))}
+
+// ── Identity: Bluetooth ──
+async function setBluetooth(){const p=document.getElementById('bt-device').value;if(!p)return;const d={};const mac=document.getElementById('bt-mac').value.trim();if(mac)d.macAddress=mac;const name=document.getElementById('bt-name').value.trim();if(name)d.deviceName=name;logId('[BT] '+p+' → '+JSON.stringify(d));const r=await api('/api/instances/'+p+'/bluetooth',{method:'POST',body:d});logId('  Result: '+(r.ok?'OK':r.msg||r.error))}
+
+// ── Identity: Battery ──
+async function setBattery(){const p=document.getElementById('bt-device').value;if(!p)return;const lv=parseInt(document.getElementById('bat-level').value)||72;const ch=document.getElementById('bat-charging').checked;logId('[Battery] '+p+' → level='+lv+' charging='+ch);const r=await api('/api/instances/'+p+'/battery',{method:'POST',body:{level:lv,charging:ch}});logId('  Result: '+(r.ok?'OK':r.msg||r.error))}
+
+// ── Identity: GAID ──
+async function resetGaid(){const p=document.getElementById('bt-device').value;if(!p)return;logId('[GAID Reset] '+p);const r=await api('/api/instances/'+p+'/reset-gaid',{method:'POST'});logId('  Result: '+(r.ok?'OK':r.msg||r.error))}
+
+// ── Identity: Locale ──
+async function setLocale(){const p=document.getElementById('locale-device').value;if(!p)return;const tz=document.getElementById('locale-tz').value;const lang=document.getElementById('locale-lang').value;logId('[Locale] '+p+' → tz='+tz+' lang='+lang);const r=await api('/api/instances/'+p+'/locale',{method:'POST',body:{timezone:tz,language:lang}});logId('  Result: '+(r.ok?'OK':r.msg||r.error))}
+
+// ── Identity: Data Injection ──
+async function injectContacts(){const p=document.getElementById('inject-device').value;if(!p)return;try{const c=JSON.parse(document.getElementById('inject-contacts').value);logId('[Contacts] '+p+' → '+c.length+' contacts');const r=await api('/api/instances/'+p+'/contacts',{method:'POST',body:{contacts:c}});logId('  Result: '+(r.ok?'OK':r.msg||r.error))}catch(e){logId('[Contacts] Parse error: '+e.message)}}
+async function injectSms(){const p=document.getElementById('inject-device').value;if(!p)return;try{const s=JSON.parse(document.getElementById('inject-sms').value);logId('[SMS] '+p+' → '+JSON.stringify(s));const r=await api('/api/instances/'+p+'/sms',{method:'POST',body:s});logId('  Result: '+(r.ok?'OK':r.msg||r.error))}catch(e){logId('[SMS] Parse error: '+e.message)}}
+
+// ── Network: Proxy ──
+function logNet(m){const el=document.getElementById('network-log-box');el.textContent+=m+'\n';el.scrollTop=el.scrollHeight}
+async function setProxy(){const p=document.getElementById('proxy-device').value;if(!p)return;const d={proxyType:document.getElementById('proxy-type').value,proxyName:document.getElementById('proxy-proto').value,proxyHost:document.getElementById('proxy-host').value.trim(),proxyPort:parseInt(document.getElementById('proxy-port').value)||1080,proxyUser:document.getElementById('proxy-user').value.trim(),proxyPassword:document.getElementById('proxy-pass').value.trim()};logNet('[Proxy Set] '+p+' → '+d.proxyName+'://'+d.proxyHost+':'+d.proxyPort);const r=await api('/api/instances/'+p+'/proxy',{method:'POST',body:d});logNet('  Result: '+(r.ok?'OK':r.msg||r.error))}
+async function queryProxy(){const p=document.getElementById('proxy-device').value;if(!p)return;logNet('[Proxy Query] '+p);const r=await api('/api/instances/'+p+'/proxy');logNet('  '+JSON.stringify(r.data||r,null,2))}
+
+// ── Network: Smart IP ──
+async function smartIp(){const p=document.getElementById('net-device').value;if(!p)return;logNet('[Smart IP] '+p);const r=await api('/api/smart-ip',{method:'POST',body:{padCodes:[p]}});logNet('  Result: '+(r.ok?'OK — SIM/GPS auto-configured':r.msg||r.error)+'\n  '+JSON.stringify(r.data||'',null,2))}
+
+// ── Network: Bandwidth ──
+async function setBandwidth(){const p=document.getElementById('net-device').value;if(!p)return;const up=parseInt(document.getElementById('bw-up').value),dn=parseInt(document.getElementById('bw-down').value);logNet('[Bandwidth] '+p+' → up='+up+' down='+dn);const r=await api('/api/instances/'+p+'/bandwidth',{method:'POST',body:{up,down:dn}});logNet('  Result: '+(r.ok?'OK':r.msg||r.error))}
+
+// ── Network: Check IP ──
+async function checkIp(){const v=document.getElementById('check-ip-input').value.trim();logNet('[Check IP] '+v);const r=await api('/api/check-ip',{method:'POST',body:{proxyUrl:v}});logNet('  '+JSON.stringify(r.data||r,null,2))}
+
+// ── Touch & Input ──
+async function sendTouch(){const p=document.getElementById('touch-device').value;if(!p)return;const x=parseInt(document.getElementById('touch-x').value),y=parseInt(document.getElementById('touch-y').value);logNet('[Touch] '+p+' → ('+x+','+y+')');const r=await api('/api/instances/'+p+'/touch',{method:'POST',body:{actionType:0,x,y,width:1080,height:1920}});await new Promise(r=>setTimeout(r,100));await api('/api/instances/'+p+'/touch',{method:'POST',body:{actionType:1,x,y,width:1080,height:1920}});logNet('  Tap complete')}
+async function sendSwipe(){const p=document.getElementById('touch-device').value;if(!p)return;const sy=parseInt(document.getElementById('swipe-sy').value),ey=parseInt(document.getElementById('swipe-ey').value);logNet('[Swipe] '+p+' → Y '+sy+'→'+ey);const steps=10;for(let i=0;i<=steps;i++){const cy=sy+(ey-sy)*(i/steps);await api('/api/instances/'+p+'/touch',{method:'POST',body:{actionType:i===0?0:(i===steps?1:2),x:540,y:Math.round(cy),width:1080,height:1920}});await new Promise(r=>setTimeout(r,30))}logNet('  Swipe complete')}
+async function sendText(){const p=document.getElementById('touch-device').value,t=document.getElementById('input-text').value;if(!p||!t)return;logNet('[Text] '+p+' → "'+t+'"');const r=await api('/api/instances/'+p+'/input-text',{method:'POST',body:{text:t}});logNet('  Result: '+(r.ok?'OK':r.msg||r.error))}
+async function sendKey(k){const p=document.getElementById('touch-device').value;if(!p)return;logNet('[Key] '+p+' → keycode '+k);await api('/api/instances/'+p+'/shell',{method:'POST',body:{command:'input keyevent '+k}});logNet('  Sent')}
+(async()=>{await refreshInstances();setInterval(refreshInstances,30000)})();
+</script>
+</body>
+</html>
