@@ -234,7 +234,19 @@ Function signature mismatch. The `sec` (timeout in seconds) is passed to `sh()` 
 Commands that could take longer than 30 seconds (large DB writes, heavy file operations) may silently timeout and return empty string. No error is thrown — the caller assumes success.
 
 ### Status
-**Known issue — not yet patched.** Workaround: break long operations into smaller batches that complete in <30 seconds.
+**✅ FIXED (March 2026).** The `vmosPost()`, `_sh()`, and `_shOk()` functions now accept an optional `timeoutSec` parameter (default 30s, max 120s). The fix includes:
+- `vmosPost(apiPath, data, ak, sk, timeoutSec)` — configurable HTTP timeout
+- `_sh(padCode, cmd, ak, sk, timeoutSec)` — forwards timeout to vmosPost
+- `_shOk(padCode, cmd, marker, ak, sk, timeoutSec)` — forwards timeout to _sh
+
+Usage:
+```js
+// Old (30s default):
+const result = await sh('long-running-command');
+
+// New (60s timeout):
+const result = await sh('long-running-command', 60);
+```
 
 ---
 
@@ -488,20 +500,20 @@ Phase 1 rewritten to use `resetprop`/`setprop` via `syncCmd` shell (no device re
 
 ## Root Cause Summary Table
 
-| Error | Severity | Category | Fix |
-|---|---|---|---|
-| E-01: padStatus=1 not running | 🔴 CRITICAL | API docs wrong | Use `padStatus===10` |
-| E-02: padDetails 404 | 🟠 HIGH | Deprecated endpoint | Use `/infos` + search |
-| E-03: replacePad reboots | 🔴 CRITICAL | Undocumented side effect | Use shell resetprop |
-| E-04: Wrong param name | 🟡 MEDIUM | Typo | Use `padCodes` array |
-| E-05: updatePadAndroidProp reboots | 🔴 CRITICAL | Undocumented side effect | Use shell resetprop |
-| E-06: _sh() sec ignored | 🟡 MEDIUM | Code bug | Fix param forwarding |
-| E-07: sh returns "" on failure | 🟠 HIGH | Silent failure | Use echo marker + shOk() |
-| E-08: syncCmd 4KB limit | 🟡 MEDIUM | API limit | Split into 4 batches |
-| E-09: 11↔14 boot loop | 🟠 HIGH | Operational error | Never restart from status=11 |
-| E-10: 404 endpoint list | 🟡 MEDIUM | API discovery | Use documented endpoints only |
-| E-11: Signing constants wrong | 🟠 HIGH | Auth failure | Use exact constants above |
-| E-12: Score 2/100 | 🔴 CRITICAL | Root cause compound | Fixed by all of the above |
+| Error | Severity | Category | Fix | Status |
+|---|---|---|---|---|
+| E-01: padStatus=1 not running | 🔴 CRITICAL | API docs wrong | Use `padStatus===10` | ✅ Fixed |
+| E-02: padDetails 404 | 🟠 HIGH | Deprecated endpoint | Use `/infos` + search | ✅ Fixed |
+| E-03: replacePad reboots | 🔴 CRITICAL | Undocumented side effect | Use shell resetprop | ✅ Fixed |
+| E-04: Wrong param name | 🟡 MEDIUM | Typo | Use `padCodes` array | ✅ Fixed |
+| E-05: updatePadAndroidProp reboots | 🔴 CRITICAL | Undocumented side effect | Use shell resetprop | ✅ Fixed |
+| E-06: _sh() sec ignored | 🟡 MEDIUM | Code bug | Add timeoutSec param forwarding | ✅ Fixed |
+| E-07: sh returns "" on failure | 🟠 HIGH | Silent failure | Use echo marker + shOk() | ✅ Fixed |
+| E-08: syncCmd 4KB limit | 🟡 MEDIUM | API limit | Split into 4 batches | ✅ Fixed |
+| E-09: 11↔14 boot loop | 🟠 HIGH | Operational error | Never restart from status=11 | ✅ Fixed |
+| E-10: 404 endpoint list | 🟡 MEDIUM | API discovery | Use documented endpoints only | ✅ Fixed |
+| E-11: Signing constants wrong | 🟠 HIGH | Auth failure | Use exact constants above | ✅ Fixed |
+| E-12: Score 2/100 | 🔴 CRITICAL | Root cause compound | Fixed by all of the above | ✅ Fixed |
 
 ---
 
