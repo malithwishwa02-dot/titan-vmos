@@ -108,17 +108,19 @@ function _vmosSign(bodyJson, ak, sk) {
   };
 }
 
-function vmosPost(apiPath, data, ak, sk) {
+function vmosPost(apiPath, data, ak, sk, timeoutSec) {
   return new Promise((resolve, reject) => {
     const bodyJson = JSON.stringify(data || {});
     const headers  = _vmosSign(bodyJson, ak, sk);
     const buf      = Buffer.from(bodyJson, 'utf8');
+    // E-06 fix: Allow custom timeout (default 30s, max 120s for long operations)
+    const timeoutMs = Math.min(Math.max((timeoutSec || 30) * 1000, 5000), 120000);
     const req = https.request({
       hostname: VMOS_HOST,
       path: apiPath,
       method: 'POST',
       headers: { ...headers, 'content-length': buf.length },
-      timeout: 30000,
+      timeout: timeoutMs,
     }, res => {
       let raw = '';
       res.on('data', c => raw += c);
@@ -580,11 +582,13 @@ const COUNTRY_DEFAULTS = {
 };
 
 // Execute ADB shell command via syncCmd, return stdout
-async function _sh(padCode, cmd, ak, sk) {
+// E-06 fix: Accept timeoutSec parameter (default 30s)
+async function _sh(padCode, cmd, ak, sk, timeoutSec) {
   try {
+    const timeout = timeoutSec || 30;
     const resp = await _withRetry(() => vmosPost('/vcpcloud/api/padApi/syncCmd', {
       padCode, scriptContent: cmd,
-    }, ak, sk), 2, 'syncCmd');
+    }, ak, sk, timeout), 2, 'syncCmd');
     if (resp.code !== 200) return '';
     const items = Array.isArray(resp.data) ? resp.data : [resp.data];
     const item = items[0] || {};
@@ -594,8 +598,9 @@ async function _sh(padCode, cmd, ak, sk) {
   } catch (_) { return ''; }
 }
 
-async function _shOk(padCode, cmd, marker, ak, sk) {
-  const result = await _sh(padCode, cmd, ak, sk);
+// E-06 fix: Forward timeoutSec to _sh
+async function _shOk(padCode, cmd, marker, ak, sk, timeoutSec) {
+  const result = await _sh(padCode, cmd, ak, sk, timeoutSec);
   return (result || '').includes(marker);
 }
 
