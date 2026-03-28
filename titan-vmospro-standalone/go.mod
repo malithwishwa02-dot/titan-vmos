@@ -1,6 +1,8 @@
 module github.com/malithwishwa02-dot/titan-vmos/titan-vmospro-standalone
 
-go 1.18
+go 1.22.0
+
+toolchain go1.24.13
 
 require github.com/wailsapp/wails/v2 v2.9.3
 

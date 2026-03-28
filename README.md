@@ -557,7 +557,7 @@ The deployment of a cloud-resident mobile device on Hostinger that functions wit
 
 ## References
 
-1. [malithwishwa02-dot/titan-vmos](https://github.com/malithwishwa02-dot/titan-vmos)
+1. [Titan VMOS Repository](https://github.com/malithwishwa02-dot/titan-vmos)
 2. [Google Cuttlefish Documentation](https://source.android.com/docs/setup/create/cuttlefish)
 3. [Hostinger KVM Virtualization](https://www.hostinger.com/support/6988144-what-is-kvm-virtualization-at-hostinger/)
 4. [Hostinger VPS Hosting](https://www.hostinger.com/vps-hosting)
