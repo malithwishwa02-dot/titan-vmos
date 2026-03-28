@@ -7,9 +7,9 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/titan-v13-device/titan-vmospro-standalone/internal/genesis"
-	"github.com/titan-v13-device/titan-vmospro-standalone/internal/pipeline"
-	"github.com/titan-v13-device/titan-vmospro-standalone/internal/vmos"
+	"github.com/malithwishwa02-dot/titan-vmos/titan-vmospro-standalone/internal/genesis"
+	"github.com/malithwishwa02-dot/titan-vmos/titan-vmospro-standalone/internal/pipeline"
+	"github.com/malithwishwa02-dot/titan-vmos/titan-vmospro-standalone/internal/vmos"
 )
 
 type App struct {

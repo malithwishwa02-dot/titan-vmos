@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 # ═══════════════════════════════════════════════════════════════════════
-# Titan-X — Pre-installation validation (dpkg preinst)
+# Titan VMOS — Pre-installation validation (dpkg preinst)
 #
 # Verifies the target system meets minimum requirements before
 # installing any files. Prevents broken installs on unsupported hosts.
 # ═══════════════════════════════════════════════════════════════════════
 set -euo pipefail
 
-log() { echo "[titan-x preinst] $*"; }
-die() { echo "[titan-x preinst] FATAL: $*" >&2; exit 1; }
+log() { echo "[titan-vmos preinst] $*"; }
+die() { echo "[titan-vmos preinst] FATAL: $*" >&2; exit 1; }
 
 case "${1:-install}" in
     install|upgrade)
@@ -26,7 +26,7 @@ ARCH=$(dpkg --print-architecture 2>/dev/null || uname -m)
 case "$ARCH" in
     amd64|x86_64) ;;
     *)
-        die "Titan-X requires amd64/x86_64 architecture (detected: $ARCH)"
+        die "Titan VMOS requires amd64/x86_64 architecture (detected: $ARCH)"
         ;;
 esac
 log "Architecture: $ARCH ✓"
@@ -74,7 +74,7 @@ fi
 TOTAL_MEM_MB=$(free -m 2>/dev/null | awk '/Mem:/{print $2}' || echo 0)
 if [[ "$TOTAL_MEM_MB" -gt 0 ]] && [[ "$TOTAL_MEM_MB" -lt 4096 ]]; then
     log "WARNING: Only ${TOTAL_MEM_MB}MB RAM detected."
-    log "  Titan-X needs 4GB minimum, 8GB+ recommended per VM."
+    log "  Titan VMOS needs 4GB minimum, 8GB+ recommended per VM."
 fi
 log "Memory: ${TOTAL_MEM_MB}MB total ✓"
 

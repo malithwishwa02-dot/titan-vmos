@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ═══════════════════════════════════════════════════════════════════════
-# titan-x — CLI entrypoint for Titan-X Antidetect Device Platform
+# titan-vmos — CLI entrypoint for Titan VMOS Antidetect Device Platform
 # ═══════════════════════════════════════════════════════════════════════
 set -euo pipefail
 
@@ -23,14 +23,14 @@ fi
 # ─── Helpers ──────────────────────────────────────────────────────────
 usage() {
     cat <<EOF
-Titan-X — Antidetect Android Device Platform (v13.0.0) [Zero-Gaps]
+Titan VMOS — Antidetect Android Device Platform (v13.0.0) [Zero-Gaps]
 
-Usage: titan-x <command> [options]
+Usage: titan-vmos <command> [options]
 
 Commands:
   start               Start all services + Cuttlefish Desktop app
-  stop                Stop all Titan-X services
-  restart             Restart all Titan-X services
+  stop                Stop all Titan VMOS services
+  restart             Restart all Titan VMOS services
   status              Show service status and system health
   desktop             Launch Titan Console (requires services running)
   device              Launch Cuttlefish Device viewer (phone VM window)
@@ -65,7 +65,7 @@ EOF
 }
 
 version_info() {
-    echo "Titan-X v13.0.0"
+    echo "Titan VMOS v13.0.0"
     echo "  Install:    ${TITAN_DIR}"
     echo "  Data:       ${DATA_DIR}"
     echo "  Python:     $("${PYTHON}" --version 2>&1 || echo 'not found')"
@@ -81,7 +81,7 @@ version_info() {
 }
 
 cmd_stop() {
-    echo "Stopping Titan-X services..."
+    echo "Stopping Titan VMOS services..."
     systemctl stop titan-nginx 2>/dev/null || true
     systemctl stop titan-scrcpy 2>/dev/null || true
     systemctl stop titan-api 2>/dev/null || true
@@ -89,7 +89,7 @@ cmd_stop() {
 }
 
 cmd_start() {
-    echo "Starting Titan-X services (desktop-only mode)..."
+    echo "Starting Titan VMOS services (desktop-only mode)..."
     systemctl start titan-api
     systemctl start titan-scrcpy
     systemctl start titan-nginx
@@ -100,7 +100,7 @@ cmd_start() {
         echo "Launching Cuttlefish Desktop..."
         cmd_desktop &
     else
-        echo "No DISPLAY set — run 'titan-x desktop' manually when GUI is available."
+        echo "No DISPLAY set — run 'titan-vmos desktop' manually when GUI is available."
     fi
 }
 
@@ -113,7 +113,7 @@ cmd_restart() {
 ensure_venv() {
     if [[ ! -f "${PYTHON}" ]]; then
         echo "ERROR: Python venv not found at ${VENV_DIR}"
-        echo "  Run: dpkg --configure -a  (or reinstall titan-x)"
+        echo "  Run: dpkg --configure -a  (or reinstall titan-vmos)"
         exit 1
     fi
 }
@@ -122,7 +122,7 @@ ensure_venv() {
 # cmd_start already defined above; do not redefine here (avoids recursion)
 
 cmd_status() {
-    echo "═══ Titan-X Service Status ═══"
+    echo "═══ Titan VMOS Service Status ═══"
     for svc in titan-api titan-scrcpy titan-nginx; do
         state=$(systemctl is-active "$svc" 2>/dev/null || echo "inactive")
         printf "  %-20s %s\n" "$svc" "$state"
@@ -180,7 +180,7 @@ cmd_devices() {
     curl -sf "http://127.0.0.1:${PORT}/api/devices" \
         -H "Authorization: Bearer ${TITAN_API_SECRET}" \
         2>/dev/null | python3 -m json.tool 2>/dev/null \
-        || echo "API not running or unauthorized. Start with: titan-x start"
+        || echo "API not running or unauthorized. Start with: titan-vmos start"
 }
 
 cmd_create_device() {
@@ -313,7 +313,7 @@ cmd_reset() {
 }
 
 cmd_config() {
-    echo "═══ Titan-X Configuration ═══"
+    echo "═══ Titan VMOS Configuration ═══"
     echo "  Install dir:   ${TITAN_DIR}"
     echo "  Data dir:      ${DATA_DIR}"
     echo "  API port:      ${TITAN_API_PORT:-8080}"

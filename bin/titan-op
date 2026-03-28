@@ -93,7 +93,7 @@ def api(method: str, path: str, body: dict = None, timeout: int = 120) -> dict:
         body_text = e.read().decode(errors="replace")
         raise ApiError(e.code, body_text)
     except URLError as e:
-        die(f"API unreachable at {API_BASE}: {e.reason}\nStart with: titan-x start")
+        die(f"API unreachable at {API_BASE}: {e.reason}\nStart with: titan-vmos start")
 
 
 def api_get(path: str, timeout: int = 30) -> dict:

@@ -1,5 +1,5 @@
 [Unit]
-Description=Titan-X ws-scrcpy Device Streaming
+Description=Titan VMOS ws-scrcpy Device Streaming
 Documentation=https://github.com/NetrisTV/ws-scrcpy
 After=docker.service titan-api.service
 Requires=docker.service
