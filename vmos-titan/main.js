@@ -804,8 +804,12 @@ async function _runGenesisJob(jobId, ak, sk) {
             if (s === 10 || s === '10') { log(`✓ Device booted (status=${s}, ${rp * 5}s)`); padStatus = s; break; }
             if (rp % 12 === 0 && rp > 0) {
               log(`Phase 0 — Still waiting: status=${s} (${rp * 5}s)...`);
-              // At 2min, try restart again in case it helps
-              if (rp === 24) await vpost('/vcpcloud/api/padApi/restart', { padCodes: pads }).catch(() => {});
+              // E-09 fix: Only restart if device is stopped/hung (14 or 12), NOT if it's mid-boot (11)
+              // Restarting from status=11 causes 11↔14 boot loop
+              if (rp === 24 && s !== 11 && s !== '11') {
+                log(`Phase 0 — Sending restart (status=${s}, not mid-boot)`);
+                await vpost('/vcpcloud/api/padApi/restart', { padCodes: pads }).catch(() => {});
+              }
             }
           } catch (_) {}
         }
