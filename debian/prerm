@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# Titan-X — Pre-removal script (dpkg prerm)
+# Titan VMOS — Pre-removal script (dpkg prerm)
 # Stops services before files are removed.
 set -e
 
 case "${1:-remove}" in
     remove|upgrade|deconfigure)
-        echo "[titan-x] Stopping services..."
+        echo "[titan-vmos] Stopping services..."
         systemctl stop titan-recovery 2>/dev/null || true
         systemctl stop titan-nginx 2>/dev/null || true
         systemctl stop titan-scrcpy 2>/dev/null || true

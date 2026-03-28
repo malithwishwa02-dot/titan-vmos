@@ -1,18 +1,23 @@
 [project]
-name = "titan-x"
+name = "titan-vmos"
 version = "13.0.0"
-description = "Titan V13.0 — Antidetect Android Device Platform (Cuttlefish)"
+description = "Titan VMOS — Antidetect Android Device Platform (Cuttlefish)"
 requires-python = ">=3.10"
 license = {text = "Proprietary"}
+
+[project.urls]
+Homepage = "https://github.com/malithwishwa02-dot/titan-vmos"
+Repository = "https://github.com/malithwishwa02-dot/titan-vmos"
+Issues = "https://github.com/malithwishwa02-dot/titan-vmos/issues"
 dependencies = [
     "fastapi==0.115.6",
     "uvicorn[standard]==0.34.0",
     "uvloop==0.21.0",
     "httptools==0.6.4",
     "websockets==14.1",
-    "pillow==11.1.0",
+    "pillow==12.1.1",
     "aiofiles==24.1.0",
-    "python-multipart==0.0.18",
+    "python-multipart==0.0.22",
     "httpx==0.28.1",
     "pydantic==2.10.4",
 ]

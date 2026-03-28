@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# Titan-X — Post-removal script (dpkg postrm)
+# Titan VMOS — Post-removal script (dpkg postrm)
 # Cleans up systemd units and optional data on purge.
 set -e
 
 case "${1:-remove}" in
     remove)
-        echo "[titan-x] Disabling systemd services..."
+        echo "[titan-vmos] Disabling systemd services..."
         systemctl disable titan-api 2>/dev/null || true
         systemctl disable titan-scrcpy 2>/dev/null || true
         systemctl disable titan-nginx 2>/dev/null || true
@@ -13,7 +13,7 @@ case "${1:-remove}" in
         systemctl daemon-reload 2>/dev/null || true
         ;;
     purge)
-        echo "[titan-x] Purging data and configuration..."
+        echo "[titan-vmos] Purging data and configuration..."
         systemctl disable titan-api 2>/dev/null || true
         systemctl disable titan-scrcpy 2>/dev/null || true
         systemctl disable titan-nginx 2>/dev/null || true
@@ -27,10 +27,10 @@ case "${1:-remove}" in
         rm -f /opt/titan/.env
 
         # Remove kernel module configs
-        rm -f /etc/modules-load.d/titan-x.conf
-        rm -f /etc/modprobe.d/titan-x.conf
+        rm -f /etc/modules-load.d/titan-vmos.conf
+        rm -f /etc/modprobe.d/titan-vmos.conf
 
-        echo "[titan-x] Purge complete."
+        echo "[titan-vmos] Purge complete."
         echo "  NOTE: /opt/titan/data preserved. Remove manually if desired:"
         echo "    rm -rf /opt/titan/data /opt/titan/cuttlefish"
         ;;

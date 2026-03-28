@@ -14,7 +14,7 @@
     "name": "Titan",
     "email": "dev@titan.local"
   },
-  "homepage": "https://github.com/titan/titan-console",
+  "homepage": "https://github.com/malithwishwa02-dot/titan-vmos",
   "license": "UNLICENSED",
   "devDependencies": {
     "electron": "^28.3.3",

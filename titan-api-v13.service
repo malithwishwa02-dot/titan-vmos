@@ -1,6 +1,6 @@
 [Unit]
-Description=Titan V13 API Server (Zero-Gaps, FastAPI + uvicorn)
-Documentation=https://github.com/titan/titan-x
+Description=Titan VMOS API Server (FastAPI + uvicorn)
+Documentation=https://github.com/malithwishwa02-dot/titan-vmos
 After=network.target docker.service
 Wants=docker.service
 

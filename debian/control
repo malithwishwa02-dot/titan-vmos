@@ -1,5 +1,5 @@
-Package: titan-x
-Version: 12.0.0
+Package: titan-vmos
+Version: 13.0.0
 Section: misc
 Priority: optional
 Architecture: amd64
@@ -28,8 +28,8 @@ Recommends: v4l2loopback-dkms,
             nginx
 Suggests: ollama
 Installed-Size: 5200000
-Homepage: https://github.com/titan/titan-x
-Description: Titan-X V12.0 Antidetect Android Device Platform (Cuttlefish KVM)
+Homepage: https://github.com/malithwishwa02-dot/titan-vmos
+Description: Titan VMOS — Antidetect Android Device Platform (Cuttlefish KVM)
  Production-grade KVM-based Android 14 virtualization platform running
  Google Cuttlefish VMs with 103+ anti-detect vectors, AI-driven device
  automation, profile forging, wallet provisioning, and Play Integrity

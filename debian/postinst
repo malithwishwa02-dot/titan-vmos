@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ═══════════════════════════════════════════════════════════════════════
-# Titan-X V12.0 — Post-installation script (dpkg postinst)
+# Titan VMOS — Post-installation script (dpkg postinst)
 #
 # Runs after package files are placed on disk. Full pre-configured setup:
 #   1. Create titan user + groups (kvm, cvdnetwork)
@@ -29,9 +29,9 @@ SSL_DIR="${TITAN_DIR}/docker/ssl"
 ENV_FILE="${TITAN_DIR}/.env"
 API_PORT=8080
 TITAN_USER="titan"
-VERSION="12.0.0"
+VERSION="13.0.0"
 
-log() { echo "[titan-x postinst] $*"; }
+log() { echo "[titan-vmos postinst] $*"; }
 
 case "${1:-configure}" in
     configure|reconfigure)
@@ -170,7 +170,7 @@ elif [[ -f "$BUNDLED_ARCHIVE" ]]; then
     fi
 else
     log "  No bundled images found (code-only install)"
-    log "  Run: titan-x setup-cuttlefish  OR  titan-x build-image"
+    log "  Run: titan-vmos setup-cuttlefish  OR  titan-vmos build-image"
 fi
 
 # Verify CVD host tools
@@ -179,7 +179,7 @@ if [[ -f "${CVD_DIR}/cf/bin/launch_cvd" ]] || [[ -f "${CVD_DIR}/cf/bin/cvd_inter
     log "  ✓ CVD host tools ready: ${CVD_BIN_COUNT} binaries at ${CVD_DIR}/cf/bin/"
 else
     log "  ✗ CVD host tools not found at ${CVD_DIR}/cf/bin/"
-    log "    Run: titan-x setup-cuttlefish"
+    log "    Run: titan-vmos setup-cuttlefish"
 fi
 
 # ─── 6. Stage Zygisk module data overlay ──────────────────────────────
@@ -189,7 +189,7 @@ DATA_OVERLAY_SRC="${TITAN_DIR}/data/zygisk_overlay"
 if [[ -d "$DATA_OVERLAY_SRC" ]] && [[ -n "$(ls -A "$DATA_OVERLAY_SRC" 2>/dev/null)" ]]; then
     log "  Zygisk module overlay staged at $DATA_OVERLAY_SRC"
 else
-    log "  No Zygisk overlay found — modules installed at runtime via 'titan-x install-modules'"
+    log "  No Zygisk overlay found — modules installed at runtime via 'titan-vmos install-modules'"
 fi
 
 # ─── 7. Stage GApps APKs ─────────────────────────────────────────────
@@ -247,7 +247,7 @@ if [[ ! -f "${SSL_DIR}/cert.pem" ]]; then
     openssl req -x509 -nodes -days 3650 -newkey rsa:2048 \
         -keyout "${SSL_DIR}/key.pem" \
         -out "${SSL_DIR}/cert.pem" \
-        -subj "/CN=titan.local/O=Titan-X/C=US" 2>/dev/null
+        -subj "/CN=titan.local/O=Titan-VMOS/C=US" 2>/dev/null
     chmod 600 "${SSL_DIR}/key.pem"
     log "  Self-signed SSL certificate generated (10-year)"
 else
@@ -269,7 +269,7 @@ if systemctl is-active --quiet docker 2>/dev/null; then
     docker pull searxng/searxng:latest &>/dev/null &
     log "  Docker pulls started (background)"
 else
-    log "  Docker not running — images pulled on first 'titan-x start'"
+    log "  Docker not running — images pulled on first 'titan-vmos start'"
 fi
 
 # ADB server
@@ -298,7 +298,7 @@ check "FastAPI installed"    "'$VENV_DIR/bin/python3' -c 'import fastapi'"
 check "uvicorn installed"    "'$VENV_DIR/bin/python3' -c 'import uvicorn'"
 check ".env exists"          "[[ -f '$ENV_FILE' ]]"
 check "SSL cert exists"      "[[ -f '${SSL_DIR}/cert.pem' ]]"
-check "titan-x CLI"          "command -v titan-x"
+check "titan-vmos CLI"          "command -v titan-vmos"
 check "KVM available"        "[[ -e /dev/kvm ]]"
 check "Data dir exists"      "[[ -d '$DATA_DIR' ]]"
 check "systemd unit loaded"  "systemctl is-enabled titan-api"
@@ -322,13 +322,13 @@ check "Keybox available"     "[[ -f '${DATA_DIR}/keybox.xml' ]] || [[ -f '${DATA
 if [[ -f "${CVD_DIR}/images/boot.img" ]] || [[ -f "${CVD_DIR}/images/super.img" ]]; then
     IMAGE_STATUS="PRE-CONFIGURED (Android 14 VM images + CVD host tools bundled)"
 else
-    IMAGE_STATUS="CODE-ONLY (run: titan-x setup-cuttlefish)"
+    IMAGE_STATUS="CODE-ONLY (run: titan-vmos setup-cuttlefish)"
 fi
 
 # ═══════════════════════════════════════════════════════════════════════
 log ""
 log "═══════════════════════════════════════════════════════════"
-log "  Titan-X V${VERSION} — Installation complete!"
+log "  Titan VMOS V${VERSION} — Installation complete!"
 log "  Health: ${HEALTH_OK}/${HEALTH_TOTAL} checks passed"
 log "  Mode:   ${IMAGE_STATUS}"
 log ""
@@ -340,11 +340,11 @@ log "  Python venv:   ${VENV_DIR}"
 log "  Config:        ${ENV_FILE}"
 log ""
 log "  Quick start:"
-log "    titan-x start            # Start all services"
-log "    titan-x status           # Check health"
-log "    titan-x create-device    # Create Android 14 VM"
+log "    titan-vmos start            # Start all services"
+log "    titan-vmos status           # Check health"
+log "    titan-vmos create-device    # Create Android 14 VM"
 log ""
 log "  Console:  https://localhost"
 log "  API:      http://localhost:${API_PORT}/docs"
-log "  CLI:      titan-x --help"
+log "  CLI:      titan-vmos --help"
 log "═══════════════════════════════════════════════════════════"
