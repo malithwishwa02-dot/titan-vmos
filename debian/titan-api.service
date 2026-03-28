@@ -1,6 +1,6 @@
 [Unit]
-Description=Titan-X API Server (Desktop-Only, FastAPI + uvicorn)
-Documentation=https://github.com/titan/titan-x
+Description=Titan VMOS API Server (Desktop-Only, FastAPI + uvicorn)
+Documentation=https://github.com/malithwishwa02-dot/titan-vmos
 After=network.target docker.service
 Wants=docker.service
 

@@ -1,6 +1,6 @@
 [Unit]
-Description=Titan-X Nginx Reverse Proxy (SSL + WebSocket)
-Documentation=https://github.com/titan/titan-x
+Description=Titan VMOS Nginx Reverse Proxy (SSL + WebSocket)
+Documentation=https://github.com/malithwishwa02-dot/titan-vmos
 After=titan-api.service docker.service
 Wants=titan-api.service
 

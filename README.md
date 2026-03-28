@@ -1,8 +1,12 @@
-# Titan V12 — Advanced Android Cloud Device Platform (Cuttlefish)
+# Titan VMOS — Advanced Android Cloud Device Platform (Cuttlefish)
+
+> **Standalone Repository** — This is the fully separated Titan VMOS application repository.
+> All related codebases (core engine, API server, desktop apps, packaging, tests, and documentation)
+> are self-contained within this repo with no dependencies on any parent or upstream repository.
 
 **Advanced Orchestration of High-Fidelity Mobile Virtualization: Deploying Undetectable Android Environments on Hostinger KVM Infrastructure**
 
-The evolution of mobile device virtualization has progressed from primitive emulated environments used primarily for application development to sophisticated, cloud-resident architectures capable of achieving functional parity with physical hardware. To deploy a cloud-based mobile device that operates indistinguishably from a regular handset, engineers must navigate a complex intersection of kernel-level configuration, hardware identity simulation, and behavioral pattern synthesis. The realization of a "perfect" mobile environment on Hostinger infrastructure requires an integrated stack — exemplified by the Titan V12 platform — that leverages the Kernel-based Virtual Machine (KVM) substrate to host high-performance Cuttlefish Android virtual machines. This document provides an exhaustive technical analysis of the deployment methodologies, stealth vectors, and performance optimizations required to maintain a fleet of undetectable cloud devices in the 2026 threat landscape.
+The evolution of mobile device virtualization has progressed from primitive emulated environments used primarily for application development to sophisticated, cloud-resident architectures capable of achieving functional parity with physical hardware. To deploy a cloud-based mobile device that operates indistinguishably from a regular handset, engineers must navigate a complex intersection of kernel-level configuration, hardware identity simulation, and behavioral pattern synthesis. The realization of a "perfect" mobile environment on Hostinger infrastructure requires an integrated stack — exemplified by the Titan VMOS platform — that leverages the Kernel-based Virtual Machine (KVM) substrate to host high-performance Cuttlefish Android virtual machines. This document provides an exhaustive technical analysis of the deployment methodologies, stealth vectors, and performance optimizations required to maintain a fleet of undetectable cloud devices in the 2026 threat landscape.
 
 > **V12 Major Changes:**
 > - `/proc` bind mount guards for Cuttlefish (prevents app crashes from zygote fork failures)
@@ -66,7 +70,7 @@ To prevent these restrictions, deployment strategies must incorporate rigorous r
 
 ## System Orchestration and API Design
 
-The Titan V12 platform represents the evolution from localized desktop control to a distributed, web-based management architecture. By replacing traditional PyQt6 desktop applications with a FastAPI-driven backend, the system achieves a level of scalability and remote accessibility required for professional-grade operations.
+The Titan VMOS platform represents the evolution from localized desktop control to a distributed, web-based management architecture. By replacing traditional PyQt6 desktop applications with a FastAPI-driven backend, the system achieves a level of scalability and remote accessibility required for professional-grade operations.
 
 ### FastAPI Backend and RESTful Abstraction
 
@@ -545,15 +549,15 @@ titan-v12/
 
 ## Conclusion
 
-The deployment of a cloud-resident mobile device on Hostinger that functions with hardware-level fidelity is an exercise in multi-disciplinary systems engineering. By combining the resource isolation of KVM with the hardware fidelity of Cuttlefish Android VMs and the behavioral intelligence of the Titan V12 platform, it is possible to achieve a degree of stealth that bypasses the majority of modern detection systems. 
+The deployment of a cloud-resident mobile device on Hostinger that functions with hardware-level fidelity is an exercise in multi-disciplinary systems engineering. By combining the resource isolation of KVM with the hardware fidelity of Cuttlefish Android VMs and the behavioral intelligence of the Titan VMOS platform, it is possible to achieve a degree of stealth that bypasses the majority of modern detection systems. 
 
-**Titan V12 represents a major evolution** with `/proc` bind mount guards preventing zygote fork crashes, GPU property safelists preserving graphics functionality, quick repatch reducing patch time by 85%, cloud sync mitigation ensuring wallet persistence, and the Provincial Injection Protocol delivering robust contact/call/SMS injection. Success in this domain is not merely a matter of configuration but of continuous adaptation to the evolving mandates of Google Play Integrity and the rise of behavioral biometrics. The technical methodologies detailed in this document provide the framework for a resilient, high-performance mobile fleet that stands as a testament to the current limits of virtualization technology.
+**Titan VMOS represents a major evolution** with `/proc` bind mount guards preventing zygote fork crashes, GPU property safelists preserving graphics functionality, quick repatch reducing patch time by 85%, cloud sync mitigation ensuring wallet persistence, and the Provincial Injection Protocol delivering robust contact/call/SMS injection. Success in this domain is not merely a matter of configuration but of continuous adaptation to the evolving mandates of Google Play Integrity and the rise of behavioral biometrics. The technical methodologies detailed in this document provide the framework for a resilient, high-performance mobile fleet that stands as a testament to the current limits of virtualization technology.
 
 ---
 
 ## References
 
-1. [malithwishwa02-dot/titan-x-android-](https://github.com/malithwishwa02-dot/Titan-x-Android-)
+1. [Titan VMOS Repository](https://github.com/malithwishwa02-dot/titan-vmos)
 2. [Google Cuttlefish Documentation](https://source.android.com/docs/setup/create/cuttlefish)
 3. [Hostinger KVM Virtualization](https://www.hostinger.com/support/6988144-what-is-kvm-virtualization-at-hostinger/)
 4. [Hostinger VPS Hosting](https://www.hostinger.com/vps-hosting)
