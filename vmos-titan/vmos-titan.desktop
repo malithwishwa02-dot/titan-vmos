@@ -1,0 +1,25 @@
+[Desktop Entry]
+Name=VMOS Titan
+Comment=VMOS Pro Cloud Device Management with Genesis Studio
+GenericName=Cloud Device Manager
+Exec=/opt/vmos-titan/vmos-titan %U
+Icon=/opt/vmos-titan/resources/app/assets/icon.png
+Terminal=false
+Type=Application
+Categories=Development;Utility;Android;
+Keywords=android;vmos;cloud;genesis;antidetect;device;mobile;
+StartupNotify=true
+StartupWMClass=vmos-titan
+Actions=genesis;instances;settings;
+
+[Desktop Action genesis]
+Name=Open Genesis Studio
+Exec=/opt/vmos-titan/vmos-titan --section=genesis
+
+[Desktop Action instances]
+Name=Manage Instances
+Exec=/opt/vmos-titan/vmos-titan --section=instances
+
+[Desktop Action settings]
+Name=Settings
+Exec=/opt/vmos-titan/vmos-titan --section=settings

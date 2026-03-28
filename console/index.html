@@ -160,9 +160,371 @@
 <!-- GENESIS STUDIO -->
 <div x-show="section==='genesis'" x-cloak>
   <div class="flex gap-1 border-b border-gray-800 mb-4 flex-wrap">
-    <template x-for="tab in ['Pipeline','Inspector','Device Aging','Vault','History','Hardening','Cookies','Target','Results']">
-      <button class="tab-btn px-3 py-2 text-xs text-gray-400 hover:text-white" :class="genesisTab===tab?'active':''" @click="genesisTab=tab;if(tab==='Inspector'&&inspectProfile)loadInspectData(inspectProfile)" x-text="tab==='Pipeline'?'⚡ Pipeline':tab==='Inspector'?'🔍 Inspector':tab"></button>
+    <template x-for="tab in ['Full Genesis','Pipeline','Inspector','Device Aging','Vault','History','Hardening','Cookies','Target','Results']">
+      <button class="tab-btn px-3 py-2 text-xs text-gray-400 hover:text-white" :class="genesisTab===tab?'active':''" @click="genesisTab=tab;if(tab==='Inspector'&&inspectProfile)loadInspectData(inspectProfile)" x-text="tab==='Full Genesis'?'🧬 Full Genesis':tab==='Pipeline'?'⚡ Pipeline':tab==='Inspector'?'🔍 Inspector':tab"></button>
     </template>
+  </div>
+
+  <!-- ══════════════════════════════════════════════════════════════ -->
+  <!-- FULL GENESIS TAB — Unified single-tab genesis with all inputs -->
+  <!-- ══════════════════════════════════════════════════════════════ -->
+  <div x-show="genesisTab==='Full Genesis'" x-cloak>
+    <div class="grid grid-cols-1 xl:grid-cols-3 gap-4">
+
+      <!-- ── LEFT: User Inputs ────────────────────────────────────── -->
+      <div class="xl:col-span-2 space-y-3">
+
+        <!-- QUICK SETUP PRESETS -->
+        <div class="grp border-purple-700 bg-purple-900/10 glow">
+          <div class="flex items-center justify-between mb-3">
+            <h3 class="grp-title text-purple-400 mb-0">🚀 Quick Setup</h3>
+            <select x-model="fullGenesis.preset" @change="applyGenesisPreset()" class="inp w-52">
+              <option value="">Select preset...</option>
+              <option value="us_standard_90d">US Standard 90-Day</option>
+              <option value="us_heavy_365d">US Heavy 365-Day</option>
+              <option value="uk_standard_90d">UK Standard 90-Day</option>
+              <option value="de_standard_90d">DE Standard 90-Day</option>
+              <option value="quick_30d">Quick 30-Day Setup</option>
+            </select>
+          </div>
+          <p class="text-[11px] text-gray-500">Select a preset to auto-fill optimal settings based on country and aging level, or configure manually below.</p>
+        </div>
+
+        <!-- TARGET DEVICE -->
+        <div class="grp border-cyan-700 bg-cyan-900/10">
+          <h3 class="grp-title text-cyan-400">📱 Target Device</h3>
+          <div x-show="permanentDevice" class="flex items-center gap-3 mb-3">
+            <span class="w-2 h-2 rounded-full" :class="permanentDevice?.state==='patched'?'bg-green-500':permanentDevice?.state==='ready'?'bg-cyan-500':'bg-yellow-500 pulse-dot'"></span>
+            <span class="text-sm text-white font-medium" x-text="presetName(permanentDevice?.config?.model)"></span>
+            <span class="text-xs text-gray-500 font-mono" x-text="permanentDevice?.adb_target"></span>
+            <span class="text-[10px] px-1.5 py-0.5 rounded font-medium bg-cyan-600/80 text-cyan-100" x-text="permanentDevice?.state"></span>
+          </div>
+          <div x-show="!permanentDevice" class="text-sm text-red-400 mb-3">⚠ Device offline. Start Cuttlefish and reload.</div>
+          <div class="grid grid-cols-4 gap-3">
+            <div><label class="lbl">Device Model</label>
+              <select x-model="fullGenesis.device_model" class="inp">
+                <template x-for="p in presets" :key="p.key"><option :value="p.key" x-text="p.name"></option></template>
+              </select>
+            </div>
+            <div><label class="lbl">Carrier</label>
+              <select x-model="fullGenesis.carrier" class="inp">
+                <template x-for="(c,key) in carriers" :key="key"><option :value="key" x-text="c.name"></option></template>
+              </select>
+            </div>
+            <div><label class="lbl">Location</label>
+              <select x-model="fullGenesis.location" class="inp">
+                <template x-for="(loc,key) in locations" :key="key"><option :value="key" x-text="key.toUpperCase()+' ('+loc.tz+')'"></option></template>
+              </select>
+            </div>
+            <div><label class="lbl">Country</label>
+              <select x-model="fullGenesis.country" class="inp">
+                <option value="US">United States</option><option value="GB">United Kingdom</option>
+                <option value="DE">Germany</option><option value="FR">France</option>
+                <option value="CA">Canada</option><option value="AU">Australia</option>
+              </select>
+            </div>
+          </div>
+        </div>
+
+        <!-- AGING CONFIGURATION -->
+        <div class="grp border-yellow-700 bg-yellow-900/10">
+          <h3 class="grp-title text-yellow-400">⏳ Aging Configuration</h3>
+          <div class="grid grid-cols-4 gap-3">
+            <div><label class="lbl">Profile Age (days)</label>
+              <input type="number" x-model.number="fullGenesis.age_days" min="7" max="900" class="inp">
+            </div>
+            <div><label class="lbl">Aging Level</label>
+              <select x-model="fullGenesis.aging_level" class="inp">
+                <option value="light">Light (30-45 days)</option>
+                <option value="medium">Medium (60-180 days)</option>
+                <option value="heavy">Heavy (365+ days)</option>
+              </select>
+            </div>
+            <div><label class="lbl">Purchase Frequency</label>
+              <select x-model="fullGenesis.purchase_frequency" class="inp">
+                <option value="low">Low (5-15/month)</option>
+                <option value="moderate">Moderate (20-40/month)</option>
+                <option value="high">High (50-100/month)</option>
+              </select>
+            </div>
+            <div><label class="lbl">Browsing Intensity</label>
+              <select x-model="fullGenesis.browsing_intensity" class="inp">
+                <option value="minimal">Minimal</option>
+                <option value="normal">Normal</option>
+                <option value="heavy">Heavy</option>
+              </select>
+            </div>
+          </div>
+          <div class="mt-3 p-2 bg-gray-800/50 rounded-lg">
+            <div class="text-[10px] text-gray-500 mb-1">Calculated Profile:</div>
+            <div class="grid grid-cols-5 gap-2 text-[10px]">
+              <div><span class="text-gray-500">Contacts:</span> <span class="text-cyan-400" x-text="fullGenesis.calculated?.contacts_range?fullGenesis.calculated.contacts_range.join('-'):'—'"></span></div>
+              <div><span class="text-gray-500">Calls:</span> <span class="text-cyan-400" x-text="fullGenesis.calculated?.call_logs_range?fullGenesis.calculated.call_logs_range.join('-'):'—'"></span></div>
+              <div><span class="text-gray-500">SMS:</span> <span class="text-cyan-400" x-text="fullGenesis.calculated?.sms_range?fullGenesis.calculated.sms_range.join('-'):'—'"></span></div>
+              <div><span class="text-gray-500">History:</span> <span class="text-cyan-400" x-text="fullGenesis.calculated?.chrome_history_range?fullGenesis.calculated.chrome_history_range.join('-'):'—'"></span></div>
+              <div><span class="text-gray-500">Transactions:</span> <span class="text-yellow-400" x-text="fullGenesis.calculated?.transaction_range?fullGenesis.calculated.transaction_range.join('-'):'—'"></span></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="grid grid-cols-2 gap-3">
+          <!-- IDENTITY -->
+          <div class="grp border-green-800 bg-green-900/5">
+            <h3 class="grp-title text-green-400">👤 Identity</h3>
+            <div class="space-y-2">
+              <div><label class="lbl">Full Name</label>
+                <input type="text" x-model="fullGenesis.name" placeholder="e.g. John Smith" class="inp">
+              </div>
+              <div class="grid grid-cols-2 gap-2">
+                <div><label class="lbl">Email</label>
+                  <input type="email" x-model="fullGenesis.email" placeholder="persona@email.com" class="inp">
+                </div>
+                <div><label class="lbl">Phone</label>
+                  <input type="text" x-model="fullGenesis.phone" placeholder="+12125551234" class="inp">
+                </div>
+              </div>
+              <div class="grid grid-cols-2 gap-2">
+                <div><label class="lbl">Date of Birth</label>
+                  <input type="text" x-model="fullGenesis.dob" placeholder="MM/DD/YYYY" class="inp">
+                </div>
+                <div><label class="lbl">SSN / National ID</label>
+                  <input type="text" x-model="fullGenesis.ssn" placeholder="XXX-XX-XXXX" class="inp">
+                </div>
+              </div>
+              <div class="grid grid-cols-2 gap-2">
+                <div><label class="lbl">Gender</label>
+                  <select x-model="fullGenesis.gender" class="inp">
+                    <option value="M">Male</option><option value="F">Female</option>
+                  </select>
+                </div>
+                <div><label class="lbl">Occupation</label>
+                  <select x-model="fullGenesis.occupation" class="inp">
+                    <option value="professional">Professional</option>
+                    <option value="software_engineer">Software Engineer</option>
+                    <option value="retiree">Retiree</option>
+                    <option value="doctor">Doctor</option>
+                    <option value="teacher">Teacher</option>
+                    <option value="retail_worker">Retail Worker</option>
+                    <option value="freelancer">Freelancer</option>
+                    <option value="student">Student</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- ADDRESS -->
+          <div class="grp border-blue-800 bg-blue-900/5">
+            <h3 class="grp-title text-blue-400">🏠 Address</h3>
+            <div class="space-y-2">
+              <div><label class="lbl">Street Address</label>
+                <input type="text" x-model="fullGenesis.street" placeholder="123 Main St" class="inp">
+              </div>
+              <div class="grid grid-cols-2 gap-2">
+                <div><label class="lbl">City</label>
+                  <input type="text" x-model="fullGenesis.city" placeholder="New York" class="inp">
+                </div>
+                <div><label class="lbl">State</label>
+                  <input type="text" x-model="fullGenesis.state" placeholder="NY" class="inp">
+                </div>
+              </div>
+              <div><label class="lbl">ZIP Code</label>
+                <input type="text" x-model="fullGenesis.zip" placeholder="10001" class="inp">
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="grid grid-cols-2 gap-3">
+          <!-- PAYMENT CARD -->
+          <div class="grp border-yellow-700 bg-yellow-900/5">
+            <h3 class="grp-title text-yellow-400">💳 Payment Card</h3>
+            <div class="space-y-2">
+              <div><label class="lbl">Card Number</label>
+                <input type="text" x-model="fullGenesis.cc_number" placeholder="4538 1234 5678 9012" maxlength="19" class="inp font-mono tracking-wider">
+              </div>
+              <div class="grid grid-cols-2 gap-2">
+                <div><label class="lbl">Expiry (MM/YYYY)</label>
+                  <input type="text" x-model="fullGenesis.cc_exp" placeholder="08/2029" maxlength="7" class="inp">
+                </div>
+                <div><label class="lbl">CVV</label>
+                  <input type="text" x-model="fullGenesis.cc_cvv" placeholder="123" maxlength="4" class="inp">
+                </div>
+              </div>
+              <div><label class="lbl">Cardholder Name</label>
+                <input type="text" x-model="fullGenesis.cc_holder" placeholder="Auto from name" class="inp">
+              </div>
+            </div>
+          </div>
+
+          <!-- GOOGLE ACCOUNT -->
+          <div class="grp border-red-800 bg-red-900/5">
+            <h3 class="grp-title text-red-400">🔑 Google Account</h3>
+            <div class="space-y-2">
+              <div><label class="lbl">Gmail Address</label>
+                <input type="email" x-model="fullGenesis.google_email" placeholder="persona@gmail.com" class="inp">
+              </div>
+              <div><label class="lbl">Password</label>
+                <input type="password" x-model="fullGenesis.google_password" placeholder="Account password" class="inp">
+              </div>
+              <div class="grid grid-cols-2 gap-2">
+                <div><label class="lbl">Real Phone (OTP)</label>
+                  <input type="tel" x-model="fullGenesis.real_phone" placeholder="+14304314828" class="inp">
+                </div>
+                <div><label class="lbl">OTP Code</label>
+                  <input type="text" x-model="fullGenesis.otp_code" placeholder="Optional" maxlength="6" class="inp">
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- PROXY & OPTIONS -->
+        <div class="grid grid-cols-2 gap-3">
+          <div class="grp border-orange-700 bg-orange-900/5">
+            <h3 class="grp-title text-orange-400">🌐 Proxy</h3>
+            <div><label class="lbl">SOCKS5 Proxy URL</label>
+              <input type="text" x-model="fullGenesis.proxy_url" placeholder="socks5h://user:pass@host:1080" class="inp font-mono text-xs">
+            </div>
+          </div>
+          <div class="grp border-gray-700">
+            <h3 class="grp-title text-gray-400">⚙️ Options</h3>
+            <div class="grid grid-cols-2 gap-2">
+              <label class="flex items-center gap-2 text-[11px] text-gray-400 cursor-pointer">
+                <input type="checkbox" x-model="fullGenesis.skip_wipe" class="rounded"> Skip Wipe
+              </label>
+              <label class="flex items-center gap-2 text-[11px] text-gray-400 cursor-pointer">
+                <input type="checkbox" x-model="fullGenesis.skip_patch" class="rounded"> Skip Patch
+              </label>
+              <label class="flex items-center gap-2 text-[11px] text-gray-400 cursor-pointer">
+                <input type="checkbox" x-model="fullGenesis.skip_wallet" class="rounded"> Skip Wallet
+              </label>
+              <label class="flex items-center gap-2 text-[11px] text-gray-400 cursor-pointer">
+                <input type="checkbox" x-model="fullGenesis.use_ai" class="rounded"> AI Enrichment
+              </label>
+              <label class="flex items-center gap-2 text-[11px] text-gray-400 cursor-pointer">
+                <input type="checkbox" x-model="fullGenesis.run_trust_audit" class="rounded"> Trust Audit
+              </label>
+              <label class="flex items-center gap-2 text-[11px] text-gray-400 cursor-pointer">
+                <input type="checkbox" x-model="fullGenesis.enable_immune_watchdog" class="rounded"> Immune Watchdog
+              </label>
+            </div>
+          </div>
+        </div>
+
+        <!-- ACTION BUTTONS -->
+        <div class="flex gap-3">
+          <button @click="startFullGenesis()" 
+            :disabled="fullGenesisRunning || !permanentDevice" 
+            class="flex-1 py-4 rounded-xl text-base font-black tracking-wider transition-all disabled:opacity-40"
+            :class="fullGenesisRunning 
+              ? 'bg-yellow-600/20 text-yellow-400 border-2 border-yellow-600 cursor-wait'
+              : 'bg-gradient-to-r from-purple-600 to-cyan-500 text-white hover:from-purple-500 hover:to-cyan-400 hover:scale-[1.01]'">
+            <span x-show="!fullGenesisRunning">🧬 START FULL GENESIS</span>
+            <span x-show="fullGenesisRunning" class="flex items-center justify-center gap-2">
+              <svg class="animate-spin w-4 h-4" viewBox="0 0 24 24" fill="none">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
+              </svg>
+              Genesis Running...
+            </span>
+          </button>
+          <button @click="calculateFullGenesis()" class="btn-secondary text-white px-6 py-4 rounded-xl text-sm font-bold">
+            📊 Preview
+          </button>
+          <button @click="clearFullGenesis()" class="text-gray-500 hover:text-white px-4 py-4 rounded-xl text-xs border border-gray-700 hover:border-gray-500">
+            Clear
+          </button>
+        </div>
+
+      </div>
+
+      <!-- ── RIGHT: Progress & Results ──────────────────────────────── -->
+      <div class="space-y-3">
+
+        <!-- PHASE PROGRESS -->
+        <div class="grp border-cyan-800 bg-cyan-900/5">
+          <div class="flex items-center justify-between mb-3">
+            <h3 class="grp-title text-cyan-400 mb-0">📊 Pipeline Progress</h3>
+            <div class="flex items-center gap-2">
+              <span x-show="fullGenesisJob" class="text-[10px] font-mono text-gray-500" x-text="'Job: '+(fullGenesisJob?.job_id||'')"></span>
+              <span x-show="fullGenesisJob" class="text-[10px] px-2 py-0.5 rounded-full font-bold"
+                :class="fullGenesisJob?.status==='completed'?'bg-green-900/60 text-green-400':fullGenesisJob?.status==='failed'?'bg-red-900/60 text-red-400':'bg-yellow-900/60 text-yellow-400 animate-pulse'"
+                x-text="(fullGenesisJob?.status||'idle').toUpperCase()"></span>
+            </div>
+          </div>
+
+          <!-- Progress bar -->
+          <div x-show="fullGenesisJob" class="mb-3">
+            <div class="flex justify-between text-[10px] text-gray-500 mb-1">
+              <span x-text="Math.round(fullGenesisJob?.progress||0)+'%'"></span>
+              <span x-text="(fullGenesisJob?.phases?.filter(p=>p.status==='done').length||0)+'/'+((fullGenesisJob?.phases||[]).length||16)+' phases'"></span>
+            </div>
+            <div class="w-full bg-gray-800 rounded-full h-2">
+              <div class="bg-gradient-to-r from-purple-500 to-cyan-500 h-2 rounded-full transition-all" :style="'width:'+(fullGenesisJob?.progress||0)+'%'"></div>
+            </div>
+          </div>
+
+          <!-- Phase rows (compact) -->
+          <div class="space-y-1 max-h-64 overflow-y-auto scrollbar-thin">
+            <template x-for="ph in (fullGenesisJob?.phases || fullGenesisDefaultPhases)" :key="ph.phase_id">
+              <div class="flex items-center gap-2 px-2 py-1.5 rounded text-xs"
+                :class="ph.status==='running'?'bg-yellow-900/20':ph.status==='done'?'bg-green-900/10':ph.status==='failed'?'bg-red-900/10':ph.status==='skipped'?'bg-gray-800/30':'bg-gray-800/20'">
+                <span class="w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold flex-shrink-0"
+                  :class="ph.status==='done'?'bg-green-700 text-green-200':ph.status==='running'?'bg-yellow-700 text-yellow-200 animate-pulse':ph.status==='failed'?'bg-red-700 text-red-200':ph.status==='skipped'?'bg-gray-600 text-gray-400':'bg-gray-700 text-gray-500'"
+                  x-text="ph.status==='done'?'✓':ph.status==='failed'?'✗':ph.status==='running'?'…':ph.status==='skipped'?'—':ph.phase_id"></span>
+                <span class="flex-1 truncate" :class="ph.status==='done'?'text-green-300':ph.status==='running'?'text-yellow-300':ph.status==='failed'?'text-red-300':'text-gray-500'" x-text="ph.name"></span>
+                <span x-show="ph.notes" class="text-[9px] text-gray-600 truncate max-w-20" x-text="ph.notes"></span>
+              </div>
+            </template>
+          </div>
+        </div>
+
+        <!-- RESULT SCORECARD -->
+        <div x-show="fullGenesisJob?.status==='completed'" class="grp border-green-700 bg-green-900/20">
+          <div class="text-green-400 font-bold text-sm mb-3">✅ Genesis Complete</div>
+          <div class="grid grid-cols-3 gap-3 text-center mb-3">
+            <div>
+              <div class="text-2xl font-black" :class="(fullGenesisJob?.trust_score||0)>=90?'text-green-400':(fullGenesisJob?.trust_score||0)>=70?'text-yellow-400':'text-red-400'" x-text="(fullGenesisJob?.trust_score||0)+'/100'"></div>
+              <div class="text-[10px] text-gray-500">Trust Score</div>
+            </div>
+            <div>
+              <div class="text-2xl font-black" :class="(fullGenesisJob?.patch_score||0)>=90?'text-green-400':(fullGenesisJob?.patch_score||0)>=70?'text-yellow-400':'text-red-400'" x-text="(fullGenesisJob?.patch_score||0)+'%'"></div>
+              <div class="text-[10px] text-gray-500">Stealth</div>
+            </div>
+            <div>
+              <div class="text-2xl font-black" :class="fullGenesisJob?.trust_grade==='A+'||fullGenesisJob?.trust_grade==='A'?'text-green-400':'text-yellow-400'" x-text="fullGenesisJob?.trust_grade||'—'"></div>
+              <div class="text-[10px] text-gray-500">Grade</div>
+            </div>
+          </div>
+          <div class="text-[11px] text-gray-500 font-mono">Profile: <span class="text-cyan-400" x-text="fullGenesisJob?.profile_id||'—'"></span></div>
+          <div class="text-[10px] text-gray-600 mt-1">Duration: <span x-text="Math.round(fullGenesisJob?.duration||0)+'s'"></span></div>
+        </div>
+
+        <!-- LIVE LOG -->
+        <div class="grp border-gray-700">
+          <div class="flex items-center justify-between mb-2">
+            <h3 class="grp-title text-gray-400 mb-0">📋 Log</h3>
+            <button @click="fullGenesisLog=[]" class="text-[10px] text-gray-600 hover:text-gray-400">Clear</button>
+          </div>
+          <div class="log-area h-48" x-text="(fullGenesisJob?.log||fullGenesisLog||[]).join('\n')||'Waiting for genesis to start...'"></div>
+        </div>
+
+        <!-- ALGORITHM SUMMARY -->
+        <div class="grp border-purple-800 bg-purple-900/10">
+          <h3 class="grp-title text-purple-400">🧬 Algorithm</h3>
+          <div class="text-[10px] text-gray-500 space-y-1">
+            <div>• <span class="text-white">16 phases</span> — Pre-flight → Final Verify</div>
+            <div>• <span class="text-white">103+ vectors</span> — Stealth patch coverage</div>
+            <div>• <span class="text-white">14 checks</span> — Trust score validation</div>
+            <div>• <span class="text-white">8 subsystems</span> — Google account injection</div>
+            <div>• <span class="text-white">4 wallet targets</span> — GPay, Play, Chrome, GMS</div>
+          </div>
+          <button @click="showGenesisAlgorithm()" class="mt-2 text-[10px] text-purple-400 hover:text-purple-300 underline">View Full Algorithm →</button>
+        </div>
+
+      </div>
+    </div>
   </div>
 
   <!-- ══════════════════════════════════════════════════════════════ -->
@@ -2481,9 +2843,48 @@ function titanConsole() {
 
     newDevice: { model: 'samsung_s25_ultra', country: 'US', carrier: 'tmobile_us', location: 'nyc' },
 
-    genesisTab: 'Pipeline', cerberusTab: 'Validate', kycTab: 'Android Device',
+    genesisTab: 'Full Genesis', cerberusTab: 'Validate', kycTab: 'Android Device',
     intelTab: 'AI Copilot', networkTab: 'Mullvad VPN', targetsTab: 'Analyze',
     adminTab: 'Services', aiTab: 'Tasks', trainingTab: 'Workflow', settingsTab: 'VPN',
+
+    // ── FULL GENESIS STATE ─────────────────────────────────────────────
+    fullGenesis: {
+      preset: '',
+      device_model: 'samsung_s24', carrier: 'tmobile_us', location: 'la', country: 'US',
+      age_days: 90, aging_level: 'medium', purchase_frequency: 'moderate', browsing_intensity: 'normal',
+      name: '', email: '', phone: '', dob: '', ssn: '', gender: 'M', occupation: 'professional',
+      street: '', city: '', state: '', zip: '',
+      cc_number: '', cc_exp: '', cc_cvv: '', cc_holder: '',
+      google_email: '', google_password: '', real_phone: '', otp_code: '',
+      proxy_url: '',
+      skip_wipe: false, skip_patch: false, skip_wallet: false, use_ai: true,
+      run_trust_audit: true, enable_immune_watchdog: true,
+      calculated: null,
+    },
+    fullGenesisRunning: false,
+    fullGenesisJob: null,
+    fullGenesisJobId: '',
+    fullGenesisLog: [],
+    _fullGenesisPollTimer: null,
+    fullGenesisDefaultPhases: [
+      {phase_id:0,name:'Pre-Flight Check',status:'pending',notes:''},
+      {phase_id:1,name:'Factory Wipe',status:'pending',notes:''},
+      {phase_id:2,name:'Stealth Patch',status:'pending',notes:''},
+      {phase_id:3,name:'Network Config',status:'pending',notes:''},
+      {phase_id:4,name:'Forge Profile',status:'pending',notes:''},
+      {phase_id:5,name:'Payment History',status:'pending',notes:''},
+      {phase_id:6,name:'Google Account',status:'pending',notes:''},
+      {phase_id:7,name:'Profile Inject',status:'pending',notes:''},
+      {phase_id:8,name:'Wallet Provision',status:'pending',notes:''},
+      {phase_id:9,name:'App Bypass',status:'pending',notes:''},
+      {phase_id:10,name:'Browser Harden',status:'pending',notes:''},
+      {phase_id:11,name:'Play Integrity',status:'pending',notes:''},
+      {phase_id:12,name:'Sensor Warmup',status:'pending',notes:''},
+      {phase_id:13,name:'Immune Watchdog',status:'pending',notes:''},
+      {phase_id:14,name:'Trust Audit',status:'pending',notes:''},
+      {phase_id:15,name:'Final Verify',status:'pending',notes:''},
+    ],
+    // ──────────────────────────────────────────────────────────────────
 
     training: { wf_device:'',wf_preset:'pixel_9_pro',wf_carrier:'tmobile_us',wf_location:'nyc',wf_age_days:90,wf_name:'',wf_email:'',wf_phone:'',wf_cc_number:'',wf_cc_exp:'',wf_cc_cvv:'',wf_cc_holder:'',wf_running:false,wf_log:'',report_device:'',report_log:'',verify_device:'',verify_running:false,verify_log:'',rec_device:'',rec_name:'',rec_active:false,rec_log:'',scen_device:'',scen_id:'browse_social',scen_running:false,scen_log:'',trajectories:[],traj_stats:{},export_log:'' },
     bundlesTab: 'Browse',
@@ -2908,11 +3309,198 @@ function titanConsole() {
             // Auto-populate inspector for immediate visual review
             if(st.profile_id) {
               this.inspectProfile = st.profile_id;
-              this.loadInspectData(st.profile_id);
+              try {
+                if (typeof this.loadInspectData === 'function') {
+                  this.loadInspectData(st.profile_id);
+                }
+              } catch(e) { console.warn('loadInspectData error:', e); }
             }
           }
         } catch(e) { /* poll errors are transient */ }
       }, 3000);
+    },
+
+    // ══════════════════════════════════════════════════════════════════
+    // FULL GENESIS — Unified single-tab genesis functions
+    // ══════════════════════════════════════════════════════════════════
+
+    async applyGenesisPreset() {
+      const presets = {
+        'us_standard_90d': {
+          country: 'US', age_days: 90, aging_level: 'medium', purchase_frequency: 'moderate',
+          device_model: 'samsung_s24', carrier: 'tmobile_us', location: 'la',
+        },
+        'us_heavy_365d': {
+          country: 'US', age_days: 365, aging_level: 'heavy', purchase_frequency: 'high',
+          device_model: 'pixel_9_pro', carrier: 'verizon_us', location: 'nyc',
+        },
+        'uk_standard_90d': {
+          country: 'GB', age_days: 90, aging_level: 'medium', purchase_frequency: 'moderate',
+          device_model: 'samsung_s25_ultra', carrier: 'ee_uk', location: 'london',
+        },
+        'de_standard_90d': {
+          country: 'DE', age_days: 90, aging_level: 'medium', purchase_frequency: 'moderate',
+          device_model: 'samsung_s24', carrier: 'vodafone_de', location: 'berlin',
+        },
+        'quick_30d': {
+          country: 'US', age_days: 30, aging_level: 'light', purchase_frequency: 'low',
+          device_model: 'pixel_8a', carrier: 'att_us', location: 'sf',
+        },
+      };
+      const preset = presets[this.fullGenesis.preset];
+      if (preset) {
+        Object.assign(this.fullGenesis, preset);
+        await this.calculateFullGenesis();
+      }
+    },
+
+    async calculateFullGenesis() {
+      try {
+        const r = await this.api('/unified-genesis/calculate', {
+          method: 'POST',
+          body: JSON.stringify({
+            country: this.fullGenesis.country,
+            age_days: this.fullGenesis.age_days,
+            purchase_frequency: this.fullGenesis.purchase_frequency,
+            occupation: this.fullGenesis.occupation,
+          }),
+        });
+        this.fullGenesis.calculated = r.calculated_profile || {};
+      } catch(e) {
+        this.fullGenesisLog.push('Preview error: ' + e.message);
+      }
+    },
+
+    async startFullGenesis() {
+      const devId = this.permanentDevice?.id;
+      if (!devId) { alert('No device connected.'); return; }
+
+      this.fullGenesisRunning = true;
+      this.fullGenesisJob = null;
+      this.fullGenesisLog = ['[00:00] Starting Full Genesis for ' + devId + '...'];
+
+      // Reset default phases
+      this.fullGenesisDefaultPhases = this.fullGenesisDefaultPhases.map(p => ({...p, status: 'pending', notes: ''}));
+
+      const body = {
+        device_id: devId,
+        name: this.fullGenesis.name,
+        email: this.fullGenesis.email,
+        phone: this.fullGenesis.phone,
+        dob: this.fullGenesis.dob,
+        ssn: this.fullGenesis.ssn,
+        gender: this.fullGenesis.gender,
+        occupation: this.fullGenesis.occupation,
+        street: this.fullGenesis.street,
+        city: this.fullGenesis.city,
+        state: this.fullGenesis.state,
+        zip: this.fullGenesis.zip,
+        country: this.fullGenesis.country || 'US',
+        cc_number: this.fullGenesis.cc_number,
+        cc_exp: this.fullGenesis.cc_exp,
+        cc_cvv: this.fullGenesis.cc_cvv,
+        cc_holder: this.fullGenesis.cc_holder || this.fullGenesis.name,
+        google_email: this.fullGenesis.google_email,
+        google_password: this.fullGenesis.google_password,
+        real_phone: this.fullGenesis.real_phone,
+        otp_code: this.fullGenesis.otp_code,
+        proxy_url: this.fullGenesis.proxy_url,
+        device_model: this.fullGenesis.device_model,
+        carrier: this.fullGenesis.carrier,
+        location: this.fullGenesis.location,
+        age_days: this.fullGenesis.age_days || 90,
+        aging_level: this.fullGenesis.aging_level || 'medium',
+        purchase_frequency: this.fullGenesis.purchase_frequency || 'moderate',
+        browsing_intensity: this.fullGenesis.browsing_intensity || 'normal',
+        skip_wipe: this.fullGenesis.skip_wipe || false,
+        skip_patch: this.fullGenesis.skip_patch || false,
+        skip_wallet: this.fullGenesis.skip_wallet || false,
+        use_ai: this.fullGenesis.use_ai !== false,
+        run_trust_audit: this.fullGenesis.run_trust_audit !== false,
+        enable_immune_watchdog: this.fullGenesis.enable_immune_watchdog !== false,
+      };
+
+      try {
+        const r = await this.api('/unified-genesis/start', { method: 'POST', body: JSON.stringify(body) });
+        this.fullGenesisJobId = r.job_id;
+        this.fullGenesisLog.push('[00:01] Job started: ' + r.job_id);
+        this._startFullGenesisPoll(r.job_id);
+      } catch(e) {
+        this.fullGenesisLog.push('✗ Failed to start: ' + e.message);
+        this.fullGenesisRunning = false;
+      }
+    },
+
+    _startFullGenesisPoll(jobId) {
+      if (this._fullGenesisPollTimer) clearInterval(this._fullGenesisPollTimer);
+      const startTime = Date.now();
+      this._fullGenesisPollTimer = setInterval(async () => {
+        try {
+          const st = await this.api('/unified-genesis/status/' + jobId);
+          this.fullGenesisJob = st;
+          const elapsed = Math.round((Date.now() - startTime) / 1000);
+          const m = String(Math.floor(elapsed / 60)).padStart(2, '0');
+          const s = String(elapsed % 60).padStart(2, '0');
+          
+          if (st.status === 'completed' || st.status === 'failed') {
+            clearInterval(this._fullGenesisPollTimer);
+            this._fullGenesisPollTimer = null;
+            this.fullGenesisRunning = false;
+            const msg = st.status === 'completed'
+              ? `[${m}:${s}] ✓ Genesis complete! Trust: ${st.trust_score || 0}/100 (${st.trust_grade || '?'}) Profile: ${st.profile_id || '?'}`
+              : `[${m}:${s}] ✗ Genesis failed: ${st.error || 'see log'}`;
+            this.fullGenesisLog.push(msg);
+            await this.loadProfiles();
+            await this.loadPermanentDevice();
+            // Prepare inspector data and notify user
+            if (st.profile_id) {
+              this.inspectProfile = st.profile_id;
+              this.loadInspectData(st.profile_id);
+              this.fullGenesisLog.push(`[${m}:${s}] Profile ${st.profile_id} ready. Click 'Inspector' tab to view details.`);
+            }
+          }
+        } catch(e) { /* poll errors are transient */ }
+      }, 2500);
+    },
+
+    clearFullGenesis() {
+      this.fullGenesis = {
+        preset: '',
+        device_model: 'samsung_s24', carrier: 'tmobile_us', location: 'la', country: 'US',
+        age_days: 90, aging_level: 'medium', purchase_frequency: 'moderate', browsing_intensity: 'normal',
+        name: '', email: '', phone: '', dob: '', ssn: '', gender: 'M', occupation: 'professional',
+        street: '', city: '', state: '', zip: '',
+        cc_number: '', cc_exp: '', cc_cvv: '', cc_holder: '',
+        google_email: '', google_password: '', real_phone: '', otp_code: '',
+        proxy_url: '',
+        skip_wipe: false, skip_patch: false, skip_wallet: false, use_ai: true,
+        run_trust_audit: true, enable_immune_watchdog: true,
+        calculated: null,
+      };
+      this.fullGenesisJob = null;
+      this.fullGenesisLog = [];
+    },
+
+    async showGenesisAlgorithm() {
+      try {
+        const r = await this.api('/unified-genesis/algorithm');
+        const alg = r.algorithm || {};
+        let msg = `=== ${alg.name || 'Unified Genesis'} v${alg.version || '1.0'} ===\n\n`;
+        msg += `Total Phases: ${alg.total_phases || 16}\n`;
+        msg += `Estimated Duration: ${alg.estimated_duration || '5-15 minutes'}\n\n`;
+        msg += `PHASES:\n`;
+        (alg.phases || []).forEach(p => {
+          msg += `  ${p.id}. ${p.name} (${p.duration || '?'})\n`;
+          msg += `     ${p.description}\n`;
+        });
+        msg += `\nTRUST SCORE CHECKS:\n`;
+        (alg.phases?.find(p => p.id === 14)?.checks || []).forEach(c => {
+          msg += `  • ${c.name}: ${c.weight} points\n`;
+        });
+        alert(msg);
+      } catch(e) {
+        alert('Error loading algorithm: ' + e.message);
+      }
     },
 
     // ─────────────────────────────────────────────────────────────────

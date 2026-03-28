@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>VMOS Titan — Setup</title>
+<script src="./assets/tailwind.js"></script>
+<script defer src="./assets/alpine.min.js"></script>
+<style>
+  :root{--accent:#a855f7;--bg:#0a0e17;--card:#111827;--green:#22c55e;--red:#ef4444}
+  body{background:var(--bg);color:#e2e8f0;font-family:'Inter',system-ui,sans-serif}
+  .inp{width:100%;background:#1e293b;border:1px solid #374151;border-radius:.5rem;padding:.625rem .875rem;font-size:.875rem;color:#fff}
+  .inp:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 2px rgba(168,85,247,.2)}
+  .btn-primary{background:linear-gradient(135deg,#7c3aed,#a855f7);color:#fff;padding:.625rem 1.5rem;border-radius:.5rem;font-weight:600;transition:all .15s}
+  .btn-primary:hover:not(:disabled){background:linear-gradient(135deg,#6d28d9,#9333ea);transform:translateY(-1px)}
+  .btn-primary:disabled{opacity:.5;cursor:not-allowed}
+  .btn-secondary{background:#374151;color:#fff;padding:.5rem 1rem;border-radius:.5rem;font-weight:500;transition:all .15s}
+  .btn-secondary:hover{background:#4b5563}
+  .glow{box-shadow:0 0 30px rgba(168,85,247,0.2)}
+</style>
+</head>
+<body class="h-screen flex items-center justify-center p-4" x-data="setupApp()" x-init="init()">
+
+<div class="w-full max-w-md">
+  <!-- Logo & Title -->
+  <div class="text-center mb-8">
+    <div class="w-20 h-20 mx-auto mb-4 rounded-2xl bg-gradient-to-br from-purple-500 to-purple-700 flex items-center justify-center shadow-xl glow">
+      <span class="text-4xl font-bold text-white">V</span>
+    </div>
+    <h1 class="text-2xl font-bold text-white mb-1">VMOS Titan</h1>
+    <p class="text-sm text-gray-400">Cloud Device Management</p>
+  </div>
+
+  <!-- Setup Form -->
+  <div class="bg-[#111827] rounded-xl p-6 border border-gray-800 shadow-xl">
+    
+    <!-- Step 1: Welcome -->
+    <div x-show="step === 1">
+      <h2 class="text-lg font-semibold text-white mb-3">Welcome to VMOS Titan</h2>
+      <p class="text-sm text-gray-400 mb-6">
+        Professional desktop application for VMOS Pro cloud device management with full Genesis Studio integration.
+      </p>
+      
+      <div class="space-y-3 mb-6">
+        <div class="flex items-center gap-3 p-3 bg-[#1e293b] rounded-lg">
+          <span class="text-xl">📱</span>
+          <div>
+            <div class="text-sm font-medium text-white">Cloud Instances</div>
+            <div class="text-xs text-gray-500">Manage VMOS Pro cloud devices</div>
+          </div>
+        </div>
+        <div class="flex items-center gap-3 p-3 bg-[#1e293b] rounded-lg">
+          <span class="text-xl">🧬</span>
+          <div>
+            <div class="text-sm font-medium text-white">Genesis Studio</div>
+            <div class="text-xs text-gray-500">Identity forge & injection pipeline</div>
+          </div>
+        </div>
+        <div class="flex items-center gap-3 p-3 bg-[#1e293b] rounded-lg">
+          <span class="text-xl">⌨️</span>
+          <div>
+            <div class="text-sm font-medium text-white">Shell & Control</div>
+            <div class="text-xs text-gray-500">Remote ADB commands & screenshots</div>
+          </div>
+        </div>
+      </div>
+      
+      <button @click="step = 2" class="btn-primary w-full">Get Started →</button>
+    </div>
+
+    <!-- Step 2: Credentials -->
+    <div x-show="step === 2">
+      <h2 class="text-lg font-semibold text-white mb-3">VMOS Cloud Credentials</h2>
+      <p class="text-sm text-gray-400 mb-6">
+        Enter your VMOS Cloud API credentials. You can find these in your VMOS Pro dashboard.
+      </p>
+      
+      <div class="space-y-4 mb-6">
+        <div>
+          <label class="block text-xs text-gray-400 mb-1.5">Access Key (AK)</label>
+          <input type="text" x-model="credentials.vmos_ak" placeholder="Your VMOS Cloud Access Key" class="inp font-mono text-sm">
+        </div>
+        <div>
+          <label class="block text-xs text-gray-400 mb-1.5">Secret Key (SK)</label>
+          <input type="password" x-model="credentials.vmos_sk" placeholder="Your VMOS Cloud Secret Key" class="inp font-mono text-sm">
+          <button @click="showSk = !showSk" class="text-xs text-purple-400 mt-1 hover:text-purple-300" x-text="showSk ? 'Hide' : 'Show'"></button>
+        </div>
+      </div>
+      
+      <div x-show="error" class="p-3 bg-red-900/30 border border-red-800 rounded-lg mb-4">
+        <p class="text-sm text-red-400" x-text="error"></p>
+      </div>
+      
+      <div class="flex gap-3">
+        <button @click="step = 1" class="btn-secondary flex-1">← Back</button>
+        <button @click="testAndSave()" :disabled="testing || !credentials.vmos_ak || !credentials.vmos_sk" class="btn-primary flex-1">
+          <span x-show="!testing">Continue →</span>
+          <span x-show="testing">Testing...</span>
+        </button>
+      </div>
+    </div>
+
+    <!-- Step 3: Complete -->
+    <div x-show="step === 3">
+      <div class="text-center py-4">
+        <div class="w-16 h-16 mx-auto mb-4 rounded-full bg-green-900/30 border-2 border-green-500 flex items-center justify-center">
+          <span class="text-3xl">✓</span>
+        </div>
+        <h2 class="text-lg font-semibold text-white mb-2">Setup Complete!</h2>
+        <p class="text-sm text-gray-400 mb-6">
+          VMOS Titan is ready to use. Your credentials have been saved securely.
+        </p>
+        
+        <button @click="launchApp()" class="btn-primary w-full">Launch VMOS Titan</button>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- Footer -->
+  <div class="text-center mt-6 text-xs text-gray-600">
+    <p>VMOS Titan v1.0.0 • Built for Linux</p>
+  </div>
+</div>
+
+<script>
+function setupApp() {
+  return {
+    step: 1,
+    credentials: {
+      vmos_ak: '',
+      vmos_sk: ''
+    },
+    showSk: false,
+    testing: false,
+    error: '',
+    
+    async init() {
+      // Check if we have existing credentials
+      const info = await window.vmosAPI.getSystemInfo();
+      if (info.hasCredentials) {
+        this.credentials.vmos_ak = info.vmosAk || '';
+      }
+    },
+    
+    async testAndSave() {
+      this.testing = true;
+      this.error = '';
+      
+      try {
+        // Test credentials
+        const result = await window.vmosAPI.testCredentials({
+          vmos_ak: this.credentials.vmos_ak,
+          vmos_sk: this.credentials.vmos_sk
+        });
+        
+        if (!result.ok) {
+          this.error = result.error || 'Invalid credentials';
+          this.testing = false;
+          return;
+        }
+        
+        // Save credentials
+        const saveResult = await window.vmosAPI.saveSetup({
+          vmos_ak: this.credentials.vmos_ak,
+          vmos_sk: this.credentials.vmos_sk
+        });
+        
+        if (!saveResult.ok) {
+          this.error = saveResult.error || 'Failed to save credentials';
+          this.testing = false;
+          return;
+        }
+        
+        this.step = 3;
+      } catch (e) {
+        this.error = e.message || 'An error occurred';
+      }
+      
+      this.testing = false;
+    },
+    
+    launchApp() {
+      window.vmosAPI.completeSetup();
+    }
+  };
+}
+</script>
+</body>
+</html>
