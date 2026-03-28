@@ -223,6 +223,16 @@ function startBuiltinServer() {
           return send({ ok: true });
         }
 
+        if (action === 'reset' && method === 'POST') {
+          // Hard reset via replacePad — forces device back to clean status=14.
+          // Use when device is stuck in boot loop (status=11) that won't self-resolve.
+          // wipeData:1 = full factory wipe. This is the API equivalent of web console reset.
+          const r = await vmosPost('/vcpcloud/api/padApi/replacePad', {
+            padCodes: [padCode], countryCode: 'US', wipeData: 1, androidPropMap: {}
+          }, ak, sk);
+          return send({ ok: true, code: r.code, msg: r.msg });
+        }
+
         if (action === 'screenshot') {
           const r = await vmosPost('/vcpcloud/api/padApi/screenshot', { padCodes: [padCode] }, ak, sk);
           const d = r.data;
@@ -817,25 +827,38 @@ async function _runGenesisJob(jobId, ak, sk) {
       }
       const isRunning = padStatus === 10 || padStatus === '10';
       if (!isRunning) {
-        log(`⚠ Instance not running (status=${padStatus}), attempting restart...`);
-        await vpost('/vcpcloud/api/padApi/restart', { padCodes: pads }).catch(() => {});
-        // Poll until running (status=10) — up to 5 minutes (60 × 5s)
-        for (let rp = 0; rp < 60; rp++) {
-          await sleep(5000);
+        // status=11 (stuck boot): do NOT send restart — wait up to 10min, then try replacePad recovery
+        const stuckBoot = padStatus === 11 || padStatus === '11';
+        if (!stuckBoot) {
+          log(`⚠ Instance not running (status=${padStatus}), attempting restart...`);
+          await vpost('/vcpcloud/api/padApi/restart', { padCodes: pads }).catch(() => {});
+        } else {
+          log(`⚠ Instance stuck in boot (status=11) — waiting patiently (do NOT restart per E-09)...`);
+        }
+        // Poll until running (status=10) — up to 15 minutes (90 × 10s)
+        for (let rp = 0; rp < 90; rp++) {
+          await sleep(10000);
           try {
             const rd = await vpost('/vcpcloud/api/padApi/infos', { page: 1, rows: 10 });
             const devList = rd.data?.pageData || rd.data?.list || [];
             const dev = devList.find(d => d.padCode === padCode);
             const s = dev?.padStatus;
-            if (s === 10 || s === '10') { log(`✓ Device booted (status=${s}, ${rp * 5}s)`); padStatus = s; break; }
-            if (rp % 12 === 0 && rp > 0) {
-              log(`Phase 0 — Still waiting: status=${s} (${rp * 5}s)...`);
-              // E-09 fix: Only restart if device is stopped/hung (14 or 12), NOT if it's mid-boot (11)
-              // Restarting from status=11 causes 11↔14 boot loop
-              if (rp === 24 && s !== 11 && s !== '11') {
-                log(`Phase 0 — Sending restart (status=${s}, not mid-boot)`);
-                await vpost('/vcpcloud/api/padApi/restart', { padCodes: pads }).catch(() => {});
-              }
+            if (s === 10 || s === '10') { log(`✓ Device booted (status=${s}, ${rp * 10}s)`); padStatus = s; break; }
+            if (rp % 6 === 0 && rp > 0) {
+              log(`Phase 0 — Still waiting: status=${s} (${rp * 10}s)...`);
+            }
+            // E-09 fix: Only restart if device is STOPPED (14), NOT if it's mid-boot (11)
+            // Restarting from status=11 causes 11↔14 boot loop
+            if (s === 14 || s === '14') {
+              log(`Phase 0 — Device stopped (status=14), sending restart...`);
+              await vpost('/vcpcloud/api/padApi/restart', { padCodes: pads }).catch(() => {});
+            }
+            // If stuck at 11 for >8min (48 ticks × 10s), try replacePad recovery
+            if (rp === 48 && (s === 11 || s === '11')) {
+              log(`Phase 0 — Stuck at status=11 for 8min — attempting replacePad recovery (wipeData:1)...`);
+              await vpost('/vcpcloud/api/padApi/replacePad', {
+                padCodes: [padCode], countryCode: 'US', wipeData: 1, androidPropMap: {}
+              }).catch(() => {});
             }
           } catch (_) {}
         }
