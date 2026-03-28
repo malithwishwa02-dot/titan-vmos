@@ -355,6 +355,22 @@ class TestInstanceManagement:
             assert result["code"] == 200
 
     @pytest.mark.asyncio
+    async def test_sync_cmd(self, mock_client, mock_http_success):
+        """syncCmd endpoint should execute shell commands synchronously (E-06, E-07, E-08)."""
+        response = mock_http_success(data={
+            "taskStatus": 3,
+            "errorMsg": "SM-S928U\n",
+            "taskResult": "success"
+        })
+        with patch.object(mock_client, "_post", new_callable=AsyncMock, return_value=response):
+            result = await mock_client.sync_cmd(
+                "PAD001",
+                "getprop ro.product.model"
+            )
+            assert result["code"] == 200
+            assert result["data"]["taskStatus"] == 3
+
+    @pytest.mark.asyncio
     async def test_async_adb_cmd(self, mock_client, mock_http_success):
         """asyncCmd endpoint should execute ADB commands asynchronously."""
         response = mock_http_success(data=[{"taskId": 12345}])
@@ -1287,6 +1303,7 @@ class TestAPIEndpointCoverage:
             "set_proxy",
             "list_installed_apps_realtime",
             "set_keep_alive_app",
+            "sync_cmd",  # E-06, E-07, E-08 fixes: synchronous shell execution
             "async_adb_cmd",
             "switch_root",
             "screenshot",

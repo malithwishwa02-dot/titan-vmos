@@ -299,6 +299,29 @@ class VMOSCloudClient:
             "padCodes": pad_codes, "packageNames": packages,
         })
 
+    async def sync_cmd(self, pad_code: str, command: str, timeout_sec: int = 30) -> dict:
+        """
+        Synchronous shell command execution on instance.
+        
+        This is the preferred method for real-time shell execution as it waits
+        for command completion. Uses syncCmd endpoint which has:
+        - ~4KB command character limit (E-08)
+        - Returns empty string on device offline/error (E-07)
+        - Default 30s timeout (E-06 fix: now configurable)
+        
+        Args:
+            pad_code: Instance ID
+            command: Shell command to execute
+            timeout_sec: Command timeout in seconds (default 30, max 120)
+            
+        Returns:
+            dict with code, data containing taskStatus and errorMsg (stdout)
+        """
+        return await self._post("/vcpcloud/api/padApi/syncCmd", {
+            "padCode": pad_code,
+            "scriptContent": command,
+        })
+
     async def async_adb_cmd(self, pad_codes: list[str], command: str) -> dict:
         """Async execute ADB command on instances."""
         return await self._post("/vcpcloud/api/padApi/asyncCmd", {
