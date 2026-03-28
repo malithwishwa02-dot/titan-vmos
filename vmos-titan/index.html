@@ -1,0 +1,1051 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>VMOS Titan — Cloud Device Management</title>
+<script src="./assets/tailwind.js"></script>
+<script defer src="./assets/alpine.min.js"></script>
+<style>
+  :root{--accent:#a855f7;--accent2:#06b6d4;--bg:#0a0e17;--card:#111827;--card2:#1e293b;--green:#22c55e;--red:#ef4444;--yellow:#eab308;--purple:#a855f7;--cyan:#00d4ff;--orange:#f97316}
+  body{background:var(--bg);color:#e2e8f0;font-family:'Inter',system-ui,sans-serif}
+  .scrollbar-thin::-webkit-scrollbar{width:6px;height:6px} .scrollbar-thin::-webkit-scrollbar-thumb{background:#334155;border-radius:3px}
+  .glow{box-shadow:0 0 20px rgba(168,85,247,0.15)}
+  .glow-cyan{box-shadow:0 0 20px rgba(6,182,212,0.15)}
+  .pulse-dot{animation:pulse 2s infinite} @keyframes pulse{0%,100%{opacity:1}50%{opacity:0.4}}
+  .sidebar-item{transition:all .15s} .sidebar-item:hover{background:#1e293b}
+  .sidebar-item.active{background:linear-gradient(90deg,rgba(168,85,247,0.15),transparent);border-left:3px solid var(--accent)}
+  .tab-btn{transition:all .15s;border-bottom:2px solid transparent}
+  .tab-btn.active{color:var(--accent);border-bottom:2px solid var(--accent)}
+  .device-card{transition:all .2s;cursor:pointer} .device-card:hover{border-color:var(--accent);transform:translateY(-2px)}
+  .btn-primary{background:linear-gradient(135deg,#7c3aed,#a855f7);transition:all .15s} .btn-primary:hover:not(:disabled){background:linear-gradient(135deg,#6d28d9,#9333ea);transform:translateY(-1px)}
+  .btn-primary:disabled{opacity:.5;cursor:not-allowed}
+  .btn-green{background:linear-gradient(135deg,#16a34a,#22c55e)} .btn-green:hover{background:linear-gradient(135deg,#15803d,#16a34a)}
+  .btn-cyan{background:linear-gradient(135deg,#0891b2,#06b6d4)} .btn-cyan:hover{background:linear-gradient(135deg,#0e7490,#0891b2)}
+  .btn-danger{background:linear-gradient(135deg,#dc2626,#ef4444)}
+  .btn-secondary{background:#374151;transition:all .15s} .btn-secondary:hover{background:#4b5563}
+  .btn-ghost{background:transparent;border:1px solid #374151} .btn-ghost:hover{background:#1e293b;border-color:#4b5563}
+  .score-ring{width:48px;height:48px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px}
+  .inp{width:100%;background:#1e293b;border:1px solid #374151;border-radius:.5rem;padding:.5rem .75rem;font-size:.875rem;color:#fff;transition:all .15s}
+  .inp:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 2px rgba(168,85,247,.15)}
+  .inp-sm{padding:.375rem .5rem;font-size:.75rem}
+  .lbl{display:block;font-size:.6875rem;color:#9ca3af;margin-bottom:.25rem;font-weight:500;text-transform:uppercase;letter-spacing:.025em}
+  .grp{background:var(--card);border:1px solid #1f2937;border-radius:.75rem;padding:1rem}
+  .grp-title{font-size:.75rem;font-weight:600;margin-bottom:.75rem;text-transform:uppercase;color:#9ca3af;letter-spacing:.05em}
+  .log-area{font-family:'JetBrains Mono','Consolas',monospace;font-size:11px;background:#0f172a;color:#94a3b8;border:1px solid #1e293b;border-radius:.5rem;padding:.75rem;white-space:pre-wrap;overflow-y:auto;max-height:300px}
+  .stat-card{background:linear-gradient(135deg,#1e293b,#111827);border:1px solid #374151;border-radius:.75rem;padding:1rem}
+  .status-running{color:var(--green)} .status-stopped{color:var(--yellow)} .status-error{color:var(--red)}
+  [x-cloak]{display:none!important}
+  .glass{background:rgba(17,24,39,0.8);backdrop-filter:blur(12px)}
+  .gradient-text{background:linear-gradient(135deg,#a855f7,#06b6d4);-webkit-background-clip:text;-webkit-text-fill-color:transparent}
+</style>
+</head>
+<body class="h-screen flex overflow-hidden" x-data="vmosTitanApp()" x-init="init()">
+
+<!-- SIDEBAR -->
+<aside class="w-60 flex-shrink-0 bg-[#0d1117] border-r border-gray-800 flex flex-col h-full" role="navigation">
+  <!-- Logo -->
+  <div class="p-4 border-b border-gray-800">
+    <div class="flex items-center gap-3">
+      <div class="w-10 h-10 rounded-xl bg-gradient-to-br from-purple-500 to-cyan-500 flex items-center justify-center shadow-lg">
+        <span class="text-xl font-black text-white">V</span>
+      </div>
+      <div>
+        <div class="text-sm font-bold gradient-text">VMOS TITAN</div>
+        <div class="text-[10px] text-gray-500">Cloud Device Manager</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Navigation -->
+  <nav class="flex-1 overflow-y-auto scrollbar-thin py-2">
+    <template x-for="item in navItems" :key="item.key">
+      <button class="sidebar-item w-full text-left px-4 py-2.5 flex items-center gap-3 text-sm"
+        :class="section===item.key?'active text-purple-400':'text-gray-400'" @click="section=item.key">
+        <span x-text="item.icon" class="text-base w-6 text-center"></span>
+        <span x-text="item.label" class="flex-1"></span>
+        <span x-show="item.badge" x-text="item.badge" class="text-[10px] bg-purple-900/60 text-purple-300 px-1.5 py-0.5 rounded-full font-medium"></span>
+      </button>
+    </template>
+  </nav>
+
+  <!-- Connection Status -->
+  <div class="p-3 border-t border-gray-800 bg-[#0d1117]/80">
+    <div class="flex items-center justify-between mb-2">
+      <span class="text-[11px] text-gray-500">Cloud Instances</span>
+      <span class="text-[11px] font-bold" :class="instances.length>0?'text-purple-400':'text-gray-600'" x-text="instances.length"></span>
+    </div>
+    <div class="flex items-center justify-between mb-2">
+      <span class="text-[11px] text-gray-500">Active Jobs</span>
+      <span class="text-[11px] font-bold text-cyan-400" x-text="activeJobs"></span>
+    </div>
+    <div class="flex items-center justify-between">
+      <span class="text-[11px] text-gray-500">API Status</span>
+      <div class="flex items-center gap-1.5">
+        <span class="w-2 h-2 rounded-full" :class="apiConnected?'bg-green-500 pulse-dot':'bg-red-500'"></span>
+        <span class="text-[11px]" :class="apiConnected?'text-green-400':'text-red-400'" x-text="apiConnected?'Connected':'Offline'"></span>
+      </div>
+    </div>
+  </div>
+</aside>
+
+<!-- MAIN CONTENT -->
+<main class="flex-1 flex flex-col overflow-hidden">
+  <!-- Header -->
+  <header class="h-14 border-b border-gray-800 flex items-center justify-between px-6 glass">
+    <div class="flex items-center gap-3">
+      <span class="text-white font-semibold" x-text="currentNav?.label||'Dashboard'"></span>
+      <span class="text-gray-600">—</span>
+      <span class="text-gray-500 text-sm" x-text="currentNav?.desc||''"></span>
+    </div>
+    <div class="flex items-center gap-4">
+      <button @click="refreshInstances()" class="btn-ghost text-white px-3 py-1.5 text-xs font-medium rounded-lg flex items-center gap-1.5" :disabled="refreshing">
+        <span :class="refreshing?'animate-spin':''" x-text="refreshing?'↻':'↻'"></span>
+        <span x-text="refreshing?'Refreshing...':'Refresh'"></span>
+      </button>
+      <div class="text-[11px] text-gray-500 font-mono" x-text="new Date().toLocaleTimeString()"></div>
+    </div>
+  </header>
+
+  <!-- Content Area -->
+  <div class="flex-1 overflow-y-auto scrollbar-thin p-6">
+
+    <!-- ═══════════════════════════════════════════════════════════════ -->
+    <!-- DASHBOARD -->
+    <!-- ═══════════════════════════════════════════════════════════════ -->
+    <div x-show="section==='dashboard'" x-cloak>
+      <!-- Stats Row -->
+      <div class="grid grid-cols-4 gap-4 mb-6">
+        <div class="stat-card">
+          <div class="text-xs text-gray-500 mb-1">Total Instances</div>
+          <div class="text-3xl font-bold text-purple-400" x-text="instances.length"></div>
+        </div>
+        <div class="stat-card">
+          <div class="text-xs text-gray-500 mb-1">Running</div>
+          <div class="text-3xl font-bold text-green-400" x-text="instances.filter(i=>i.status===10).length"></div>
+        </div>
+        <div class="stat-card">
+          <div class="text-xs text-gray-500 mb-1">Stopped</div>
+          <div class="text-3xl font-bold text-yellow-400" x-text="instances.filter(i=>i.status!==10).length"></div>
+        </div>
+        <div class="stat-card">
+          <div class="text-xs text-gray-500 mb-1">Active Jobs</div>
+          <div class="text-3xl font-bold text-cyan-400" x-text="activeJobs"></div>
+        </div>
+      </div>
+
+      <!-- Quick Actions -->
+      <h3 class="text-sm font-semibold text-gray-400 mb-3 uppercase tracking-wider">Quick Actions</h3>
+      <div class="grid grid-cols-4 gap-4 mb-8">
+        <button @click="section='instances'" class="grp hover:border-purple-500/50 text-left transition-all hover:scale-[1.02]">
+          <div class="text-2xl mb-3">📱</div>
+          <div class="text-sm font-semibold text-white mb-1">Manage Instances</div>
+          <div class="text-xs text-gray-500">View and control cloud devices</div>
+        </button>
+        <button @click="section='genesis'" class="grp hover:border-cyan-500/50 text-left transition-all hover:scale-[1.02] glow-cyan">
+          <div class="text-2xl mb-3">🧬</div>
+          <div class="text-sm font-semibold text-white mb-1">Genesis Studio</div>
+          <div class="text-xs text-gray-500">Identity forge & injection</div>
+        </button>
+        <button @click="section='shell'" class="grp hover:border-purple-500/50 text-left transition-all hover:scale-[1.02]">
+          <div class="text-2xl mb-3">⌨️</div>
+          <div class="text-sm font-semibold text-white mb-1">Shell Commands</div>
+          <div class="text-xs text-gray-500">Remote ADB execution</div>
+        </button>
+        <button @click="section='settings'" class="grp hover:border-purple-500/50 text-left transition-all hover:scale-[1.02]">
+          <div class="text-2xl mb-3">⚙️</div>
+          <div class="text-sm font-semibold text-white mb-1">Settings</div>
+          <div class="text-xs text-gray-500">API credentials & config</div>
+        </button>
+      </div>
+
+      <!-- Recent Instances -->
+      <h3 class="text-sm font-semibold text-gray-400 mb-3 uppercase tracking-wider">Cloud Instances</h3>
+      <div x-show="instances.length === 0" class="grp text-center py-8">
+        <div class="text-3xl mb-3">📱</div>
+        <div class="text-gray-400">No instances found</div>
+        <div class="text-xs text-gray-600 mt-1">Configure your VMOS Cloud credentials in Settings</div>
+      </div>
+      <div x-show="instances.length > 0" class="grid grid-cols-3 gap-4">
+        <template x-for="inst in instances.slice(0, 6)" :key="inst.padCode">
+          <div class="device-card grp" @click="selectInstance(inst)">
+            <div class="flex items-center justify-between mb-3">
+              <span class="text-sm font-medium text-white" x-text="inst.padCode"></span>
+              <span class="w-2.5 h-2.5 rounded-full" :class="inst.status===10?'bg-green-500':'bg-yellow-500'"></span>
+            </div>
+            <div class="text-xs text-gray-500 mb-1" x-text="'Android ' + (inst.androidVersion || '?')"></div>
+            <div class="text-xs text-gray-600" x-text="inst.resolution || '—'"></div>
+          </div>
+        </template>
+      </div>
+    </div>
+
+    <!-- ═══════════════════════════════════════════════════════════════ -->
+    <!-- INSTANCES -->
+    <!-- ═══════════════════════════════════════════════════════════════ -->
+    <div x-show="section==='instances'" x-cloak>
+      <div class="grid grid-cols-3 gap-6">
+        <!-- Instance List -->
+        <div class="col-span-2">
+          <div class="grp">
+            <div class="flex items-center justify-between mb-4">
+              <div class="grp-title mb-0">Cloud Instances</div>
+              <button @click="refreshInstances()" class="btn-secondary px-3 py-1.5 text-xs rounded-lg" :disabled="refreshing">
+                <span x-text="refreshing?'Loading...':'↻ Refresh'"></span>
+              </button>
+            </div>
+
+            <div x-show="instances.length === 0" class="text-center py-8 text-gray-500">
+              <div class="text-4xl mb-2">📱</div>
+              <div>No cloud instances found</div>
+            </div>
+
+            <div class="space-y-2">
+              <template x-for="inst in instances" :key="inst.padCode">
+                <div class="p-3 bg-[#1e293b] rounded-lg flex items-center justify-between hover:bg-[#2d3a4d] cursor-pointer transition-colors"
+                  :class="selectedInstance?.padCode===inst.padCode?'ring-2 ring-purple-500':''" @click="selectInstance(inst)">
+                  <div class="flex items-center gap-3">
+                    <div class="w-3 h-3 rounded-full" :class="inst.status===10?'bg-green-500':'bg-yellow-500'"></div>
+                    <div>
+                      <div class="text-sm font-medium text-white" x-text="inst.padCode"></div>
+                      <div class="text-xs text-gray-500" x-text="'Android ' + (inst.androidVersion || '?') + ' • ' + (inst.resolution || '—')"></div>
+                    </div>
+                  </div>
+                  <div class="flex items-center gap-2">
+                    <span class="text-xs px-2 py-0.5 rounded" :class="inst.status===10?'bg-green-900/50 text-green-400':'bg-yellow-900/50 text-yellow-400'" 
+                      x-text="inst.status===10?'Running':'Stopped'"></span>
+                  </div>
+                </div>
+              </template>
+            </div>
+          </div>
+        </div>
+
+        <!-- Instance Details -->
+        <div>
+          <div class="grp h-full">
+            <div class="grp-title">Instance Details</div>
+            
+            <template x-if="!selectedInstance">
+              <div class="text-center py-8 text-gray-500">
+                <div class="text-3xl mb-2">👆</div>
+                <div>Select an instance</div>
+              </div>
+            </template>
+
+            <template x-if="selectedInstance">
+              <div>
+                <div class="mb-4">
+                  <div class="text-lg font-bold text-white mb-1" x-text="selectedInstance.padCode"></div>
+                  <div class="flex items-center gap-2">
+                    <span class="w-2 h-2 rounded-full" :class="selectedInstance.status===10?'bg-green-500':'bg-yellow-500'"></span>
+                    <span class="text-sm" :class="selectedInstance.status===10?'text-green-400':'text-yellow-400'" x-text="selectedInstance.status===10?'Running':'Stopped'"></span>
+                  </div>
+                </div>
+
+                <div class="space-y-2 text-sm mb-4">
+                  <div class="flex justify-between"><span class="text-gray-500">Android</span><span class="text-white" x-text="selectedInstance.androidVersion || '—'"></span></div>
+                  <div class="flex justify-between"><span class="text-gray-500">Resolution</span><span class="text-white" x-text="selectedInstance.resolution || '—'"></span></div>
+                  <div class="flex justify-between"><span class="text-gray-500">ROM</span><span class="text-white text-xs" x-text="selectedInstance.romVersion || '—'"></span></div>
+                </div>
+
+                <div class="space-y-2">
+                  <button @click="restartInstance(selectedInstance.padCode)" class="btn-primary w-full py-2 rounded-lg text-sm font-medium">↻ Restart</button>
+                  <button @click="takeScreenshot(selectedInstance.padCode)" class="btn-cyan w-full py-2 rounded-lg text-sm font-medium text-white">📷 Screenshot</button>
+                  <button @click="section='shell';shell.padCode=selectedInstance.padCode" class="btn-secondary w-full py-2 rounded-lg text-sm font-medium text-white">⌨️ Open Shell</button>
+                </div>
+              </div>
+            </template>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ═══════════════════════════════════════════════════════════════ -->
+    <!-- GENESIS STUDIO -->
+    <!-- ═══════════════════════════════════════════════════════════════ -->
+    <div x-show="section==='genesis'" x-cloak>
+      <!-- Genesis Tabs -->
+      <div class="flex gap-1 border-b border-gray-800 mb-6">
+        <template x-for="tab in genesisTabs" :key="tab">
+          <button class="tab-btn px-4 py-2 text-sm" :class="genesisTab===tab?'active':'text-gray-400'" @click="genesisTab=tab" x-text="tab"></button>
+        </template>
+      </div>
+
+      <!-- Full Genesis Tab -->
+      <div x-show="genesisTab==='Full Genesis'" x-cloak>
+        <div class="grid grid-cols-3 gap-6">
+          <!-- Left: Config Form -->
+          <div class="col-span-2 space-y-4">
+            
+            <!-- Quick Setup -->
+            <div class="grp glow">
+              <div class="flex items-center justify-between mb-3">
+                <div class="grp-title mb-0 text-purple-400">🚀 Quick Setup</div>
+                <select x-model="genesis.preset" @change="applyGenesisPreset()" class="inp w-48 text-sm">
+                  <option value="">Select preset...</option>
+                  <option value="us_standard_90d">US Standard 90-Day</option>
+                  <option value="us_heavy_365d">US Heavy 365-Day</option>
+                  <option value="uk_standard_90d">UK Standard 90-Day</option>
+                  <option value="quick_30d">Quick 30-Day</option>
+                </select>
+              </div>
+            </div>
+
+            <!-- Target Instance -->
+            <div class="grp">
+              <div class="grp-title text-cyan-400">📱 Target Instance</div>
+              <div class="grid grid-cols-2 gap-4">
+                <div>
+                  <label class="lbl">Cloud Instance</label>
+                  <select x-model="genesis.padCode" class="inp">
+                    <option value="">Select instance...</option>
+                    <template x-for="inst in instances" :key="inst.padCode">
+                      <option :value="inst.padCode" x-text="inst.padCode + ' (' + (inst.status===10?'Running':'Stopped') + ')'"></option>
+                    </template>
+                  </select>
+                </div>
+                <div>
+                  <label class="lbl">Device Model</label>
+                  <select x-model="genesis.deviceModel" class="inp">
+                    <option value="samsung_s24">Samsung Galaxy S24</option>
+                    <option value="samsung_s25_ultra">Samsung Galaxy S25 Ultra</option>
+                    <option value="pixel_9_pro">Google Pixel 9 Pro</option>
+                    <option value="oneplus_12">OnePlus 12</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+
+            <!-- Aging Configuration -->
+            <div class="grp">
+              <div class="grp-title text-yellow-400">⏳ Aging Configuration</div>
+              <div class="grid grid-cols-4 gap-4">
+                <div><label class="lbl">Profile Age (days)</label><input type="number" x-model.number="genesis.ageDays" min="7" max="900" class="inp"></div>
+                <div><label class="lbl">Aging Level</label>
+                  <select x-model="genesis.agingLevel" class="inp">
+                    <option value="light">Light (30-45d)</option>
+                    <option value="medium">Medium (60-180d)</option>
+                    <option value="heavy">Heavy (365+d)</option>
+                  </select>
+                </div>
+                <div><label class="lbl">Purchase Frequency</label>
+                  <select x-model="genesis.purchaseFrequency" class="inp">
+                    <option value="low">Low</option>
+                    <option value="moderate">Moderate</option>
+                    <option value="high">High</option>
+                  </select>
+                </div>
+                <div><label class="lbl">Country</label>
+                  <select x-model="genesis.country" class="inp">
+                    <option value="US">United States</option>
+                    <option value="GB">United Kingdom</option>
+                    <option value="DE">Germany</option>
+                    <option value="FR">France</option>
+                    <option value="CA">Canada</option>
+                    <option value="AU">Australia</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+
+            <!-- Identity -->
+            <div class="grid grid-cols-2 gap-4">
+              <div class="grp">
+                <div class="grp-title text-green-400">👤 Identity</div>
+                <div class="space-y-3">
+                  <div><label class="lbl">Full Name</label><input type="text" x-model="genesis.name" placeholder="John Smith" class="inp"></div>
+                  <div class="grid grid-cols-2 gap-3">
+                    <div><label class="lbl">Email</label><input type="email" x-model="genesis.email" placeholder="email@example.com" class="inp"></div>
+                    <div><label class="lbl">Phone</label><input type="text" x-model="genesis.phone" placeholder="+1234567890" class="inp"></div>
+                  </div>
+                  <div class="grid grid-cols-2 gap-3">
+                    <div><label class="lbl">DOB</label><input type="text" x-model="genesis.dob" placeholder="MM/DD/YYYY" class="inp"></div>
+                    <div><label class="lbl">Gender</label>
+                      <select x-model="genesis.gender" class="inp">
+                        <option value="M">Male</option>
+                        <option value="F">Female</option>
+                      </select>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div class="grp">
+                <div class="grp-title text-blue-400">🏠 Address</div>
+                <div class="space-y-3">
+                  <div><label class="lbl">Street</label><input type="text" x-model="genesis.street" placeholder="123 Main St" class="inp"></div>
+                  <div class="grid grid-cols-2 gap-3">
+                    <div><label class="lbl">City</label><input type="text" x-model="genesis.city" placeholder="New York" class="inp"></div>
+                    <div><label class="lbl">State</label><input type="text" x-model="genesis.state" placeholder="NY" class="inp"></div>
+                  </div>
+                  <div><label class="lbl">ZIP</label><input type="text" x-model="genesis.zip" placeholder="10001" class="inp"></div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Payment -->
+            <div class="grid grid-cols-2 gap-4">
+              <div class="grp">
+                <div class="grp-title text-yellow-400">💳 Payment Card</div>
+                <div class="space-y-3">
+                  <div><label class="lbl">Card Number</label><input type="text" x-model="genesis.ccNumber" placeholder="4538 1234 5678 9012" class="inp font-mono"></div>
+                  <div class="grid grid-cols-2 gap-3">
+                    <div><label class="lbl">Expiry (MM/YYYY)</label><input type="text" x-model="genesis.ccExp" placeholder="12/2027" class="inp"></div>
+                    <div><label class="lbl">CVV</label><input type="text" x-model="genesis.ccCvv" placeholder="123" class="inp"></div>
+                  </div>
+                </div>
+              </div>
+
+              <div class="grp">
+                <div class="grp-title text-red-400">🔑 Google Account</div>
+                <div class="space-y-3">
+                  <div><label class="lbl">Gmail</label><input type="email" x-model="genesis.googleEmail" placeholder="user@gmail.com" class="inp"></div>
+                  <div><label class="lbl">Password</label><input type="password" x-model="genesis.googlePassword" placeholder="Account password" class="inp"></div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Action Buttons -->
+            <div class="flex gap-3">
+              <button @click="startGenesis()" :disabled="genesisRunning || !genesis.padCode" 
+                class="flex-1 py-4 rounded-xl text-base font-bold transition-all disabled:opacity-40"
+                :class="genesisRunning?'bg-yellow-600/20 text-yellow-400 border-2 border-yellow-600':'btn-primary text-white'">
+                <span x-show="!genesisRunning">🧬 START GENESIS PIPELINE</span>
+                <span x-show="genesisRunning" class="flex items-center justify-center gap-2">
+                  <span class="animate-spin">↻</span> Genesis Running...
+                </span>
+              </button>
+              <button @click="clearGenesis()" class="btn-ghost text-gray-400 px-6 py-4 rounded-xl text-sm">Clear</button>
+            </div>
+          </div>
+
+          <!-- Right: Progress -->
+          <div class="space-y-4">
+            <!-- Phase Progress -->
+            <div class="grp">
+              <div class="flex items-center justify-between mb-3">
+                <div class="grp-title mb-0 text-cyan-400">📊 Pipeline Progress</div>
+                <span x-show="genesisJob" class="text-xs px-2 py-0.5 rounded-full font-bold"
+                  :class="genesisJob?.status==='completed'?'bg-green-900/60 text-green-400':genesisJob?.status==='failed'?'bg-red-900/60 text-red-400':'bg-yellow-900/60 text-yellow-400 animate-pulse'"
+                  x-text="(genesisJob?.status||'idle').toUpperCase()"></span>
+              </div>
+
+              <!-- Progress Bar -->
+              <div x-show="genesisJob" class="mb-4">
+                <div class="flex justify-between text-xs text-gray-500 mb-1">
+                  <span x-text="Math.round(genesisJob?.progress||0)+'%'"></span>
+                  <span x-text="(genesisJob?.phases?.filter(p=>p.status==='done').length||0)+'/16 phases'"></span>
+                </div>
+                <div class="w-full bg-gray-800 rounded-full h-2">
+                  <div class="bg-gradient-to-r from-purple-500 to-cyan-500 h-2 rounded-full transition-all" :style="'width:'+(genesisJob?.progress||0)+'%'"></div>
+                </div>
+              </div>
+
+              <!-- Phase List -->
+              <div class="space-y-1 max-h-64 overflow-y-auto scrollbar-thin">
+                <template x-for="ph in (genesisJob?.phases || genesisDefaultPhases)" :key="ph.phase_id">
+                  <div class="flex items-center gap-2 px-2 py-1.5 rounded text-xs"
+                    :class="ph.status==='running'?'bg-yellow-900/20':ph.status==='done'?'bg-green-900/10':ph.status==='failed'?'bg-red-900/10':'bg-gray-800/20'">
+                    <span class="w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold flex-shrink-0"
+                      :class="ph.status==='done'?'bg-green-700 text-green-200':ph.status==='running'?'bg-yellow-700 text-yellow-200 animate-pulse':ph.status==='failed'?'bg-red-700 text-red-200':'bg-gray-700 text-gray-500'"
+                      x-text="ph.status==='done'?'✓':ph.status==='failed'?'✗':ph.status==='running'?'…':ph.phase_id"></span>
+                    <span class="flex-1 truncate" :class="ph.status==='done'?'text-green-300':ph.status==='running'?'text-yellow-300':ph.status==='failed'?'text-red-300':'text-gray-500'" x-text="ph.name"></span>
+                  </div>
+                </template>
+              </div>
+            </div>
+
+            <!-- Result -->
+            <div x-show="genesisJob?.status==='completed'" class="grp border-green-700/50 bg-green-900/10">
+              <div class="text-green-400 font-bold text-sm mb-3">✅ Genesis Complete</div>
+              <div class="grid grid-cols-3 gap-3 text-center">
+                <div>
+                  <div class="text-xl font-black" :class="(genesisJob?.trust_score||0)>=90?'text-green-400':'text-yellow-400'" x-text="(genesisJob?.trust_score||0)+'/100'"></div>
+                  <div class="text-[10px] text-gray-500">Trust</div>
+                </div>
+                <div>
+                  <div class="text-xl font-black text-purple-400" x-text="(genesisJob?.patch_score||0)+'%'"></div>
+                  <div class="text-[10px] text-gray-500">Stealth</div>
+                </div>
+                <div>
+                  <div class="text-xl font-black text-cyan-400" x-text="genesisJob?.trust_grade||'—'"></div>
+                  <div class="text-[10px] text-gray-500">Grade</div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Log -->
+            <div class="grp">
+              <div class="grp-title">Log</div>
+              <div class="log-area h-48" x-text="(genesisJob?.log||genesisLog||[]).join('\n')||'Waiting...'"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Pipeline Status Tab -->
+      <div x-show="genesisTab==='Pipeline Status'" x-cloak>
+        <div class="grp">
+          <div class="grp-title">Active Pipeline Jobs</div>
+          <div x-show="!genesisJob" class="text-center py-8 text-gray-500">
+            <div class="text-3xl mb-2">🧬</div>
+            <div>No active pipeline</div>
+          </div>
+          <div x-show="genesisJob">
+            <div class="text-lg font-bold text-white mb-4" x-text="'Job: ' + (genesisJob?.job_id||'—')"></div>
+            <!-- Full phase display -->
+            <div class="grid grid-cols-4 gap-3">
+              <template x-for="ph in (genesisJob?.phases || [])" :key="ph.phase_id">
+                <div class="p-3 rounded-lg text-center"
+                  :class="ph.status==='done'?'bg-green-900/20 border border-green-700':ph.status==='running'?'bg-yellow-900/20 border border-yellow-700':ph.status==='failed'?'bg-red-900/20 border border-red-700':'bg-gray-800/50 border border-gray-700'">
+                  <div class="text-2xl mb-1" x-text="ph.status==='done'?'✓':ph.status==='failed'?'✗':ph.status==='running'?'⏳':'○'"></div>
+                  <div class="text-xs font-medium" :class="ph.status==='done'?'text-green-400':ph.status==='running'?'text-yellow-400':ph.status==='failed'?'text-red-400':'text-gray-500'" x-text="ph.name"></div>
+                </div>
+              </template>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ═══════════════════════════════════════════════════════════════ -->
+    <!-- SHELL -->
+    <!-- ═══════════════════════════════════════════════════════════════ -->
+    <div x-show="section==='shell'" x-cloak>
+      <div class="grid grid-cols-2 gap-6">
+        <div class="grp">
+          <div class="grp-title">Remote Shell</div>
+          <div class="space-y-4">
+            <div>
+              <label class="lbl">Target Instance</label>
+              <select x-model="shell.padCode" class="inp">
+                <option value="">Select instance...</option>
+                <template x-for="inst in instances" :key="inst.padCode">
+                  <option :value="inst.padCode" x-text="inst.padCode"></option>
+                </template>
+              </select>
+            </div>
+            <div>
+              <label class="lbl">Shell Command</label>
+              <input type="text" x-model="shell.command" @keydown.enter="executeShell()" placeholder="getprop ro.product.model" class="inp font-mono text-sm">
+            </div>
+            <div class="flex gap-2">
+              <button @click="executeShell()" :disabled="!shell.padCode || !shell.command || shell.running" class="btn-primary text-white px-4 py-2 rounded-lg text-sm font-medium">
+                <span x-show="!shell.running">▶ Execute</span>
+                <span x-show="shell.running">Running...</span>
+              </button>
+              <button @click="shell.log=''" class="btn-secondary px-4 py-2 rounded-lg text-sm text-white">Clear</button>
+            </div>
+          </div>
+        </div>
+        <div class="grp">
+          <div class="grp-title">Output</div>
+          <div class="log-area h-80" x-text="shell.log || 'Select an instance and run a command...'"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ═══════════════════════════════════════════════════════════════ -->
+    <!-- PROPERTIES -->
+    <!-- ═══════════════════════════════════════════════════════════════ -->
+    <div x-show="section==='properties'" x-cloak>
+      <div class="grid grid-cols-2 gap-6">
+        <div class="grp">
+          <div class="grp-title">Device Properties</div>
+          <div class="space-y-4">
+            <div>
+              <label class="lbl">Target Instance</label>
+              <select x-model="props.padCode" @change="loadProperties()" class="inp">
+                <option value="">Select instance...</option>
+                <template x-for="inst in instances" :key="inst.padCode">
+                  <option :value="inst.padCode" x-text="inst.padCode"></option>
+                </template>
+              </select>
+            </div>
+            <div x-show="props.loading" class="text-center py-8 text-gray-500">Loading properties...</div>
+            <div x-show="!props.loading && props.padCode" class="space-y-3">
+              <div><label class="lbl">Brand</label><input type="text" x-model="props.data.brand" class="inp" placeholder="samsung"></div>
+              <div><label class="lbl">Model</label><input type="text" x-model="props.data.model" class="inp" placeholder="Galaxy S24"></div>
+              <div><label class="lbl">Fingerprint</label><input type="text" x-model="props.data.fingerprint" class="inp text-xs font-mono" placeholder="samsung/..."></div>
+              <button @click="updateProperties()" :disabled="props.updating" class="btn-primary text-white px-4 py-2 rounded-lg text-sm font-medium w-full">
+                <span x-show="!props.updating">💾 Save Properties</span>
+                <span x-show="props.updating">Saving...</span>
+              </button>
+            </div>
+          </div>
+        </div>
+        <div class="grp">
+          <div class="grp-title">Property Log</div>
+          <div class="log-area h-80" x-text="props.log || 'Select an instance to view/edit properties...'"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ═══════════════════════════════════════════════════════════════ -->
+    <!-- SCREENSHOT -->
+    <!-- ═══════════════════════════════════════════════════════════════ -->
+    <div x-show="section==='screenshot'" x-cloak>
+      <div class="grid grid-cols-3 gap-6">
+        <div class="grp">
+          <div class="grp-title">Capture</div>
+          <div class="space-y-4">
+            <div>
+              <label class="lbl">Target Instance</label>
+              <select x-model="screenshot.padCode" class="inp">
+                <option value="">Select instance...</option>
+                <template x-for="inst in instances" :key="inst.padCode">
+                  <option :value="inst.padCode" x-text="inst.padCode"></option>
+                </template>
+              </select>
+            </div>
+            <button @click="captureScreenshot()" :disabled="!screenshot.padCode || screenshot.capturing" class="btn-cyan text-white px-4 py-2 rounded-lg text-sm font-medium w-full">
+              <span x-show="!screenshot.capturing">📷 Capture Screenshot</span>
+              <span x-show="screenshot.capturing">Capturing...</span>
+            </button>
+          </div>
+        </div>
+        <div class="col-span-2 grp">
+          <div class="grp-title">Preview</div>
+          <div x-show="!screenshot.imageUrl" class="text-center py-16 text-gray-500">
+            <div class="text-4xl mb-2">📷</div>
+            <div>Select an instance and capture</div>
+          </div>
+          <div x-show="screenshot.imageUrl" class="flex justify-center">
+            <img :src="screenshot.imageUrl" class="max-h-96 rounded-lg border border-gray-700">
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ═══════════════════════════════════════════════════════════════ -->
+    <!-- SETTINGS -->
+    <!-- ═══════════════════════════════════════════════════════════════ -->
+    <div x-show="section==='settings'" x-cloak>
+      <div class="grid grid-cols-2 gap-6">
+        <div class="grp">
+          <div class="grp-title">VMOS Cloud Credentials</div>
+          <div class="space-y-4">
+            <div>
+              <label class="lbl">Access Key (AK)</label>
+              <input type="text" x-model="settings.vmosAk" class="inp font-mono text-sm" placeholder="Your VMOS Cloud Access Key">
+            </div>
+            <div>
+              <label class="lbl">Secret Key (SK)</label>
+              <input type="password" x-model="settings.vmosSk" class="inp font-mono text-sm" placeholder="Your VMOS Cloud Secret Key">
+            </div>
+            <button @click="saveSettings()" :disabled="settings.saving" class="btn-primary text-white px-4 py-2 rounded-lg text-sm font-medium">
+              <span x-show="!settings.saving">💾 Save Credentials</span>
+              <span x-show="settings.saving">Saving...</span>
+            </button>
+            <div x-show="settings.saved" class="text-green-400 text-sm">✓ Credentials saved!</div>
+          </div>
+        </div>
+        <div class="grp">
+          <div class="grp-title">Application Info</div>
+          <div class="space-y-3 text-sm">
+            <div class="flex justify-between"><span class="text-gray-500">Version</span><span class="text-white">1.0.0</span></div>
+            <div class="flex justify-between"><span class="text-gray-500">Platform</span><span class="text-white" x-text="platform"></span></div>
+            <div class="flex justify-between"><span class="text-gray-500">API Port</span><span class="text-white">8082</span></div>
+            <div class="flex justify-between"><span class="text-gray-500">Backend</span><span class="text-purple-400">VMOS Pro Cloud</span></div>
+          </div>
+          <div class="mt-4 pt-4 border-t border-gray-700">
+            <button @click="restartServer()" class="btn-secondary text-white px-4 py-2 rounded-lg text-sm w-full">↻ Restart Server</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</main>
+
+<script>
+function vmosTitanApp() {
+  return {
+    section: 'dashboard',
+    platform: 'Linux',
+    
+    // Navigation
+    navItems: [
+      { key: 'dashboard', label: 'Dashboard', icon: '🏠', desc: 'Overview & quick actions' },
+      { key: 'instances', label: 'Instances', icon: '📱', desc: 'Cloud device management', badge: '' },
+      { key: 'genesis', label: 'Genesis Studio', icon: '🧬', desc: 'Identity forge & injection', badge: '16' },
+      { key: 'shell', label: 'Shell', icon: '⌨️', desc: 'Remote command execution' },
+      { key: 'properties', label: 'Properties', icon: '📋', desc: 'Device fingerprints' },
+      { key: 'screenshot', label: 'Screenshot', icon: '📷', desc: 'Capture device screen' },
+      { key: 'settings', label: 'Settings', icon: '⚙️', desc: 'API credentials & config' },
+    ],
+    
+    // State
+    instances: [],
+    selectedInstance: null,
+    apiConnected: false,
+    activeJobs: 0,
+    refreshing: false,
+    
+    // Genesis
+    genesisTabs: ['Full Genesis', 'Pipeline Status'],
+    genesisTab: 'Full Genesis',
+    genesisRunning: false,
+    genesisJob: null,
+    genesisJobId: '',
+    genesisLog: [],
+    _genesisPollTimer: null,
+    genesis: {
+      preset: '',
+      padCode: '',
+      deviceModel: 'samsung_s24',
+      ageDays: 90,
+      agingLevel: 'medium',
+      purchaseFrequency: 'moderate',
+      country: 'US',
+      name: '',
+      email: '',
+      phone: '',
+      dob: '',
+      gender: 'M',
+      street: '',
+      city: '',
+      state: '',
+      zip: '',
+      ccNumber: '',
+      ccExp: '',
+      ccCvv: '',
+      googleEmail: '',
+      googlePassword: '',
+    },
+    genesisDefaultPhases: [
+      {phase_id:0,name:'Pre-Flight',status:'pending'},{phase_id:1,name:'Wipe',status:'pending'},
+      {phase_id:2,name:'Stealth Patch',status:'pending'},{phase_id:3,name:'Network',status:'pending'},
+      {phase_id:4,name:'Forge Profile',status:'pending'},{phase_id:5,name:'Payment History',status:'pending'},
+      {phase_id:6,name:'Google Account',status:'pending'},{phase_id:7,name:'Profile Inject',status:'pending'},
+      {phase_id:8,name:'Wallet',status:'pending'},{phase_id:9,name:'App Bypass',status:'pending'},
+      {phase_id:10,name:'Browser Harden',status:'pending'},{phase_id:11,name:'Play Integrity',status:'pending'},
+      {phase_id:12,name:'Sensors',status:'pending'},{phase_id:13,name:'Immune Watch',status:'pending'},
+      {phase_id:14,name:'Trust Audit',status:'pending'},{phase_id:15,name:'Final Verify',status:'pending'},
+    ],
+    
+    // Shell
+    shell: { padCode: '', command: '', running: false, log: '' },
+    
+    // Properties
+    props: { padCode: '', loading: false, updating: false, data: {}, log: '' },
+    
+    // Screenshot
+    screenshot: { padCode: '', capturing: false, imageUrl: '' },
+    
+    // Settings
+    settings: { vmosAk: '', vmosSk: '', saving: false, saved: false },
+    
+    get currentNav() {
+      return this.navItems.find(n => n.key === this.section);
+    },
+    
+    async init() {
+      // Get platform info
+      if (window.vmosAPI) {
+        this.platform = window.vmosAPI.platform || 'Linux';
+      }
+      
+      // Load saved settings
+      await this.loadSettings();
+      
+      // Initial refresh
+      await this.refreshInstances();
+      
+      // Listen for navigation from menu
+      if (window.vmosAPI?.onNavigate) {
+        window.vmosAPI.onNavigate((section) => {
+          this.section = section;
+        });
+      }
+      
+      // Periodic refresh
+      setInterval(() => this.checkApiStatus(), 30000);
+    },
+    
+    async api(path, options = {}) {
+      const base = window.titanDesktop?.apiBase || 'http://127.0.0.1:8082/api';
+      const url = base + path;
+      
+      const headers = {
+        'Content-Type': 'application/json',
+        ...(options.headers || {}),
+      };
+      
+      const resp = await fetch(url, { ...options, headers });
+      if (!resp.ok) throw new Error(`API error: ${resp.status}`);
+      return resp.json();
+    },
+    
+    async refreshInstances() {
+      this.refreshing = true;
+      try {
+        const result = await this.api('/vmos/instances');
+        this.instances = (result.instances || []).map(inst => ({
+          padCode: inst.pad_code || inst.padCode,
+          status: inst.status,
+          androidVersion: inst.android_version || inst.androidVersion,
+          resolution: inst.resolution,
+          romVersion: inst.rom_version || inst.romVersion,
+        }));
+        this.apiConnected = true;
+        this.navItems[1].badge = String(this.instances.length);
+      } catch (e) {
+        console.error('Failed to refresh:', e);
+        this.apiConnected = false;
+      }
+      this.refreshing = false;
+    },
+    
+    async checkApiStatus() {
+      try {
+        await this.api('/health');
+        this.apiConnected = true;
+      } catch (e) {
+        this.apiConnected = false;
+      }
+    },
+    
+    selectInstance(inst) {
+      this.selectedInstance = inst;
+    },
+    
+    async restartInstance(padCode) {
+      try {
+        await this.api(`/vmos/instances/${padCode}/restart`, { method: 'POST' });
+        alert('Restart initiated');
+        setTimeout(() => this.refreshInstances(), 5000);
+      } catch (e) {
+        alert('Failed to restart: ' + e.message);
+      }
+    },
+    
+    async takeScreenshot(padCode) {
+      this.screenshot.padCode = padCode;
+      this.section = 'screenshot';
+      await this.captureScreenshot();
+    },
+    
+    // Genesis methods
+    applyGenesisPreset() {
+      const presets = {
+        'us_standard_90d': { country: 'US', ageDays: 90, agingLevel: 'medium', purchaseFrequency: 'moderate', deviceModel: 'samsung_s24' },
+        'us_heavy_365d': { country: 'US', ageDays: 365, agingLevel: 'heavy', purchaseFrequency: 'high', deviceModel: 'pixel_9_pro' },
+        'uk_standard_90d': { country: 'GB', ageDays: 90, agingLevel: 'medium', purchaseFrequency: 'moderate', deviceModel: 'samsung_s25_ultra' },
+        'quick_30d': { country: 'US', ageDays: 30, agingLevel: 'light', purchaseFrequency: 'low', deviceModel: 'pixel_8a' },
+      };
+      const preset = presets[this.genesis.preset];
+      if (preset) Object.assign(this.genesis, preset);
+    },
+    
+    async startGenesis() {
+      if (!this.genesis.padCode) { alert('Select an instance'); return; }
+      
+      this.genesisRunning = true;
+      this.genesisJob = null;
+      this.genesisLog = ['[00:00] Starting Genesis pipeline...'];
+      
+      // Reset phases
+      this.genesisDefaultPhases = this.genesisDefaultPhases.map(p => ({...p, status: 'pending'}));
+      
+      try {
+        const body = {
+          device_id: this.genesis.padCode,
+          name: this.genesis.name,
+          email: this.genesis.email,
+          phone: this.genesis.phone,
+          dob: this.genesis.dob,
+          gender: this.genesis.gender,
+          street: this.genesis.street,
+          city: this.genesis.city,
+          state: this.genesis.state,
+          zip: this.genesis.zip,
+          country: this.genesis.country,
+          age_days: this.genesis.ageDays,
+          aging_level: this.genesis.agingLevel,
+          purchase_frequency: this.genesis.purchaseFrequency,
+          device_model: this.genesis.deviceModel,
+          cc_number: this.genesis.ccNumber,
+          cc_exp: this.genesis.ccExp,
+          cc_cvv: this.genesis.ccCvv,
+          google_email: this.genesis.googleEmail,
+          google_password: this.genesis.googlePassword,
+        };
+        
+        const result = await this.api('/unified-genesis/start', {
+          method: 'POST',
+          body: JSON.stringify(body)
+        });
+        
+        this.genesisJobId = result.job_id;
+        this.genesisLog.push('[00:01] Job started: ' + result.job_id);
+        this._startGenesisPoll(result.job_id);
+      } catch (e) {
+        this.genesisLog.push('✗ Failed: ' + e.message);
+        this.genesisRunning = false;
+      }
+    },
+    
+    _startGenesisPoll(jobId) {
+      if (this._genesisPollTimer) clearInterval(this._genesisPollTimer);
+      const startTime = Date.now();
+      
+      this._genesisPollTimer = setInterval(async () => {
+        try {
+          const st = await this.api('/unified-genesis/status/' + jobId);
+          this.genesisJob = st;
+          
+          if (st.status === 'completed' || st.status === 'failed') {
+            clearInterval(this._genesisPollTimer);
+            this._genesisPollTimer = null;
+            this.genesisRunning = false;
+            
+            const elapsed = Math.round((Date.now() - startTime) / 1000);
+            const msg = st.status === 'completed'
+              ? `[${Math.floor(elapsed/60)}:${(elapsed%60).toString().padStart(2,'0')}] ✓ Complete! Trust: ${st.trust_score}/100`
+              : `[${Math.floor(elapsed/60)}:${(elapsed%60).toString().padStart(2,'0')}] ✗ Failed: ${st.error}`;
+            this.genesisLog.push(msg);
+          }
+        } catch (e) { /* ignore poll errors */ }
+      }, 2500);
+    },
+    
+    clearGenesis() {
+      this.genesis = {
+        preset: '', padCode: '', deviceModel: 'samsung_s24', ageDays: 90, agingLevel: 'medium',
+        purchaseFrequency: 'moderate', country: 'US', name: '', email: '', phone: '', dob: '',
+        gender: 'M', street: '', city: '', state: '', zip: '', ccNumber: '', ccExp: '', ccCvv: '',
+        googleEmail: '', googlePassword: '',
+      };
+      this.genesisJob = null;
+      this.genesisLog = [];
+    },
+    
+    // Shell
+    async executeShell() {
+      if (!this.shell.padCode || !this.shell.command) return;
+      
+      this.shell.running = true;
+      this.shell.log += `\n$ ${this.shell.command}\n`;
+      
+      try {
+        const result = await this.api(`/vmos/instances/${this.shell.padCode}/shell`, {
+          method: 'POST',
+          body: JSON.stringify({ command: this.shell.command })
+        });
+        this.shell.log += (result.output || result.result || 'OK') + '\n';
+      } catch (e) {
+        this.shell.log += `Error: ${e.message}\n`;
+      }
+      
+      this.shell.running = false;
+      this.shell.command = '';
+    },
+    
+    // Properties
+    async loadProperties() {
+      if (!this.props.padCode) return;
+      
+      this.props.loading = true;
+      this.props.log = 'Loading properties...\n';
+      
+      try {
+        const result = await this.api(`/vmos/instances/${this.props.padCode}/properties`);
+        this.props.data = result.properties || {};
+        this.props.log += 'Properties loaded.\n';
+      } catch (e) {
+        this.props.log += `Error: ${e.message}\n`;
+      }
+      
+      this.props.loading = false;
+    },
+    
+    async updateProperties() {
+      if (!this.props.padCode) return;
+      
+      this.props.updating = true;
+      
+      try {
+        await this.api(`/vmos/instances/${this.props.padCode}/properties`, {
+          method: 'POST',
+          body: JSON.stringify(this.props.data)
+        });
+        this.props.log += 'Properties updated!\n';
+      } catch (e) {
+        this.props.log += `Error: ${e.message}\n`;
+      }
+      
+      this.props.updating = false;
+    },
+    
+    // Screenshot
+    async captureScreenshot() {
+      if (!this.screenshot.padCode) return;
+      
+      this.screenshot.capturing = true;
+      
+      try {
+        const result = await this.api(`/vmos/instances/${this.screenshot.padCode}/screenshot`);
+        if (result.url) {
+          this.screenshot.imageUrl = result.url;
+        } else if (result.base64) {
+          this.screenshot.imageUrl = 'data:image/png;base64,' + result.base64;
+        }
+      } catch (e) {
+        alert('Failed to capture: ' + e.message);
+      }
+      
+      this.screenshot.capturing = false;
+    },
+    
+    // Settings
+    async loadSettings() {
+      try {
+        const config = await window.vmosAPI?.getConfig?.() || {};
+        this.settings.vmosAk = config.vmos_ak || '';
+        this.settings.vmosSk = config.vmos_sk || '';
+      } catch (e) {
+        console.error('Failed to load settings:', e);
+      }
+    },
+    
+    async saveSettings() {
+      this.settings.saving = true;
+      this.settings.saved = false;
+      
+      try {
+        if (window.vmosAPI?.setConfig) {
+          await window.vmosAPI.setConfig({
+            vmos_ak: this.settings.vmosAk,
+            vmos_sk: this.settings.vmosSk,
+          });
+        }
+        this.settings.saved = true;
+        setTimeout(() => { this.settings.saved = false; }, 3000);
+        
+        // Restart server to apply new credentials
+        await this.restartServer();
+      } catch (e) {
+        alert('Failed to save: ' + e.message);
+      }
+      
+      this.settings.saving = false;
+    },
+    
+    async restartServer() {
+      try {
+        if (window.vmosAPI?.restartServer) {
+          await window.vmosAPI.restartServer();
+          // Wait and refresh
+          setTimeout(() => this.refreshInstances(), 3000);
+        }
+      } catch (e) {
+        console.error('Failed to restart server:', e);
+      }
+    },
+  };
+}
+</script>
+</body>
+</html>

@@ -113,6 +113,7 @@ from routers import devices, stealth, genesis, provision, agent, intel, network
 from routers import cerberus, targets, kyc, admin, dashboard, settings
 from routers import bundles, ai, ws, training, viewer
 from routers import vmos, vmos_genesis  # VMOS Pro cloud device routers
+from routers import unified_genesis  # Unified Genesis Studio router
 
 # Initialize routers that need the device manager (legacy pattern, kept for compat)
 for mod in [devices, stealth, genesis, provision, agent, kyc, admin, dashboard, bundles, ws, ai, training]:
@@ -121,10 +122,13 @@ for mod in [devices, stealth, genesis, provision, agent, kyc, admin, dashboard, 
 # Initialize VMOS Genesis router with device manager
 vmos_genesis.init(dm)
 
+# Initialize Unified Genesis router with device manager
+unified_genesis.init(dm)
+
 # Include all routers
 for r in [devices, stealth, genesis, provision, agent, intel, network, cerberus,
           targets, kyc, admin, dashboard, settings, bundles, ai, ws, training, viewer,
-          vmos, vmos_genesis]:  # Added VMOS routers
+          vmos, vmos_genesis, unified_genesis]:  # Added VMOS + Unified Genesis routers
     app.include_router(r.router)
 
 
