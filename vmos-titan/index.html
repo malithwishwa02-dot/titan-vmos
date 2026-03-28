@@ -626,6 +626,338 @@
       </div>
     </div>
 
+    <!-- APP MANAGER -->
+    <div x-show="section==='apps'" x-cloak class="p-6 space-y-4 overflow-y-auto flex-1 scrollbar-thin">
+      <div class="grp">
+        <div class="grp-title">App Management</div>
+        <div class="grid grid-cols-2 gap-4 mb-4">
+          <div>
+            <label class="lbl">Instance(s)</label>
+            <select class="inp" x-model="apps.padCode">
+              <option value="">Select instance...</option>
+              <template x-for="inst in instances" :key="inst.padCode">
+                <option :value="inst.padCode" x-text="inst.padCode"></option>
+              </template>
+            </select>
+          </div>
+          <div>
+            <label class="lbl">Package Name</label>
+            <input class="inp" x-model="apps.packageName" placeholder="com.example.app">
+          </div>
+        </div>
+        <div class="flex gap-2 flex-wrap mb-4">
+          <button class="btn-primary px-4 py-2 rounded-lg text-sm font-medium" @click="appAction('start')" :disabled="!apps.padCode||!apps.packageName">▶ Start</button>
+          <button class="btn-secondary px-4 py-2 rounded-lg text-sm font-medium" @click="appAction('stop')" :disabled="!apps.padCode||!apps.packageName">⏹ Stop</button>
+          <button class="btn-cyan px-4 py-2 rounded-lg text-sm font-medium" @click="appAction('restart')" :disabled="!apps.padCode||!apps.packageName">🔄 Restart</button>
+          <button class="btn-danger px-4 py-2 rounded-lg text-sm font-medium" @click="appAction('uninstall')" :disabled="!apps.padCode||!apps.packageName">🗑 Uninstall</button>
+        </div>
+        <div class="border-t border-gray-700 pt-4">
+          <div class="grp-title">Install App via URL</div>
+          <div class="flex gap-2">
+            <input class="inp flex-1" x-model="apps.appUrl" placeholder="https://example.com/app.apk">
+            <button class="btn-green px-4 py-2 rounded-lg text-sm font-medium" @click="installAppUrl()" :disabled="!apps.padCode||!apps.appUrl">📥 Install</button>
+          </div>
+        </div>
+        <div class="border-t border-gray-700 pt-4 mt-4">
+          <button class="btn-ghost px-4 py-2 rounded-lg text-sm font-medium" @click="listInstalledApps()">📋 List Installed Apps</button>
+        </div>
+        <div class="log-area mt-3" x-text="apps.log || 'No activity yet'"></div>
+      </div>
+    </div>
+
+    <!-- TOUCH & INPUT -->
+    <div x-show="section==='touch'" x-cloak class="p-6 space-y-4 overflow-y-auto flex-1 scrollbar-thin">
+      <div class="grp">
+        <div class="grp-title">Touch & Input Control</div>
+        <div class="grid grid-cols-3 gap-4 mb-4">
+          <div>
+            <label class="lbl">Instance</label>
+            <select class="inp" x-model="touch.padCode">
+              <option value="">Select instance...</option>
+              <template x-for="inst in instances" :key="inst.padCode">
+                <option :value="inst.padCode" x-text="inst.padCode"></option>
+              </template>
+            </select>
+          </div>
+          <div>
+            <label class="lbl">X Coordinate</label>
+            <input class="inp" type="number" x-model.number="touch.x" placeholder="500">
+          </div>
+          <div>
+            <label class="lbl">Y Coordinate</label>
+            <input class="inp" type="number" x-model.number="touch.y" placeholder="800">
+          </div>
+        </div>
+        <div class="flex gap-2 flex-wrap mb-4">
+          <button class="btn-primary px-4 py-2 rounded-lg text-sm font-medium" @click="simulateClick()" :disabled="!touch.padCode">👆 Click</button>
+          <button class="btn-cyan px-4 py-2 rounded-lg text-sm font-medium" @click="simulateSwipe('up')" :disabled="!touch.padCode">⬆ Swipe Up</button>
+          <button class="btn-cyan px-4 py-2 rounded-lg text-sm font-medium" @click="simulateSwipe('down')" :disabled="!touch.padCode">⬇ Swipe Down</button>
+          <button class="btn-cyan px-4 py-2 rounded-lg text-sm font-medium" @click="simulateSwipe('left')" :disabled="!touch.padCode">⬅ Swipe Left</button>
+          <button class="btn-cyan px-4 py-2 rounded-lg text-sm font-medium" @click="simulateSwipe('right')" :disabled="!touch.padCode">➡ Swipe Right</button>
+        </div>
+        <div class="border-t border-gray-700 pt-4">
+          <div class="grp-title">Text Input</div>
+          <div class="flex gap-2">
+            <input class="inp flex-1" x-model="touch.text" placeholder="Text to input...">
+            <button class="btn-green px-4 py-2 rounded-lg text-sm font-medium" @click="inputText()" :disabled="!touch.padCode||!touch.text">⌨️ Input</button>
+          </div>
+        </div>
+        <div class="border-t border-gray-700 pt-4 mt-4">
+          <button class="btn-ghost px-4 py-2 rounded-lg text-sm font-medium" @click="cleanHome()" :disabled="!touch.padCode">🏠 Clean Home (Desktop)</button>
+        </div>
+        <div class="log-area mt-3" x-text="touch.log || 'No activity yet'"></div>
+      </div>
+    </div>
+
+    <!-- PROXY & NETWORK -->
+    <div x-show="section==='proxy'" x-cloak class="p-6 space-y-4 overflow-y-auto flex-1 scrollbar-thin">
+      <div class="grp">
+        <div class="grp-title">Instance Proxy</div>
+        <div class="grid grid-cols-2 gap-4 mb-4">
+          <div>
+            <label class="lbl">Instance(s)</label>
+            <select class="inp" x-model="proxyMgr.padCode">
+              <option value="">Select instance...</option>
+              <template x-for="inst in instances" :key="inst.padCode">
+                <option :value="inst.padCode" x-text="inst.padCode"></option>
+              </template>
+            </select>
+          </div>
+          <div>
+            <label class="lbl">Proxy URL</label>
+            <input class="inp" x-model="proxyMgr.proxyUrl" placeholder="socks5://user:pass@host:port">
+          </div>
+        </div>
+        <div class="flex gap-2 flex-wrap mb-4">
+          <button class="btn-primary px-4 py-2 rounded-lg text-sm font-medium" @click="setInstanceProxy()" :disabled="!proxyMgr.padCode">🔗 Set Proxy</button>
+          <button class="btn-secondary px-4 py-2 rounded-lg text-sm font-medium" @click="queryProxyInfo()" :disabled="!proxyMgr.padCode">🔍 Query Proxy Info</button>
+          <button class="btn-ghost px-4 py-2 rounded-lg text-sm font-medium" @click="checkIp()">🌍 Check IP</button>
+        </div>
+      </div>
+      <div class="grp">
+        <div class="grp-title">Smart IP</div>
+        <div class="flex gap-2 flex-wrap mb-4">
+          <button class="btn-cyan px-4 py-2 rounded-lg text-sm font-medium" @click="setSmartIp()" :disabled="!proxyMgr.padCode">⚡ Set Smart IP</button>
+          <button class="btn-danger px-4 py-2 rounded-lg text-sm font-medium" @click="cancelSmartIp()" :disabled="!proxyMgr.padCode">❌ Cancel Smart IP</button>
+        </div>
+      </div>
+      <div class="grp">
+        <div class="grp-title">Dynamic Proxy Service</div>
+        <div class="flex gap-2 flex-wrap mb-4">
+          <button class="btn-ghost px-4 py-2 rounded-lg text-sm font-medium" @click="loadDynamicProxies()">📋 List Proxies</button>
+          <button class="btn-ghost px-4 py-2 rounded-lg text-sm font-medium" @click="loadProxyBalance()">💰 Balance</button>
+          <button class="btn-ghost px-4 py-2 rounded-lg text-sm font-medium" @click="loadProxyProducts()">🏷 Products</button>
+          <button class="btn-ghost px-4 py-2 rounded-lg text-sm font-medium" @click="loadProxyRegions()">🗺 Regions</button>
+        </div>
+      </div>
+      <div class="grp">
+        <div class="grp-title">Static Residential Proxy</div>
+        <div class="flex gap-2 flex-wrap mb-4">
+          <button class="btn-ghost px-4 py-2 rounded-lg text-sm font-medium" @click="loadStaticProxies()">📋 List Static Proxies</button>
+          <button class="btn-ghost px-4 py-2 rounded-lg text-sm font-medium" @click="loadStaticProducts()">🏷 Products</button>
+          <button class="btn-ghost px-4 py-2 rounded-lg text-sm font-medium" @click="loadStaticRegions()">🗺 Regions</button>
+        </div>
+      </div>
+      <div class="log-area" x-text="proxyMgr.log || 'No proxy activity yet'"></div>
+    </div>
+
+    <!-- CLOUD PHONES -->
+    <div x-show="section==='cloud-phones'" x-cloak class="p-6 space-y-4 overflow-y-auto flex-1 scrollbar-thin">
+      <div class="grp">
+        <div class="grp-title">Cloud Phone Management</div>
+        <div class="flex gap-2 flex-wrap mb-4">
+          <button class="btn-primary px-4 py-2 rounded-lg text-sm font-medium" @click="loadCloudPhones()">📋 List Cloud Phones</button>
+          <button class="btn-ghost px-4 py-2 rounded-lg text-sm font-medium" @click="loadSkuPackages()">🏷 SKU Packages</button>
+          <button class="btn-ghost px-4 py-2 rounded-lg text-sm font-medium" @click="loadImageVersions()">📱 Image Versions</button>
+          <button class="btn-ghost px-4 py-2 rounded-lg text-sm font-medium" @click="loadDeviceTemplates()">📝 Device Templates</button>
+        </div>
+        <div class="border-t border-gray-700 pt-4 mt-4">
+          <div class="grp-title">Cloud Phone Info</div>
+          <div class="flex gap-2">
+            <select class="inp flex-1" x-model="cloudPhones.padCode">
+              <option value="">Select instance...</option>
+              <template x-for="inst in instances" :key="inst.padCode">
+                <option :value="inst.padCode" x-text="inst.padCode"></option>
+              </template>
+            </select>
+            <button class="btn-cyan px-4 py-2 rounded-lg text-sm font-medium" @click="getCloudPhoneInfo()" :disabled="!cloudPhones.padCode">ℹ️ Info</button>
+          </div>
+        </div>
+        <div class="border-t border-gray-700 pt-4 mt-4">
+          <div class="grp-title">Timing Devices</div>
+          <div class="flex gap-2 flex-wrap">
+            <button class="btn-green px-3 py-1.5 rounded-lg text-xs font-medium" @click="timingAction('on')" :disabled="!cloudPhones.padCode">⚡ Power On</button>
+            <button class="btn-secondary px-3 py-1.5 rounded-lg text-xs font-medium" @click="timingAction('off')" :disabled="!cloudPhones.padCode">⏹ Power Off</button>
+            <button class="btn-danger px-3 py-1.5 rounded-lg text-xs font-medium" @click="timingAction('delete')" :disabled="!cloudPhones.padCode">🗑 Delete</button>
+          </div>
+        </div>
+        <div class="log-area mt-3" x-text="cloudPhones.log || 'No activity yet'"></div>
+      </div>
+    </div>
+
+    <!-- EMAIL SERVICE -->
+    <div x-show="section==='email'" x-cloak class="p-6 space-y-4 overflow-y-auto flex-1 scrollbar-thin">
+      <div class="grp">
+        <div class="grp-title">Email Verification Service</div>
+        <div class="flex gap-2 flex-wrap mb-4">
+          <button class="btn-primary px-4 py-2 rounded-lg text-sm font-medium" @click="loadEmailServices()">📋 Services</button>
+          <button class="btn-ghost px-4 py-2 rounded-lg text-sm font-medium" @click="loadEmailTypes()">📧 Email Types</button>
+          <button class="btn-ghost px-4 py-2 rounded-lg text-sm font-medium" @click="loadPurchasedEmails()">📬 Purchased</button>
+        </div>
+        <div class="border-t border-gray-700 pt-4 mt-4">
+          <div class="grp-title">Get Email Code</div>
+          <div class="flex gap-2">
+            <input class="inp flex-1" x-model="emailSvc.orderId" placeholder="Order ID">
+            <button class="btn-cyan px-4 py-2 rounded-lg text-sm font-medium" @click="getEmailCode()" :disabled="!emailSvc.orderId">🔑 Get Code</button>
+          </div>
+        </div>
+        <div class="log-area mt-3" x-text="emailSvc.log || 'No activity yet'"></div>
+      </div>
+    </div>
+
+    <!-- AUTOMATION -->
+    <div x-show="section==='automation'" x-cloak class="p-6 space-y-4 overflow-y-auto flex-1 scrollbar-thin">
+      <div class="grp">
+        <div class="grp-title">TK Automation Tasks</div>
+        <div class="flex gap-2 flex-wrap mb-4">
+          <button class="btn-primary px-4 py-2 rounded-lg text-sm font-medium" @click="loadAutomationTasks()">📋 List Tasks</button>
+        </div>
+        <div class="border-t border-gray-700 pt-4 mt-4">
+          <div class="grp-title">Task Actions</div>
+          <div class="flex gap-2">
+            <input class="inp flex-1" x-model="autoTasks.taskId" placeholder="Task ID" type="number">
+            <button class="btn-cyan px-3 py-1.5 rounded-lg text-xs font-medium" @click="automationAction('retry')" :disabled="!autoTasks.taskId">🔄 Retry</button>
+            <button class="btn-danger px-3 py-1.5 rounded-lg text-xs font-medium" @click="automationAction('cancel')" :disabled="!autoTasks.taskId">❌ Cancel</button>
+          </div>
+        </div>
+        <div class="log-area mt-3" x-text="autoTasks.log || 'No activity yet'"></div>
+      </div>
+    </div>
+
+    <!-- FILES & BACKUP -->
+    <div x-show="section==='files'" x-cloak class="p-6 space-y-4 overflow-y-auto flex-1 scrollbar-thin">
+      <div class="grp">
+        <div class="grp-title">Cloud Files</div>
+        <div class="flex gap-2 flex-wrap mb-4">
+          <button class="btn-primary px-4 py-2 rounded-lg text-sm font-medium" @click="loadCloudFiles()">📋 List Files</button>
+        </div>
+        <div class="border-t border-gray-700 pt-4 mt-4">
+          <div class="grp-title">Upload File via URL</div>
+          <div class="grid grid-cols-2 gap-4 mb-2">
+            <div>
+              <label class="lbl">Instance</label>
+              <select class="inp" x-model="filesMgr.padCode">
+                <option value="">Select instance...</option>
+                <template x-for="inst in instances" :key="inst.padCode">
+                  <option :value="inst.padCode" x-text="inst.padCode"></option>
+                </template>
+              </select>
+            </div>
+            <div>
+              <label class="lbl">File URL</label>
+              <input class="inp" x-model="filesMgr.fileUrl" placeholder="https://example.com/file.apk">
+            </div>
+          </div>
+          <button class="btn-green px-4 py-2 rounded-lg text-sm font-medium" @click="uploadFileUrl()" :disabled="!filesMgr.padCode||!filesMgr.fileUrl">📤 Upload</button>
+        </div>
+      </div>
+      <div class="grp">
+        <div class="grp-title">Backups</div>
+        <div class="flex gap-2 flex-wrap mb-4">
+          <button class="btn-ghost px-4 py-2 rounded-lg text-sm font-medium" @click="loadBackups()">📋 List Backups</button>
+          <button class="btn-ghost px-4 py-2 rounded-lg text-sm font-medium" @click="loadStorageInfo()">💾 Storage Info</button>
+        </div>
+      </div>
+      <div class="log-area" x-text="filesMgr.log || 'No activity yet'"></div>
+    </div>
+
+    <!-- ADVANCED -->
+    <div x-show="section==='advanced'" x-cloak class="p-6 space-y-4 overflow-y-auto flex-1 scrollbar-thin">
+      <div class="grp">
+        <div class="grp-title">ADB & Root</div>
+        <div class="grid grid-cols-2 gap-4 mb-4">
+          <div>
+            <label class="lbl">Instance</label>
+            <select class="inp" x-model="advanced.padCode">
+              <option value="">Select instance...</option>
+              <template x-for="inst in instances" :key="inst.padCode">
+                <option :value="inst.padCode" x-text="inst.padCode"></option>
+              </template>
+            </select>
+          </div>
+        </div>
+        <div class="flex gap-2 flex-wrap mb-4">
+          <button class="btn-primary px-4 py-2 rounded-lg text-sm font-medium" @click="advAction('enableAdb')" :disabled="!advanced.padCode">🔌 Enable ADB</button>
+          <button class="btn-secondary px-4 py-2 rounded-lg text-sm font-medium" @click="advAction('disableAdb')" :disabled="!advanced.padCode">🚫 Disable ADB</button>
+          <button class="btn-cyan px-4 py-2 rounded-lg text-sm font-medium" @click="advAction('adbInfo')" :disabled="!advanced.padCode">ℹ️ ADB Info</button>
+          <button class="btn-green px-4 py-2 rounded-lg text-sm font-medium" @click="advAction('enableRoot')" :disabled="!advanced.padCode">🔓 Enable Root</button>
+          <button class="btn-danger px-4 py-2 rounded-lg text-sm font-medium" @click="advAction('disableRoot')" :disabled="!advanced.padCode">🔒 Disable Root</button>
+        </div>
+      </div>
+      <div class="grp">
+        <div class="grp-title">Device Control</div>
+        <div class="flex gap-2 flex-wrap mb-4">
+          <button class="btn-secondary px-4 py-2 rounded-lg text-sm font-medium" @click="advAction('resetDevice')" :disabled="!advanced.padCode">♻️ Factory Reset</button>
+          <button class="btn-secondary px-4 py-2 rounded-lg text-sm font-medium" @click="advAction('newDevice')" :disabled="!advanced.padCode">🆕 One-Key New Device</button>
+          <button class="btn-secondary px-4 py-2 rounded-lg text-sm font-medium" @click="advAction('resetGaid')" :disabled="!advanced.padCode">🆔 Reset GAID</button>
+          <button class="btn-secondary px-4 py-2 rounded-lg text-sm font-medium" @click="advAction('stopStreaming')" :disabled="!advanced.padCode">📺 Stop Streaming</button>
+        </div>
+      </div>
+      <div class="grp">
+        <div class="grp-title">Bandwidth</div>
+        <div class="grid grid-cols-3 gap-4 mb-4">
+          <div>
+            <label class="lbl">Upload (KB/s, 0=unlimited)</label>
+            <input class="inp" type="number" x-model.number="advanced.upBandwidth" placeholder="0">
+          </div>
+          <div>
+            <label class="lbl">Download (KB/s, 0=unlimited)</label>
+            <input class="inp" type="number" x-model.number="advanced.downBandwidth" placeholder="0">
+          </div>
+          <div class="flex items-end">
+            <button class="btn-primary px-4 py-2 rounded-lg text-sm font-medium" @click="setBandwidth()" :disabled="!advanced.padCode">⚡ Set</button>
+          </div>
+        </div>
+      </div>
+      <div class="grp">
+        <div class="grp-title">Hide & Stealth</div>
+        <div class="flex gap-2 flex-wrap mb-4">
+          <div class="flex-1">
+            <label class="lbl">Package names (comma-separated)</label>
+            <input class="inp" x-model="advanced.hidePackages" placeholder="com.app1,com.app2">
+          </div>
+        </div>
+        <div class="flex gap-2 flex-wrap">
+          <button class="btn-ghost px-3 py-1.5 rounded-lg text-xs font-medium" @click="advAction('hideApps')" :disabled="!advanced.padCode">👁‍🗨 Hide Apps</button>
+          <button class="btn-ghost px-3 py-1.5 rounded-lg text-xs font-medium" @click="advAction('hideAccessibility')" :disabled="!advanced.padCode">♿ Hide Accessibility</button>
+          <button class="btn-ghost px-3 py-1.5 rounded-lg text-xs font-medium" @click="advAction('hideProcess')" :disabled="!advanced.padCode">🔒 Hide Process</button>
+          <button class="btn-ghost px-3 py-1.5 rounded-lg text-xs font-medium" @click="advAction('keepAlive')" :disabled="!advanced.padCode">💓 Keep Alive</button>
+        </div>
+      </div>
+      <div class="grp">
+        <div class="grp-title">SDK Token</div>
+        <div class="flex gap-2 flex-wrap">
+          <button class="btn-ghost px-4 py-2 rounded-lg text-sm font-medium" @click="advAction('getSdkToken')" :disabled="!advanced.padCode">🎫 Get Token</button>
+          <button class="btn-ghost px-4 py-2 rounded-lg text-sm font-medium" @click="advAction('clearSdkToken')" :disabled="!advanced.padCode">🗑 Clear Token</button>
+        </div>
+      </div>
+      <div class="grp">
+        <div class="grp-title">Media Injection</div>
+        <div class="grid grid-cols-2 gap-4 mb-2">
+          <div>
+            <label class="lbl">Audio/Video/Image URL</label>
+            <input class="inp" x-model="advanced.mediaUrl" placeholder="https://example.com/media.mp4">
+          </div>
+        </div>
+        <div class="flex gap-2 flex-wrap">
+          <button class="btn-ghost px-3 py-1.5 rounded-lg text-xs font-medium" @click="advAction('injectAudio')" :disabled="!advanced.padCode||!advanced.mediaUrl">🔊 Audio</button>
+          <button class="btn-ghost px-3 py-1.5 rounded-lg text-xs font-medium" @click="advAction('injectVideo')" :disabled="!advanced.padCode||!advanced.mediaUrl">📹 Video</button>
+          <button class="btn-ghost px-3 py-1.5 rounded-lg text-xs font-medium" @click="advAction('injectPicture')" :disabled="!advanced.padCode||!advanced.mediaUrl">🖼 Picture</button>
+        </div>
+      </div>
+      <div class="log-area" x-text="advanced.log || 'No activity yet'"></div>
+    </div>
+
     <!-- ═══════════════════════════════════════════════════════════════ -->
     <!-- SETTINGS -->
     <!-- ═══════════════════════════════════════════════════════════════ -->
@@ -681,6 +1013,14 @@ function vmosTitanApp() {
       { key: 'shell', label: 'Shell', icon: '⌨️', desc: 'Remote command execution' },
       { key: 'properties', label: 'Properties', icon: '📋', desc: 'Device fingerprints' },
       { key: 'screenshot', label: 'Screenshot', icon: '📷', desc: 'Capture device screen' },
+      { key: 'apps', label: 'App Manager', icon: '📦', desc: 'Install, uninstall & manage apps' },
+      { key: 'touch', label: 'Touch & Input', icon: '👆', desc: 'Simulate touch, swipe & text input' },
+      { key: 'proxy', label: 'Proxy & Network', icon: '🌐', desc: 'Dynamic & static proxy management' },
+      { key: 'cloud-phones', label: 'Cloud Phones', icon: '☁️', desc: 'Create & manage cloud phone instances' },
+      { key: 'email', label: 'Email Service', icon: '📧', desc: 'Email verification service' },
+      { key: 'automation', label: 'Automation', icon: '🤖', desc: 'TK automation tasks' },
+      { key: 'files', label: 'Files & Backup', icon: '💾', desc: 'Cloud files & backups' },
+      { key: 'advanced', label: 'Advanced', icon: '🔧', desc: 'ADB, root, bandwidth & more' },
       { key: 'settings', label: 'Settings', icon: '⚙️', desc: 'API credentials & config' },
     ],
     
@@ -745,6 +1085,30 @@ function vmosTitanApp() {
     
     // Settings
     settings: { vmosAk: '', vmosSk: '', saving: false, saved: false },
+    
+    // Apps
+    apps: { padCode: '', packageName: '', appUrl: '', log: '' },
+    
+    // Touch
+    touch: { padCode: '', x: 500, y: 800, text: '', log: '' },
+    
+    // Proxy Manager
+    proxyMgr: { padCode: '', proxyUrl: '', log: '' },
+    
+    // Cloud Phones
+    cloudPhones: { padCode: '', log: '' },
+    
+    // Email Service
+    emailSvc: { orderId: '', log: '' },
+    
+    // Automation
+    autoTasks: { taskId: '', log: '' },
+    
+    // Files
+    filesMgr: { padCode: '', fileUrl: '', log: '' },
+    
+    // Advanced
+    advanced: { padCode: '', upBandwidth: 0, downBandwidth: 0, hidePackages: '', mediaUrl: '', log: '' },
     
     get currentNav() {
       return this.navItems.find(n => n.key === this.section);
@@ -1098,6 +1462,383 @@ function vmosTitanApp() {
       this.settings.saving = false;
     },
     
+    // ─── App Manager ─────────────────────────────────────────────────
+    async appAction(action) {
+      if (!this.apps.padCode || !this.apps.packageName) return;
+      try {
+        const r = await this.api(`/vmos/apps/${action}`, {
+          method: 'POST',
+          body: JSON.stringify({ padCodes: [this.apps.padCode], packageName: this.apps.packageName })
+        });
+        this.apps.log += `[${new Date().toLocaleTimeString()}] ${action}: ${r.ok ? 'OK' : 'FAIL'}\n`;
+      } catch (e) { this.apps.log += `Error: ${e.message}\n`; }
+    },
+    async installAppUrl() {
+      if (!this.apps.padCode || !this.apps.appUrl) return;
+      try {
+        const r = await this.api('/vmos/apps/upload-url', {
+          method: 'POST',
+          body: JSON.stringify({ padCodes: [this.apps.padCode], fileUrl: this.apps.appUrl })
+        });
+        this.apps.log += `[${new Date().toLocaleTimeString()}] Install: ${r.ok ? 'OK' : 'FAIL'}\n`;
+      } catch (e) { this.apps.log += `Error: ${e.message}\n`; }
+    },
+    async listInstalledApps() {
+      if (!this.apps.padCode) return;
+      try {
+        const r = await this.api('/vmos/instances/installed-apps', {
+          method: 'POST',
+          body: JSON.stringify({ padCodes: [this.apps.padCode] })
+        });
+        this.apps.log += `[${new Date().toLocaleTimeString()}] Apps: ${JSON.stringify(r.data, null, 2)}\n`;
+      } catch (e) { this.apps.log += `Error: ${e.message}\n`; }
+    },
+
+    // ─── Touch & Input ───────────────────────────────────────────────
+    async simulateClick() {
+      if (!this.touch.padCode) return;
+      try {
+        const r = await this.api('/vmos/instances/click', {
+          method: 'POST',
+          body: JSON.stringify({ padCode: this.touch.padCode, x: this.touch.x, y: this.touch.y })
+        });
+        this.touch.log += `[${new Date().toLocaleTimeString()}] Click (${this.touch.x},${this.touch.y}): ${r.ok ? 'OK' : 'FAIL'}\n`;
+      } catch (e) { this.touch.log += `Error: ${e.message}\n`; }
+    },
+    async simulateSwipe(direction) {
+      if (!this.touch.padCode) return;
+      try {
+        const r = await this.api('/vmos/instances/swipe', {
+          method: 'POST',
+          body: JSON.stringify({ padCode: this.touch.padCode, direction })
+        });
+        this.touch.log += `[${new Date().toLocaleTimeString()}] Swipe ${direction}: ${r.ok ? 'OK' : 'FAIL'}\n`;
+      } catch (e) { this.touch.log += `Error: ${e.message}\n`; }
+    },
+    async inputText() {
+      if (!this.touch.padCode || !this.touch.text) return;
+      try {
+        const r = await this.api('/vmos/instances/input-text', {
+          method: 'POST',
+          body: JSON.stringify({ padCode: this.touch.padCode, text: this.touch.text })
+        });
+        this.touch.log += `[${new Date().toLocaleTimeString()}] Input "${this.touch.text.slice(0,20)}": ${r.ok ? 'OK' : 'FAIL'}\n`;
+        this.touch.text = '';
+      } catch (e) { this.touch.log += `Error: ${e.message}\n`; }
+    },
+    async cleanHome() {
+      if (!this.touch.padCode) return;
+      try {
+        const r = await this.api('/vmos/instances/clean-home', {
+          method: 'POST',
+          body: JSON.stringify({ padCodes: [this.touch.padCode] })
+        });
+        this.touch.log += `[${new Date().toLocaleTimeString()}] Clean home: ${r.ok ? 'OK' : 'FAIL'}\n`;
+      } catch (e) { this.touch.log += `Error: ${e.message}\n`; }
+    },
+
+    // ─── Proxy & Network ─────────────────────────────────────────────
+    async setInstanceProxy() {
+      if (!this.proxyMgr.padCode || !this.proxyMgr.proxyUrl) return;
+      try {
+        const u = new URL(this.proxyMgr.proxyUrl);
+        const r = await this.api('/vmos/instances/proxy', {
+          method: 'POST',
+          body: JSON.stringify({
+            padCodes: [this.proxyMgr.padCode],
+            proxyType: 'proxy',
+            proxyName: u.protocol.includes('socks') ? 'socks5' : 'http-relay',
+            proxyIp: u.hostname,
+            proxyPort: parseInt(u.port) || 1080,
+            ...(u.username ? { proxyUser: u.username } : {}),
+            ...(u.password ? { proxyPassword: u.password } : {}),
+          })
+        });
+        this.proxyMgr.log += `[${new Date().toLocaleTimeString()}] Set proxy: ${r.ok ? 'OK' : 'FAIL'}\n`;
+      } catch (e) { this.proxyMgr.log += `Error: ${e.message}\n`; }
+    },
+    async queryProxyInfo() {
+      if (!this.proxyMgr.padCode) return;
+      try {
+        const r = await this.api('/vmos/instances/proxy-info', {
+          method: 'POST',
+          body: JSON.stringify({ padCodes: [this.proxyMgr.padCode] })
+        });
+        this.proxyMgr.log += `[${new Date().toLocaleTimeString()}] Proxy info: ${JSON.stringify(r.data)}\n`;
+      } catch (e) { this.proxyMgr.log += `Error: ${e.message}\n`; }
+    },
+    async checkIp() {
+      try {
+        const r = await this.api('/vmos/check-ip', { method: 'POST', body: JSON.stringify({ ip: '' }) });
+        this.proxyMgr.log += `[${new Date().toLocaleTimeString()}] IP check: ${JSON.stringify(r.data)}\n`;
+      } catch (e) { this.proxyMgr.log += `Error: ${e.message}\n`; }
+    },
+    async setSmartIp() {
+      if (!this.proxyMgr.padCode) return;
+      try {
+        const r = await this.api('/vmos/instances/smart-ip', {
+          method: 'POST',
+          body: JSON.stringify({ padCodes: [this.proxyMgr.padCode] })
+        });
+        this.proxyMgr.log += `[${new Date().toLocaleTimeString()}] Smart IP: ${r.ok ? 'OK' : 'FAIL'}\n`;
+      } catch (e) { this.proxyMgr.log += `Error: ${e.message}\n`; }
+    },
+    async cancelSmartIp() {
+      if (!this.proxyMgr.padCode) return;
+      try {
+        const r = await this.api('/vmos/instances/cancel-smart-ip', {
+          method: 'POST',
+          body: JSON.stringify({ padCodes: [this.proxyMgr.padCode] })
+        });
+        this.proxyMgr.log += `[${new Date().toLocaleTimeString()}] Cancel Smart IP: ${r.ok ? 'OK' : 'FAIL'}\n`;
+      } catch (e) { this.proxyMgr.log += `Error: ${e.message}\n`; }
+    },
+    async loadDynamicProxies() {
+      try {
+        const r = await this.api('/vmos/proxy/dynamic/list');
+        this.proxyMgr.log += `[${new Date().toLocaleTimeString()}] Dynamic proxies: ${JSON.stringify(r.data, null, 2)}\n`;
+      } catch (e) { this.proxyMgr.log += `Error: ${e.message}\n`; }
+    },
+    async loadProxyBalance() {
+      try {
+        const r = await this.api('/vmos/proxy/dynamic/balance');
+        this.proxyMgr.log += `[${new Date().toLocaleTimeString()}] Balance: ${JSON.stringify(r.data)}\n`;
+      } catch (e) { this.proxyMgr.log += `Error: ${e.message}\n`; }
+    },
+    async loadProxyProducts() {
+      try {
+        const r = await this.api('/vmos/proxy/dynamic/products');
+        this.proxyMgr.log += `[${new Date().toLocaleTimeString()}] Products: ${JSON.stringify(r.data, null, 2)}\n`;
+      } catch (e) { this.proxyMgr.log += `Error: ${e.message}\n`; }
+    },
+    async loadProxyRegions() {
+      try {
+        const r = await this.api('/vmos/proxy/dynamic/regions');
+        this.proxyMgr.log += `[${new Date().toLocaleTimeString()}] Regions: ${JSON.stringify(r.data, null, 2)}\n`;
+      } catch (e) { this.proxyMgr.log += `Error: ${e.message}\n`; }
+    },
+    async loadStaticProxies() {
+      try {
+        const r = await this.api('/vmos/proxy/static/list', { method: 'POST', body: JSON.stringify({ page: 1, rows: 20 }) });
+        this.proxyMgr.log += `[${new Date().toLocaleTimeString()}] Static proxies: ${JSON.stringify(r.data, null, 2)}\n`;
+      } catch (e) { this.proxyMgr.log += `Error: ${e.message}\n`; }
+    },
+    async loadStaticProducts() {
+      try {
+        const r = await this.api('/vmos/proxy/static/products');
+        this.proxyMgr.log += `[${new Date().toLocaleTimeString()}] Static products: ${JSON.stringify(r.data, null, 2)}\n`;
+      } catch (e) { this.proxyMgr.log += `Error: ${e.message}\n`; }
+    },
+    async loadStaticRegions() {
+      try {
+        const r = await this.api('/vmos/proxy/static/regions');
+        this.proxyMgr.log += `[${new Date().toLocaleTimeString()}] Static regions: ${JSON.stringify(r.data, null, 2)}\n`;
+      } catch (e) { this.proxyMgr.log += `Error: ${e.message}\n`; }
+    },
+
+    // ─── Cloud Phones ────────────────────────────────────────────────
+    async loadCloudPhones() {
+      try {
+        const r = await this.api('/vmos/cloud-phones', { method: 'POST', body: JSON.stringify({ page: 1, rows: 20 }) });
+        this.cloudPhones.log += `[${new Date().toLocaleTimeString()}] Cloud phones: ${JSON.stringify(r.data, null, 2)}\n`;
+      } catch (e) { this.cloudPhones.log += `Error: ${e.message}\n`; }
+    },
+    async loadSkuPackages() {
+      try {
+        const r = await this.api('/vmos/cloud-phones/sku');
+        this.cloudPhones.log += `[${new Date().toLocaleTimeString()}] SKU: ${JSON.stringify(r.data, null, 2)}\n`;
+      } catch (e) { this.cloudPhones.log += `Error: ${e.message}\n`; }
+    },
+    async loadImageVersions() {
+      try {
+        const r = await this.api('/vmos/cloud-phones/images', { method: 'POST', body: JSON.stringify({}) });
+        this.cloudPhones.log += `[${new Date().toLocaleTimeString()}] Images: ${JSON.stringify(r.data, null, 2)}\n`;
+      } catch (e) { this.cloudPhones.log += `Error: ${e.message}\n`; }
+    },
+    async loadDeviceTemplates() {
+      try {
+        const r = await this.api('/vmos/templates', { method: 'POST', body: JSON.stringify({ page: 1, rows: 20 }) });
+        this.cloudPhones.log += `[${new Date().toLocaleTimeString()}] Templates: ${JSON.stringify(r.data, null, 2)}\n`;
+      } catch (e) { this.cloudPhones.log += `Error: ${e.message}\n`; }
+    },
+    async getCloudPhoneInfo() {
+      if (!this.cloudPhones.padCode) return;
+      try {
+        const r = await this.api('/vmos/cloud-phones/info', {
+          method: 'POST',
+          body: JSON.stringify({ padCode: this.cloudPhones.padCode })
+        });
+        this.cloudPhones.log += `[${new Date().toLocaleTimeString()}] Info: ${JSON.stringify(r.data, null, 2)}\n`;
+      } catch (e) { this.cloudPhones.log += `Error: ${e.message}\n`; }
+    },
+    async timingAction(action) {
+      if (!this.cloudPhones.padCode) return;
+      const map = { on: 'timing-on', off: 'timing-off', delete: 'timing-delete' };
+      try {
+        const r = await this.api(`/vmos/cloud-phones/${map[action]}`, {
+          method: 'POST',
+          body: JSON.stringify({ padCodes: [this.cloudPhones.padCode] })
+        });
+        this.cloudPhones.log += `[${new Date().toLocaleTimeString()}] Timing ${action}: ${r.ok ? 'OK' : 'FAIL'}\n`;
+      } catch (e) { this.cloudPhones.log += `Error: ${e.message}\n`; }
+    },
+
+    // ─── Email Service ───────────────────────────────────────────────
+    async loadEmailServices() {
+      try {
+        const r = await this.api('/vmos/email/services');
+        this.emailSvc.log += `[${new Date().toLocaleTimeString()}] Services: ${JSON.stringify(r.data, null, 2)}\n`;
+      } catch (e) { this.emailSvc.log += `Error: ${e.message}\n`; }
+    },
+    async loadEmailTypes() {
+      try {
+        const r = await this.api('/vmos/email/types');
+        this.emailSvc.log += `[${new Date().toLocaleTimeString()}] Types: ${JSON.stringify(r.data, null, 2)}\n`;
+      } catch (e) { this.emailSvc.log += `Error: ${e.message}\n`; }
+    },
+    async loadPurchasedEmails() {
+      try {
+        const r = await this.api('/vmos/email/purchased?page=1&size=20');
+        this.emailSvc.log += `[${new Date().toLocaleTimeString()}] Purchased: ${JSON.stringify(r.data, null, 2)}\n`;
+      } catch (e) { this.emailSvc.log += `Error: ${e.message}\n`; }
+    },
+    async getEmailCode() {
+      if (!this.emailSvc.orderId) return;
+      try {
+        const r = await this.api(`/vmos/email/code?orderId=${this.emailSvc.orderId}`);
+        this.emailSvc.log += `[${new Date().toLocaleTimeString()}] Code: ${JSON.stringify(r.data)}\n`;
+      } catch (e) { this.emailSvc.log += `Error: ${e.message}\n`; }
+    },
+
+    // ─── Automation ──────────────────────────────────────────────────
+    async loadAutomationTasks() {
+      try {
+        const r = await this.api('/vmos/automation/tasks', { method: 'POST', body: JSON.stringify({ page: 1, rows: 20 }) });
+        this.autoTasks.log += `[${new Date().toLocaleTimeString()}] Tasks: ${JSON.stringify(r.data, null, 2)}\n`;
+      } catch (e) { this.autoTasks.log += `Error: ${e.message}\n`; }
+    },
+    async automationAction(action) {
+      if (!this.autoTasks.taskId) return;
+      try {
+        const r = await this.api(`/vmos/automation/${action}`, {
+          method: 'POST',
+          body: JSON.stringify({ taskId: parseInt(this.autoTasks.taskId) })
+        });
+        this.autoTasks.log += `[${new Date().toLocaleTimeString()}] ${action}: ${r.ok ? 'OK' : 'FAIL'}\n`;
+      } catch (e) { this.autoTasks.log += `Error: ${e.message}\n`; }
+    },
+
+    // ─── Files & Backup ──────────────────────────────────────────────
+    async loadCloudFiles() {
+      try {
+        const r = await this.api('/vmos/files', { method: 'POST', body: JSON.stringify({ page: 1, rows: 20 }) });
+        this.filesMgr.log += `[${new Date().toLocaleTimeString()}] Files: ${JSON.stringify(r.data, null, 2)}\n`;
+      } catch (e) { this.filesMgr.log += `Error: ${e.message}\n`; }
+    },
+    async uploadFileUrl() {
+      if (!this.filesMgr.padCode || !this.filesMgr.fileUrl) return;
+      try {
+        const r = await this.api('/vmos/apps/upload-url', {
+          method: 'POST',
+          body: JSON.stringify({ padCodes: [this.filesMgr.padCode], fileUrl: this.filesMgr.fileUrl })
+        });
+        this.filesMgr.log += `[${new Date().toLocaleTimeString()}] Upload: ${r.ok ? 'OK' : 'FAIL'}\n`;
+      } catch (e) { this.filesMgr.log += `Error: ${e.message}\n`; }
+    },
+    async loadBackups() {
+      try {
+        const r = await this.api('/vmos/backups', { method: 'POST', body: JSON.stringify({ page: 1, rows: 20 }) });
+        this.filesMgr.log += `[${new Date().toLocaleTimeString()}] Backups: ${JSON.stringify(r.data, null, 2)}\n`;
+      } catch (e) { this.filesMgr.log += `Error: ${e.message}\n`; }
+    },
+    async loadStorageInfo() {
+      try {
+        const r = await this.api('/vmos/storage/info');
+        this.filesMgr.log += `[${new Date().toLocaleTimeString()}] Storage: ${JSON.stringify(r.data)}\n`;
+      } catch (e) { this.filesMgr.log += `Error: ${e.message}\n`; }
+    },
+
+    // ─── Advanced ────────────────────────────────────────────────────
+    async advAction(action) {
+      if (!this.advanced.padCode) return;
+      const pc = this.advanced.padCode;
+      const pcs = [pc];
+      const pkgs = (this.advanced.hidePackages || '').split(',').map(s => s.trim()).filter(Boolean);
+      try {
+        let r;
+        switch (action) {
+          case 'enableAdb':
+            r = await this.api('/vmos/instances/adb', { method: 'POST', body: JSON.stringify({ padCodes: pcs, enable: true }) });
+            break;
+          case 'disableAdb':
+            r = await this.api('/vmos/instances/adb', { method: 'POST', body: JSON.stringify({ padCodes: pcs, enable: false }) });
+            break;
+          case 'adbInfo':
+            r = await this.api('/vmos/instances/adb-info', { method: 'POST', body: JSON.stringify({ padCode: pc, enable: true }) });
+            break;
+          case 'enableRoot':
+            r = await this.api('/vmos/instances/root', { method: 'POST', body: JSON.stringify({ padCodes: pcs, enable: true }) });
+            break;
+          case 'disableRoot':
+            r = await this.api('/vmos/instances/root', { method: 'POST', body: JSON.stringify({ padCodes: pcs, enable: false }) });
+            break;
+          case 'resetDevice':
+            r = await this.api('/vmos/instances/reset', { method: 'POST', body: JSON.stringify({ padCodes: pcs }) });
+            break;
+          case 'newDevice':
+            r = await this.api('/vmos/instances/new-device', { method: 'POST', body: JSON.stringify({ padCodes: pcs }) });
+            break;
+          case 'resetGaid':
+            r = await this.api('/vmos/instances/reset-gaid', { method: 'POST', body: JSON.stringify({ padCodes: pcs }) });
+            break;
+          case 'stopStreaming':
+            r = await this.api('/vmos/instances/stop-streaming', { method: 'POST', body: JSON.stringify({ padCodes: pcs }) });
+            break;
+          case 'hideApps':
+            r = await this.api('/vmos/instances/hide-apps', { method: 'POST', body: JSON.stringify({ padCodes: pcs, packageNames: pkgs }) });
+            break;
+          case 'hideAccessibility':
+            r = await this.api('/vmos/instances/hide-accessibility', { method: 'POST', body: JSON.stringify({ padCodes: pcs, packageNames: pkgs }) });
+            break;
+          case 'hideProcess':
+            r = await this.api('/vmos/instances/toggle-process', { method: 'POST', body: JSON.stringify({ padCodes: pcs, packageNames: pkgs, hide: true }) });
+            break;
+          case 'keepAlive':
+            r = await this.api('/vmos/instances/keep-alive', { method: 'POST', body: JSON.stringify({ padCodes: pcs, packageNames: pkgs }) });
+            break;
+          case 'getSdkToken':
+            r = await this.api('/vmos/sdk-token/get', { method: 'POST', body: JSON.stringify({ padCode: pc }) });
+            break;
+          case 'clearSdkToken':
+            r = await this.api('/vmos/sdk-token/clear', { method: 'POST', body: JSON.stringify({ padCode: pc }) });
+            break;
+          case 'injectAudio':
+            r = await this.api('/vmos/instances/inject-audio', { method: 'POST', body: JSON.stringify({ padCode: pc, audioUrl: this.advanced.mediaUrl }) });
+            break;
+          case 'injectVideo':
+            r = await this.api('/vmos/instances/video-inject', { method: 'POST', body: JSON.stringify({ padCode: pc, videoUrl: this.advanced.mediaUrl }) });
+            break;
+          case 'injectPicture':
+            r = await this.api('/vmos/instances/inject-picture', { method: 'POST', body: JSON.stringify({ padCode: pc, imageUrl: this.advanced.mediaUrl }) });
+            break;
+          default:
+            this.advanced.log += `Unknown action: ${action}\n`;
+            return;
+        }
+        this.advanced.log += `[${new Date().toLocaleTimeString()}] ${action}: ${r.ok ? 'OK' : 'FAIL'} ${r.data ? JSON.stringify(r.data).slice(0,200) : ''}\n`;
+      } catch (e) { this.advanced.log += `Error: ${e.message}\n`; }
+    },
+    async setBandwidth() {
+      if (!this.advanced.padCode) return;
+      try {
+        const r = await this.api('/vmos/instances/bandwidth', {
+          method: 'POST',
+          body: JSON.stringify({ padCodes: [this.advanced.padCode], upBandwidth: this.advanced.upBandwidth, downBandwidth: this.advanced.downBandwidth })
+        });
+        this.advanced.log += `[${new Date().toLocaleTimeString()}] Bandwidth: ${r.ok ? 'OK' : 'FAIL'}\n`;
+      } catch (e) { this.advanced.log += `Error: ${e.message}\n`; }
+    },
+
     async restartServer() {
       try {
         if (window.vmosAPI?.restartServer) {
