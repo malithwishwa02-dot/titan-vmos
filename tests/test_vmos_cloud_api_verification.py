@@ -371,6 +371,26 @@ class TestInstanceManagement:
             assert result["data"]["taskStatus"] == 3
 
     @pytest.mark.asyncio
+    async def test_sync_cmd_custom_timeout(self, mock_client, mock_http_success):
+        """syncCmd should support custom timeout parameter (E-06 fix)."""
+        response = mock_http_success(data={
+            "taskStatus": 3,
+            "errorMsg": "large_output_here",
+            "taskResult": "success"
+        })
+        with patch.object(mock_client, "_post", new_callable=AsyncMock, return_value=response) as mock_post:
+            result = await mock_client.sync_cmd(
+                "PAD001",
+                "some_long_running_command",
+                timeout_sec=60
+            )
+            assert result["code"] == 200
+            # Verify timeout was passed to _post
+            mock_post.assert_called_once()
+            call_kwargs = mock_post.call_args[1]
+            assert call_kwargs.get("timeout_sec") == 60
+
+    @pytest.mark.asyncio
     async def test_async_adb_cmd(self, mock_client, mock_http_success):
         """asyncCmd endpoint should execute ADB commands asynchronously."""
         response = mock_http_success(data=[{"taskId": 12345}])
