@@ -108,17 +108,19 @@ function _vmosSign(bodyJson, ak, sk) {
   };
 }
 
-function vmosPost(apiPath, data, ak, sk) {
+function vmosPost(apiPath, data, ak, sk, timeoutSec) {
   return new Promise((resolve, reject) => {
     const bodyJson = JSON.stringify(data || {});
     const headers  = _vmosSign(bodyJson, ak, sk);
     const buf      = Buffer.from(bodyJson, 'utf8');
+    // E-06 fix: Allow custom timeout (default 30s, max 120s for long operations)
+    const timeoutMs = Math.min(Math.max((timeoutSec || 30) * 1000, 5000), 120000);
     const req = https.request({
       hostname: VMOS_HOST,
       path: apiPath,
       method: 'POST',
       headers: { ...headers, 'content-length': buf.length },
-      timeout: 30000,
+      timeout: timeoutMs,
     }, res => {
       let raw = '';
       res.on('data', c => raw += c);
@@ -580,11 +582,13 @@ const COUNTRY_DEFAULTS = {
 };
 
 // Execute ADB shell command via syncCmd, return stdout
-async function _sh(padCode, cmd, ak, sk) {
+// E-06 fix: Accept timeoutSec parameter (default 30s)
+async function _sh(padCode, cmd, ak, sk, timeoutSec) {
   try {
+    const timeout = timeoutSec || 30;
     const resp = await _withRetry(() => vmosPost('/vcpcloud/api/padApi/syncCmd', {
       padCode, scriptContent: cmd,
-    }, ak, sk), 2, 'syncCmd');
+    }, ak, sk, timeout), 2, 'syncCmd');
     if (resp.code !== 200) return '';
     const items = Array.isArray(resp.data) ? resp.data : [resp.data];
     const item = items[0] || {};
@@ -594,8 +598,9 @@ async function _sh(padCode, cmd, ak, sk) {
   } catch (_) { return ''; }
 }
 
-async function _shOk(padCode, cmd, marker, ak, sk) {
-  const result = await _sh(padCode, cmd, ak, sk);
+// E-06 fix: Forward timeoutSec to _sh
+async function _shOk(padCode, cmd, marker, ak, sk, timeoutSec) {
+  const result = await _sh(padCode, cmd, ak, sk, timeoutSec);
   return (result || '').includes(marker);
 }
 
@@ -713,6 +718,32 @@ function _genCellInfo(mcc, mnc) {
   return `9,${mcc},${mnc},${tac},${cellid},${narfcn},${pci}`;
 }
 
+// Generate Luhn-valid DPAN using real TSP BIN ranges per spec
+function _genDpan(cardNetwork) {
+  const bins = {
+    visa:       ['489537','489538','489539','440066','440067'],
+    mastercard: ['530060','530061','530062','530063','530064','530065'],
+    amex:       ['374800','374801'],
+    discover:   ['601156','601157'],
+  };
+  const len = cardNetwork === 'amex' ? 15 : 16;
+  const binArr = bins[cardNetwork] || bins.visa;
+  const bin = binArr[Math.floor(Math.random() * binArr.length)];
+  const bodyLen = len - bin.length - 1;
+  let body = '';
+  for (let i = 0; i < bodyLen; i++) body += Math.floor(Math.random() * 10);
+  const partial = bin + body;
+  const digits = partial.split('').map(Number);
+  let total = 0;
+  for (let i = digits.length - 1; i >= 0; i--) {
+    let d = digits[i];
+    const pos = digits.length - 1 - i;
+    if (pos % 2 === 0) { d *= 2; if (d > 9) d -= 9; }
+    total += d;
+  }
+  return partial + String((10 - (total % 10)) % 10);
+}
+
 // Genesis pipeline — full 11-phase implementation mirroring genesis_engine.py
 async function _runGenesisJob(jobId, ak, sk) {
   const job = _genesisJobs.get(jobId);
@@ -799,8 +830,12 @@ async function _runGenesisJob(jobId, ak, sk) {
             if (s === 10 || s === '10') { log(`✓ Device booted (status=${s}, ${rp * 5}s)`); padStatus = s; break; }
             if (rp % 12 === 0 && rp > 0) {
               log(`Phase 0 — Still waiting: status=${s} (${rp * 5}s)...`);
-              // At 2min, try restart again in case it helps
-              if (rp === 24) await vpost('/vcpcloud/api/padApi/restart', { padCodes: pads }).catch(() => {});
+              // E-09 fix: Only restart if device is stopped/hung (14 or 12), NOT if it's mid-boot (11)
+              // Restarting from status=11 causes 11↔14 boot loop
+              if (rp === 24 && s !== 11 && s !== '11') {
+                log(`Phase 0 — Sending restart (status=${s}, not mid-boot)`);
+                await vpost('/vcpcloud/api/padApi/restart', { padCodes: pads }).catch(() => {});
+              }
             }
           } catch (_) {}
         }
@@ -1851,22 +1886,35 @@ async function _runGenesisJob(jobId, ak, sk) {
       const holder = sanitizeSQL(cfg.cc_holder || profile.firstName + ' ' + profile.lastName, 100);
       const last4 = hasCard ? cc.slice(-4) : String(Math.floor(1000 + Math.random() * 8999));
       const network = hasCard ? (cc[0] === '5' ? 'mastercard' : cc[0] === '3' ? 'amex' : cc[0] === '6' ? 'discover' : 'visa') : 'visa';
+      const networkCardId = {visa:3,mastercard:4,amex:5,discover:6}[network] || 3;  // spec: 3=Visa,4=MC,5=Amex,6=Discover
       const networkId = {visa:1,mastercard:2,amex:3,discover:4}[network] || 1;
-      const dpan = '5' + Array.from({length:14}, () => Math.floor(Math.random()*10)).join('');
-      const tokenRef = crypto.randomBytes(16).toString('hex');
+      const dpan = _genDpan(network);   // Luhn-valid DPAN with real TSP BIN ranges
+      const lukHex = crypto.randomBytes(16).toString('hex');  // simulated LUK
+      const tokenRef = 'DNITHE' + crypto.randomBytes(6).toString('hex').toUpperCase();  // "DNITHE{12hex}"
+      // UUID4 fundingSourceId — shared identity key across all 4 payment targets
+      const fsBuf = crypto.randomBytes(16);
+      fsBuf[6] = (fsBuf[6] & 0x0f) | 0x40;  // version 4
+      fsBuf[8] = (fsBuf[8] & 0x3f) | 0x80;  // variant bits
+      const fundingSourceId = fsBuf.toString('hex').replace(/(.{8})(.{4})(.{4})(.{4})(.{12})/, '$1-$2-$3-$4-$5');
       const display = `${network.toUpperCase()} ****${last4}`;
       const chromeDir7 = '/data/data/com.android.chrome/app_chrome/Default';
       const gmsDir7 = '/data/data/com.google.android.gms';
+      const walletNfcDir = '/data/data/com.google.android.apps.walletnfcrel';
       const safeEmail7 = sanitizeSQL(cfg.google_email || profile.email, 254);
+      const networkBrand = {visa:'VISA',mastercard:'MASTERCARD',amex:'AMEX',discover:'DISCOVER'}[network] || 'VISA';
       const issuerName = network === 'visa' ? 'Visa Inc.' : network === 'mastercard' ? 'Mastercard' : network === 'amex' ? 'American Express' : 'Discover';
       const artUrl = `https://payments.google.com/payments/apis-secure/get_card_art?instrument_id=1&card_network=${networkId}`;
 
       // 7a. Chrome Web Data credit_cards (only when real card provided)
       if (hasCard) {
         const cardGuid = crypto.randomBytes(16).toString('hex');
+        const autofillGuid7 = crypto.randomBytes(16).toString('hex');
+        const useCount = Math.floor(3 + Math.random() * 6);
+        const useDateMs = (now - Math.floor(Math.random() * 7 * 86400)) * 1000;
+        const dateModBackdated = now - Math.floor(ageDays * 0.7 * 86400);
         const creditCardSql = [
-          "CREATE TABLE IF NOT EXISTS credit_cards (guid TEXT PRIMARY KEY, name_on_card TEXT, card_number_encrypted BLOB, expiration_month INTEGER, expiration_year INTEGER, date_modified INTEGER, origin TEXT, billing_address_id TEXT, nickname TEXT);",
-          `INSERT OR REPLACE INTO credit_cards (guid,name_on_card,card_number_encrypted,expiration_month,expiration_year,date_modified,origin,billing_address_id,nickname) VALUES('${cardGuid}','${holder}',X'${Buffer.from(cc).toString('hex')}',${expMonth},${expYear},${now},'https://pay.google.com','','${network.toUpperCase()}');`,
+          "CREATE TABLE IF NOT EXISTS credit_cards (guid TEXT PRIMARY KEY, name_on_card TEXT, card_number_encrypted BLOB, expiration_month INTEGER, expiration_year INTEGER, date_modified INTEGER, origin TEXT, billing_address_id TEXT, nickname TEXT, use_count INTEGER DEFAULT 0, use_date INTEGER DEFAULT 0);",
+          `INSERT OR REPLACE INTO credit_cards (guid,name_on_card,card_number_encrypted,expiration_month,expiration_year,date_modified,origin,billing_address_id,nickname,use_count,use_date) VALUES('${cardGuid}','${holder}','',${expMonth},${expYear},${dateModBackdated},'https://pay.google.com','${autofillGuid7}','${networkBrand} \u2022\u2022\u2022\u2022 ${last4}',${useCount},${useDateMs});`,
         ].join('\n');
         const combinedWebDataSql = _webDataSql ? _webDataSql + '\n' + creditCardSql : creditCardSql;
         const webdataOk = await createDb(`${chromeDir7}/Web Data`, combinedWebDataSql, chromeDir7);
@@ -1875,60 +1923,103 @@ async function _runGenesisJob(jobId, ak, sk) {
         log('Phase 7a — Chrome credit_cards: skipped (no card)');
       }
 
-      // 7b+7g. tapandpay.db — token_metadata + transaction_log (ALWAYS created)
-      const tokenMetadataSql = [
-        "CREATE TABLE IF NOT EXISTS token_metadata (id INTEGER PRIMARY KEY, dpan TEXT, last_four TEXT, network INTEGER, token_ref TEXT, display_name TEXT, is_default INTEGER, card_color INTEGER, token_state INTEGER, issuer_name TEXT, art_url TEXT, is_fido_enrolled INTEGER DEFAULT 0, pan_last_four TEXT, token_service_provider TEXT, wallet_account_id TEXT);",
-        `INSERT OR REPLACE INTO token_metadata (id,dpan,last_four,network,token_ref,display_name,is_default,card_color,token_state,issuer_name,art_url,is_fido_enrolled,pan_last_four,token_service_provider,wallet_account_id) VALUES(1,'${dpan}','${last4}',${networkId},'${tokenRef}','${display}',1,-12285185,3,'${issuerName}','${artUrl}',0,'${last4}','${issuerName}','wallet_${crypto.randomBytes(8).toString('hex')}');`,
+      // 7b+7g. tapandpay.db — full 5-table spec-compliant schema (ALWAYS created)
+      // Tables: tokens (24-col), token_metadata, emv_metadata, session_keys, transaction_history
+      const cardAddedTs = (now - Math.floor(ageDays * 0.8 * 86400)) * 1000;
+      const lastUsedTs  = (now - Math.floor(Math.random() * 7 * 86400)) * 1000;
+      const iadHex = '0A' + lukHex.slice(0, 8).toUpperCase();  // IAD: 0A + first 4 bytes of LUK
+      const atcCounter = Math.floor(Math.random() * 50);
+      const maxTxns = Math.floor(5 + Math.random() * 6);       // 5-10
+
+      const tokensSql = [
+        // tokens — 24-column primary token record
+        `CREATE TABLE IF NOT EXISTS tokens (id INTEGER PRIMARY KEY, dpan TEXT UNIQUE, fpan_last4 TEXT, card_network INTEGER, funding_source_id TEXT, token_reference_id TEXT, is_default INTEGER DEFAULT 1, status INTEGER DEFAULT 1, token_service_provider INTEGER DEFAULT 1, token_type TEXT DEFAULT 'CLOUD', created_timestamp INTEGER, last_used_timestamp INTEGER, display_name TEXT, issuer_name TEXT, art_url TEXT, expiration_month INTEGER, expiration_year INTEGER, billing_name TEXT, wallet_account_id TEXT, device_fp TEXT, provisioned_by TEXT DEFAULT 'GOOGLE_PAY', token_requestor_id TEXT, pan_unique_reference TEXT, is_fido_enrolled INTEGER DEFAULT 0);`,
+        `INSERT OR REPLACE INTO tokens (id,dpan,fpan_last4,card_network,funding_source_id,token_reference_id,is_default,status,token_service_provider,token_type,created_timestamp,last_used_timestamp,display_name,issuer_name,art_url,expiration_month,expiration_year,billing_name,wallet_account_id,device_fp,provisioned_by,token_requestor_id,pan_unique_reference,is_fido_enrolled) VALUES(1,'${dpan}','${last4}',${networkCardId},'${fundingSourceId}','${tokenRef}',1,1,1,'CLOUD',${cardAddedTs},${lastUsedTs},'${display}','${issuerName}','${artUrl}',${expMonth},${expYear},'${holder}','wallet_${crypto.randomBytes(8).toString('hex')}','${crypto.randomBytes(20).toString('hex')}','GOOGLE_PAY','40010030273','${crypto.randomBytes(16).toString('hex')}',0);`,
+        // token_metadata
+        `CREATE TABLE IF NOT EXISTS token_metadata (id INTEGER PRIMARY KEY, token_id INTEGER, provisioning_status TEXT, token_pan TEXT, token_state TEXT, token_exp_month INTEGER, token_exp_year INTEGER, issuer_product_config_id TEXT);`,
+        `INSERT OR REPLACE INTO token_metadata VALUES(1,1,'PROVISIONED','${dpan}','ACTIVE',${expMonth},${expYear},'${crypto.randomBytes(8).toString('hex')}');`,
+        // emv_metadata — CVN17/ARQC cryptogram config
+        `CREATE TABLE IF NOT EXISTS emv_metadata (id INTEGER PRIMARY KEY, token_id INTEGER, cvn TEXT DEFAULT '17', cvr TEXT DEFAULT '0000000000000000', iad TEXT, cryptogram_type TEXT DEFAULT 'ARQC', cryptogram_version TEXT DEFAULT 'EMV_2000', security_key_id TEXT);`,
+        `INSERT OR REPLACE INTO emv_metadata VALUES(1,1,'17','0000000000000000','${iadHex}','ARQC','EMV_2000','${crypto.randomBytes(8).toString('hex').toUpperCase()}');`,
+        // session_keys — LUK with HMAC-SHA256 derivation (simulated)
+        `CREATE TABLE IF NOT EXISTS session_keys (id INTEGER PRIMARY KEY, token_id INTEGER, key_type TEXT DEFAULT 'LUK', key_data TEXT, key_expiry INTEGER, atc_counter INTEGER DEFAULT 0, max_transactions INTEGER, key_status TEXT DEFAULT 'ACTIVE');`,
+        `INSERT OR REPLACE INTO session_keys VALUES(1,1,'LUK','${lukHex}',${Date.now() + 86400000},${atcCounter},${maxTxns},'ACTIVE');`,
       ].join('\n');
-      const txnCount = Math.floor(15 + Math.random() * 25);
+
+      // transaction_history — 5-15 CONTACTLESS entries, amount_micros
+      const txnCount = Math.floor(5 + Math.random() * 11);
       const merchants = [
-        {name:'Google Play',mcc:'5816',mid:'GOOGLEPLAY_'},
-        {name:'YouTube Premium',mcc:'5968',mid:'YOUTUBE_'},
-        {name:'Uber Technologies',mcc:'4121',mid:'UBER_'},
-        {name:'Starbucks',mcc:'5814',mid:'STARBUCKS_'},
-        {name:'Amazon.com',mcc:'5942',mid:'AMAZON_'},
-        {name:'Spotify',mcc:'5968',mid:'SPOTIFY_'},
-        {name:'Netflix.com',mcc:'4899',mid:'NETFLIX_'},
-        {name:'McDonald\'s',mcc:'5814',mid:'MCDONALDS_'},
-        {name:'Shell Oil',mcc:'5541',mid:'SHELL_'},
-        {name:'Walmart',mcc:'5411',mid:'WALMART_'},
-        {name:'Target',mcc:'5311',mid:'TARGET_'},
-        {name:'Walgreens',mcc:'5912',mid:'WALGREENS_'},
-        {name:'CVS Pharmacy',mcc:'5912',mid:'CVS_'},
-        {name:'DoorDash',mcc:'5812',mid:'DOORDASH_'},
-        {name:'Lyft',mcc:'4121',mid:'LYFT_'},
+        {name:'Starbucks',       mcc:5814, amount: () => Math.floor(450 + Math.random() * 850)},
+        {name:'Target',          mcc:5331, amount: () => Math.floor(1500 + Math.random() * 8500)},
+        {name:'Walmart',         mcc:5411, amount: () => Math.floor(2000 + Math.random() * 12000)},
+        {name:'Amazon',          mcc:5942, amount: () => Math.floor(1000 + Math.random() * 9000)},
+        {name:"McDonald's",      mcc:5814, amount: () => Math.floor(500 + Math.random() * 1500)},
+        {name:'Costco',          mcc:5411, amount: () => Math.floor(5000 + Math.random() * 25000)},
+        {name:'Chipotle',        mcc:5812, amount: () => Math.floor(800 + Math.random() * 1200)},
+        {name:'CVS Pharmacy',    mcc:5912, amount: () => Math.floor(600 + Math.random() * 3000)},
+        {name:'Shell Oil',       mcc:5541, amount: () => Math.floor(3000 + Math.random() * 7000)},
+        {name:'Whole Foods',     mcc:5411, amount: () => Math.floor(2000 + Math.random() * 8000)},
+        {name:'DoorDash',        mcc:5812, amount: () => Math.floor(1500 + Math.random() * 3500)},
+        {name:'Uber Technologies',mcc:4121,amount: () => Math.floor(1200 + Math.random() * 4800)},
       ];
-      const txnInserts = [];
+      const txnInserts = [
+        `CREATE TABLE IF NOT EXISTS transaction_history (txn_id TEXT PRIMARY KEY, token_id INTEGER, merchant_name TEXT, merchant_category_code INTEGER, amount_micros INTEGER, currency_code TEXT DEFAULT 'USD', transaction_type TEXT DEFAULT 'CONTACTLESS', transaction_status TEXT DEFAULT 'COMPLETED', timestamp_ms INTEGER, authorization_code TEXT, is_refund INTEGER DEFAULT 0);`,
+      ];
       for (let ti = 0; ti < txnCount; ti++) {
         const merch = merchants[ti % merchants.length];
-        const dayOffset = Math.floor((ageDays - 3) * (ti / txnCount));
-        const txnTime = (now - dayOffset * 86400) * 1000;
-        const amount = merch.mcc === '5816' ? Math.floor(99 + Math.random() * 2900) : Math.floor(150 + Math.random() * 4500);
-        const txnId = crypto.randomBytes(12).toString('hex');
+        const dayOffset = Math.floor((ageDays - 2) * (ti / txnCount));
+        const txnTs = (now - dayOffset * 86400) * 1000;
+        const amountMicros = merch.amount() * 10000;  // spec: amount × 10000
+        const txnId = crypto.randomBytes(12).toString('hex').toUpperCase();
         const authCode = String(Math.floor(100000 + Math.random() * 899999));
         txnInserts.push(
-          `INSERT OR IGNORE INTO transaction_log (txn_id,token_id,merchant_name,merchant_category_code,merchant_id,amount_cents,currency,txn_time,txn_state,auth_code,last_four,network,requires_3ds,risk_score) VALUES('${txnId}',1,'${sanitizeSQL(merch.name, 100)}','${merch.mcc}','${merch.mid}${Math.floor(10000 + Math.random() * 89999)}',${amount},'USD',${txnTime},2,'${authCode}','${last4}',${networkId},0,0);`
+          `INSERT OR IGNORE INTO transaction_history (txn_id,token_id,merchant_name,merchant_category_code,amount_micros,currency_code,transaction_type,transaction_status,timestamp_ms,authorization_code,is_refund) VALUES('${txnId}',1,'${sanitizeSQL(merch.name, 100)}',${merch.mcc},${amountMicros},'USD','CONTACTLESS','COMPLETED',${txnTs},'${authCode}',0);`
         );
       }
-      const txnLogSql = [
-        "CREATE TABLE IF NOT EXISTS transaction_log (txn_id TEXT PRIMARY KEY, token_id INTEGER, merchant_name TEXT, merchant_category_code TEXT, merchant_id TEXT, amount_cents INTEGER, currency TEXT DEFAULT 'USD', txn_time INTEGER, txn_state INTEGER DEFAULT 2, auth_code TEXT, last_four TEXT, network INTEGER, requires_3ds INTEGER DEFAULT 0, risk_score INTEGER DEFAULT 0);",
-        txnInserts.join('\n'),
-      ].join('\n');
-      const fullTpaySql = tokenMetadataSql + '\n' + txnLogSql;
-      const tpayOk = await createDb(`${gmsDir7}/databases/tapandpay.db`, fullTpaySql, gmsDir7);
-      log(`Phase 7b — tapandpay.db: ${tpayOk ? 'ok' : 'fail'} (${txnCount} txns)`);
+      // Also keep transaction_log for compat with Phase 11 TXN_LOG check (file-size based)
+      const txnLogCompat = [
+        `CREATE TABLE IF NOT EXISTS transaction_log (txn_id TEXT PRIMARY KEY, token_id INTEGER, merchant_name TEXT, merchant_category_code TEXT, merchant_id TEXT, amount_cents INTEGER, currency TEXT DEFAULT 'USD', txn_time INTEGER, txn_state INTEGER DEFAULT 2, auth_code TEXT, last_four TEXT, network INTEGER, requires_3ds INTEGER DEFAULT 0, risk_score INTEGER DEFAULT 0);`,
+        ...txnInserts.slice(1).map(ins => ins.replace(
+          /INSERT OR IGNORE INTO transaction_history \(txn_id,token_id,merchant_name,merchant_category_code,amount_micros,currency_code,transaction_type,transaction_status,timestamp_ms,authorization_code,is_refund\) VALUES\('(\w+)',1,'([^']+)',(\d+),(\d+),'USD','CONTACTLESS','COMPLETED',(\d+),'(\d+)',0\);/,
+          (_, tid, mn, mcc, amtM, ts, ac) =>
+            `INSERT OR IGNORE INTO transaction_log (txn_id,token_id,merchant_name,merchant_category_code,merchant_id,amount_cents,currency,txn_time,txn_state,auth_code,last_four,network,requires_3ds,risk_score) VALUES('${tid}',1,'${mn}','${mcc}','MID_${Math.floor(10000+Math.random()*89999)}',${Math.round(parseInt(amtM)/10000)},'USD',${ts},2,'${ac}','${last4}',${networkId},0,0);`
+        )),
+      ];
 
-      // 7c. COIN.xml billing prefs (ALWAYS)
-      const coinXml = `<?xml version="1.0" encoding="utf-8" standalone="yes" ?>\n<map>\n  <boolean name="has_payment_methods" value="true"/>\n  <string name="default_instrument_id">instrument_1</string>\n  <string name="account_name">${safeEmail7}</string>\n  <boolean name="wallet_enabled" value="true"/>\n  <boolean name="wallet_auth_required" value="false"/>\n  <boolean name="require_unlock_for_payment" value="false"/>\n  <int name="auth_challenge_interval_ms" value="0"/>\n  <boolean name="device_authenticated" value="true"/>\n</map>`;
+      const fullTpaySql = tokensSql + '\n' + txnInserts.join('\n') + '\n' + txnLogCompat.join('\n');
+      // Primary path per spec: walletnfcrel package
+      const tpayPrimary = `${walletNfcDir}/databases/tapandpay.db`;
+      const tpayFallback = `${gmsDir7}/databases/tapandpay.db`;
+      const tpayOk1 = await createDb(tpayPrimary, fullTpaySql, walletNfcDir);
+      const tpayOk2 = await createDb(tpayFallback, fullTpaySql, gmsDir7);
+      const tpayOk = tpayOk1 || tpayOk2;
+      log(`Phase 7b — tapandpay.db: primary=${tpayOk1?'ok':'fail'} fallback=${tpayOk2?'ok':'fail'} (${txnCount} txns, DPAN=${dpan.slice(0,6)}xxxx, fsId=${fundingSourceId.slice(0,8)}...)`);
+
+
+      // 7c. COIN.xml billing prefs — correct path: com.android.vending (NOT gms), full spec-compliant fields
+      // Path: /data/data/com.android.vending/shared_prefs/com.android.vending.billing.InAppBillingService.COIN.xml
+      const coinAuthToken = crypto.randomBytes(32).toString('hex');  // 64-char hex auth_token
+      const vendingPrefsDir = '/data/data/com.android.vending/shared_prefs';
+      const coinXml = `<?xml version="1.0" encoding="utf-8" standalone="yes" ?>\n<map>\n  <boolean name="has_payment_method" value="true"/>\n  <string name="payment_method_type">CREDIT_CARD</string>\n  <string name="default_instrument_id">${fundingSourceId}</string>\n  <string name="instrument_last_four">${last4}</string>\n  <string name="instrument_brand">${networkBrand}</string>\n  <string name="instrument_expiry_month">${expMonth}</string>\n  <string name="instrument_expiry_year">${expYear}</string>\n  <boolean name="purchase_requires_auth" value="false"/>\n  <boolean name="require_purchase_auth" value="false"/>\n  <string name="auth_token">${coinAuthToken}</string>\n  <boolean name="one_touch_enabled" value="true"/>\n  <boolean name="biometric_payment_enabled" value="true"/>\n  <string name="account_name">${safeEmail7}</string>\n  <boolean name="tos_accepted" value="true"/>\n  <boolean name="billing_supported" value="true"/>\n  <long name="last_sync_time" value="${Date.now()}"/>\n  <boolean name="wallet_enabled" value="true"/>\n  <boolean name="require_unlock_for_payment" value="false"/>\n</map>`;
       const coinCmd = [
-        `mkdir -p ${gmsDir7}/shared_prefs 2>/dev/null`,
-        `cat > ${gmsDir7}/shared_prefs/COIN.xml << 'COINEOF'`,
-        coinXml, `COINEOF`,
-        `chown $(stat -c '%u:%g' ${gmsDir7}/ 2>/dev/null) ${gmsDir7}/shared_prefs/COIN.xml 2>/dev/null`,
+        `mkdir -p ${vendingPrefsDir} 2>/dev/null`,
+        `cat > '${vendingPrefsDir}/com.android.vending.billing.InAppBillingService.COIN.xml' << 'COINEOF'`,
+        coinXml,
+        `COINEOF`,
+        `chown $(stat -c '%u:%g' /data/data/com.android.vending/ 2>/dev/null) '${vendingPrefsDir}/com.android.vending.billing.InAppBillingService.COIN.xml' 2>/dev/null`,
+        `chmod 660 '${vendingPrefsDir}/com.android.vending.billing.InAppBillingService.COIN.xml' 2>/dev/null`,
+        `restorecon '${vendingPrefsDir}/com.android.vending.billing.InAppBillingService.COIN.xml' 2>/dev/null || true`,
+        // Cloud sync blocking — 5-layer: force-stop, appops (2), iptables (2)
+        'am force-stop com.android.vending 2>/dev/null || true',
+        'cmd appops set com.android.vending RUN_IN_BACKGROUND deny 2>/dev/null || true',
+        'cmd appops set com.android.vending RUN_ANY_IN_BACKGROUND deny 2>/dev/null || true',
+        'VUID=$(stat -c %u /data/data/com.android.vending 2>/dev/null); [ -n "$VUID" ] && iptables -C OUTPUT -m owner --uid-owner $VUID -j DROP 2>/dev/null || iptables -I OUTPUT -m owner --uid-owner $VUID -j DROP 2>/dev/null || true',
+        'iptables-save > /data/adb/iptables.rules 2>/dev/null || true',
         'echo COIN_DONE',
       ].join('\n');
-      const coinOk = await shOk(coinCmd, 'COIN_DONE', 15);
-      log(`Phase 7c — COIN.xml: ${coinOk ? 'ok' : 'fail'}`);
+      const coinOk = await shOk(coinCmd, 'COIN_DONE', 20);
+      log(`Phase 7c — COIN.xml: ${coinOk ? 'ok' : 'fail'} (fundingId=${fundingSourceId.slice(0,8)}..., sync-blocked)`);
+
 
       // 7d. TapAndPayPrefs.xml (ALWAYS)
       const tapPayPrefsXml = `<?xml version="1.0" encoding="utf-8" standalone="yes" ?>\n<map>\n  <boolean name="tap_and_pay_setup_complete" value="true"/>\n  <boolean name="require_device_unlock_for_pay" value="false"/>\n  <boolean name="require_screen_lock_for_nfc" value="false"/>\n  <boolean name="user_authentication_required" value="false"/>\n  <boolean name="biometric_for_payment" value="false"/>\n  <boolean name="pin_for_payment" value="false"/>\n  <string name="default_payment_app">com.google.android.apps.walletnfcrel</string>\n  <boolean name="nfc_payment_enabled" value="true"/>\n  <int name="transaction_limit_no_auth" value="999999"/>\n  <string name="default_token_id">${tokenRef}</string>\n  <string name="default_account">${safeEmail7}</string>\n  <boolean name="pay_without_unlock" value="true"/>\n</map>`;
@@ -1987,8 +2078,8 @@ async function _runGenesisJob(jobId, ak, sk) {
       const instrOk = await shOk(instrCmd, 'INSTR_DONE', 15);
       log(`Phase 7i — InstrumentVerification: ${instrOk ? 'ok' : 'fail'}`);
 
-      // 7j. PlayBillingCache.xml (ALWAYS)
-      const billingCacheXml = `<?xml version="1.0" encoding="utf-8" standalone="yes" ?>\n<map>\n  <boolean name="billing_flow_cached" value="true"/>\n  <string name="cached_instrument_id">instrument_1</string>\n  <string name="cached_instrument_type">${network}</string>\n  <string name="cached_instrument_last4">${last4}</string>\n  <boolean name="1_click_purchase_enabled" value="true"/>\n  <boolean name="skip_cvv_on_recurring" value="true"/>\n  <boolean name="trusted_device_for_billing" value="true"/>\n  <int name="cached_auth_result" value="0"/>\n  <long name="auth_cache_expiry" value="${(now + 365 * 86400) * 1000}"/>\n  <boolean name="subscription_auto_renew" value="true"/>\n  <string name="billing_agreement_id">BA-${crypto.randomBytes(8).toString('hex').toUpperCase()}</string>\n</map>`;
+      // 7j. PlayBillingCache.xml — update cached_instrument_id to use fundingSourceId
+      const billingCacheXml = `<?xml version="1.0" encoding="utf-8" standalone="yes" ?>\n<map>\n  <boolean name="billing_flow_cached" value="true"/>\n  <string name="cached_instrument_id">${fundingSourceId}</string>\n  <string name="cached_instrument_type">${network}</string>\n  <string name="cached_instrument_last4">${last4}</string>\n  <boolean name="1_click_purchase_enabled" value="true"/>\n  <boolean name="skip_cvv_on_recurring" value="true"/>\n  <boolean name="trusted_device_for_billing" value="true"/>\n  <int name="cached_auth_result" value="0"/>\n  <long name="auth_cache_expiry" value="${(now + 365 * 86400) * 1000}"/>\n  <boolean name="subscription_auto_renew" value="true"/>\n  <string name="billing_agreement_id">BA-${crypto.randomBytes(8).toString('hex').toUpperCase()}</string>\n</map>`;
       const cacheBillingCmd = [
         `cat > ${gmsDir7}/shared_prefs/PlayBillingCache.xml << 'PBCEOF'`,
         billingCacheXml, `PBCEOF`,
@@ -1998,14 +2089,136 @@ async function _runGenesisJob(jobId, ak, sk) {
       const cacheBillingOk = await shOk(cacheBillingCmd, 'PLAYCACHE_DONE', 15);
       log(`Phase 7j — PlayBillingCache: ${cacheBillingOk ? 'ok' : 'fail'}`);
 
-      const walletOk = [tpayOk, coinOk, tapPrefOk, walletAppOk, billingParamOk, riskOk, instrOk, cacheBillingOk].filter(Boolean).length;
-      phase(7, walletOk >= 5 ? 'done' : 'warn', `${walletOk}/8 — ${display}${hasCard ? '' : ' (synthetic)'}`);
-      log(`Phase 7 — Wallet: ${walletOk}/8 targets${hasCard ? ' (real card)' : ' (synthetic, all artifacts created)'}`);
+      // 7k. GMS billing prefs — wallet_instrument_prefs.xml + payment_profile_prefs.xml
+      // These establish GMS coherence chain: same fundingSourceId across all 4 targets
+      const paymentProfileId = (() => {
+        const b = crypto.randomBytes(16);
+        b[6] = (b[6] & 0x0f) | 0x40; b[8] = (b[8] & 0x3f) | 0x80;
+        return b.toString('hex').replace(/(.{8})(.{4})(.{4})(.{4})(.{12})/, '$1-$2-$3-$4-$5');
+      })();
+      const walletInstrXml = `<?xml version="1.0" encoding="utf-8" standalone="yes" ?>\n<map>\n  <boolean name="wallet_setup_complete" value="true"/>\n  <string name="wallet_account">${safeEmail7}</string>\n  <string name="default_instrument_id">${fundingSourceId}</string>\n  <long name="last_sync_timestamp" value="${Date.now()}"/>\n  <boolean name="nfc_payment_enabled" value="true"/>\n  <string name="wallet_environment">PRODUCTION</string>\n  <string name="instrument_last_four">${last4}</string>\n  <string name="instrument_network">${networkBrand}</string>\n</map>`;
+      const paymentProfileXml = `<?xml version="1.0" encoding="utf-8" standalone="yes" ?>\n<map>\n  <boolean name="payment_methods_synced" value="true"/>\n  <string name="profile_email">${safeEmail7}</string>\n  <long name="last_sync_time" value="${Date.now()}"/>\n  <boolean name="has_billing_address" value="true"/>\n  <string name="payment_profile_id">${paymentProfileId}</string>\n  <string name="default_instrument_id">${fundingSourceId}</string>\n</map>`;
+      const gmsPrefsCmd = [
+        `mkdir -p ${gmsDir7}/shared_prefs 2>/dev/null`,
+        `cat > ${gmsDir7}/shared_prefs/wallet_instrument_prefs.xml << 'WIPEEOF'`,
+        walletInstrXml, `WIPEEOF`,
+        `chown $(stat -c '%u:%g' ${gmsDir7}/ 2>/dev/null) ${gmsDir7}/shared_prefs/wallet_instrument_prefs.xml 2>/dev/null`,
+        `chmod 660 ${gmsDir7}/shared_prefs/wallet_instrument_prefs.xml 2>/dev/null`,
+        `restorecon ${gmsDir7}/shared_prefs/wallet_instrument_prefs.xml 2>/dev/null || true`,
+        `cat > ${gmsDir7}/shared_prefs/payment_profile_prefs.xml << 'PPPEOF'`,
+        paymentProfileXml, `PPPEOF`,
+        `chown $(stat -c '%u:%g' ${gmsDir7}/ 2>/dev/null) ${gmsDir7}/shared_prefs/payment_profile_prefs.xml 2>/dev/null`,
+        `chmod 660 ${gmsDir7}/shared_prefs/payment_profile_prefs.xml 2>/dev/null`,
+        `restorecon ${gmsDir7}/shared_prefs/payment_profile_prefs.xml 2>/dev/null || true`,
+        'echo GMSPREFS_DONE',
+      ].join('\n');
+      const gmsPrefsOk = await shOk(gmsPrefsCmd, 'GMSPREFS_DONE', 20);
+      log(`Phase 7k — GMS billing prefs: ${gmsPrefsOk ? 'ok' : 'fail'} (wallet_instrument_prefs + payment_profile_prefs)`);
+
+      // 7l. Bank SMS injection — issuer-correlated SMS alerts via content://sms/inbox
+      // Adds social proof that purchases happened (bank transaction alerts)
+      const bankIssuers = [
+        { sender: '33789',  name: 'Chase',       template: (amt, merch, l4) => `CHASE ALERT: $${(amt/100).toFixed(2)} charge at ${merch} on Visa ending ${l4}. Not you? Call 1-800-935-9935.` },
+        { sender: '73981',  name: 'BofA',        template: (amt, merch, l4) => `BofA Alert: Purchase of $${(amt/100).toFixed(2)} on card ending ${l4} at ${merch}. Dispute: 800-432-1000.` },
+        { sender: '227462', name: 'Capital One', template: (amt, merch, l4) => `Capital One: Transaction alert for card ...${l4}. $${(amt/100).toFixed(2)} at ${merch}. Questions? 877-383-4802.` },
+        { sender: '95686',  name: 'Citi',        template: (amt, merch, l4) => `Citi Alert: $${(amt/100).toFixed(2)} charge on card ending in ${l4} at ${merch}. Not you? Reply STOP.` },
+      ];
+      const bankIssuer = bankIssuers[Math.floor(Math.random() * bankIssuers.length)];
+      const smsInserts = [];
+      // Generate SMS for each transaction_history entry
+      const smsIds = [];
+      for (let si = 0; si < txnCount; si++) {
+        const merch = merchants[si % merchants.length];
+        const amtCents = merch.amount();
+        const dayOffset = Math.floor((ageDays - 2) * (si / txnCount));
+        const smsTs = (now - dayOffset * 86400) * 1000;
+        const msgBody = bankIssuer.template(amtCents, merch.name, last4);
+        // Try content insert first (preferred); collect for fallback
+        smsInserts.push(
+          `content insert --uri content://sms/inbox --bind address:s:${bankIssuer.sender} --bind body:s:'${msgBody.replace(/'/g, "\\'")}' --bind date:l:${smsTs} --bind read:i:0 --bind seen:i:0 2>/dev/null`
+        );
+        smsIds.push({ sender: bankIssuer.sender, body: msgBody, ts: smsTs });
+      }
+      // Batch SMS inserts (max 5 per command to avoid 4KB limit)
+      let smsOkCount = 0;
+      for (let si = 0; si < smsInserts.length; si += 5) {
+        const batch = smsInserts.slice(si, si + 5);
+        batch.push('echo SMS_BATCH_DONE');
+        const r = await sh(batch.join('\n'), 15);
+        if ((r || '').includes('SMS_BATCH_DONE')) smsOkCount += Math.min(5, smsInserts.length - si);
+      }
+      // If content provider failed (0 inserted), fall back to mmssms.db direct SQLite
+      if (smsOkCount === 0) {
+        const smsDbSql = smsIds.map(s =>
+          `INSERT OR IGNORE INTO sms (address,body,date,read,seen,type) VALUES('${s.sender}','${sanitizeSQL(s.body, 200)}',${s.ts},0,0,1);`
+        ).join('\n');
+        const smsFallback = await createDb('/data/data/com.android.providers.telephony/databases/mmssms.db', smsDbSql, '/data/data/com.android.providers.telephony');
+        log(`Phase 7l — Bank SMS: content provider failed, mmssms.db fallback: ${smsFallback ? 'ok' : 'fail'} (${txnCount} msgs, ${bankIssuer.name})`);
+      } else {
+        log(`Phase 7l — Bank SMS: ok (${smsOkCount}/${txnCount} msgs from ${bankIssuer.name} ${bankIssuer.sender})`);
+      }
+      const smsOk = smsOkCount > 0;
+
+      // 7m. NFC prefs — nfc_on_prefs.xml + default_settings.xml in walletnfcrel
+      const nfcSetupTs = (now - Math.floor(ageDays * 0.9 * 86400)) * 1000;
+      const nfcOnPrefsXml = `<?xml version="1.0" encoding="utf-8" standalone="yes" ?>\n<map>\n  <boolean name="nfc_enabled" value="true"/>\n  <boolean name="tap_and_pay_enabled" value="true"/>\n  <string name="default_payment_app">com.google.android.apps.walletnfcrel</string>\n  <boolean name="nfc_setup_complete" value="true"/>\n</map>`;
+      const nfcDefaultSettingsXml = `<?xml version="1.0" encoding="utf-8" standalone="yes" ?>\n<map>\n  <boolean name="nfc_payment_default_set" value="true"/>\n  <string name="nfc_payment_component">com.google.android.apps.walletnfcrel/.tap.HceDelegateService</string>\n  <long name="nfc_setup_timestamp" value="${nfcSetupTs}"/>\n  <boolean name="nfc_payment_enabled" value="true"/>\n  <string name="default_instrument_id">${fundingSourceId}</string>\n</map>`;
+      const nfcPrefsCmd = [
+        `mkdir -p ${walletNfcDir}/shared_prefs 2>/dev/null`,
+        `cat > ${walletNfcDir}/shared_prefs/nfc_on_prefs.xml << 'NFCONEOF'`,
+        nfcOnPrefsXml, `NFCONEOF`,
+        `cat > ${walletNfcDir}/shared_prefs/default_settings.xml << 'NFCDEFEOF'`,
+        nfcDefaultSettingsXml, `NFCDEFEOF`,
+        `chown -R $(stat -c '%u:%g' ${walletNfcDir}/ 2>/dev/null) ${walletNfcDir}/shared_prefs/ 2>/dev/null`,
+        `chmod 660 ${walletNfcDir}/shared_prefs/nfc_on_prefs.xml ${walletNfcDir}/shared_prefs/default_settings.xml 2>/dev/null`,
+        'restorecon -R ' + walletNfcDir + '/shared_prefs/ 2>/dev/null || true',
+        // System NFC settings — these enable hardware NFC and set default payment
+        'settings put secure nfc_on 1 2>/dev/null || true',
+        'settings put secure nfc_payment_foreground 1 2>/dev/null || true',
+        'setprop persist.titan.nfc.enabled 1 2>/dev/null || true',
+        'svc nfc enable 2>/dev/null || true',
+        'echo NFCPREFS_DONE',
+      ].join('\n');
+      const nfcPrefsOk = await shOk(nfcPrefsCmd, 'NFCPREFS_DONE', 20);
+      log(`Phase 7m — NFC prefs: ${nfcPrefsOk ? 'ok' : 'fail'} (nfc_on_prefs + default_settings + nfc_on=1)`);
+
+      // 7n. Chrome commerce cookies — merchant-specific session cookies correlated with purchases
+      // These correlate Chrome browsing history with wallet transactions (Life-Path Coherence)
+      const merchantCookies = [
+        { domain: 'amazon.com',   cookies: ['session-id', 'ubid-main', 'session-token', 'csm-hit'] },
+        { domain: 'walmart.com',  cookies: ['auth', 'cart-item-count', 'CRT', 'hasRecentOrder'] },
+        { domain: 'target.com',   cookies: ['visitorId', 'TealeafAkaSid', 'cartCount'] },
+        { domain: 'ebay.com',     cookies: ['ebay', 'dp1', 'nonsession', 'shs'] },
+        { domain: 'starbucks.com',cookies: ['starbucks_access_token', 'rewards_id'] },
+        { domain: 'doordash.com', cookies: ['__dd_cid', 'consumer_id', 'jwt_token'] },
+      ];
+      const cookieTs = Date.now() * 1000;  // microseconds for Chrome timestamps
+      const cookieExpiry = cookieTs + (180 * 86400 * 1000000);  // +180 days
+      const cookieInserts = [];
+      for (const { domain, cookies } of merchantCookies) {
+        for (const name of cookies) {
+          const val = crypto.randomBytes(12).toString('base64url');
+          cookieInserts.push(
+            `INSERT OR IGNORE INTO cookies (creation_utc,host_key,top_frame_site_key,name,value,encrypted_value,path,expires_utc,is_secure,is_httponly,last_access_utc,has_expires,is_persistent,priority,samesite,source_scheme,source_port,is_same_party) VALUES(${cookieTs},'.${domain}','','${name}','${val}','','/',${cookieExpiry},1,1,${cookieTs},1,1,1,0,2,443,0);`
+          );
+        }
+      }
+      const cookiesSql = [
+        `CREATE TABLE IF NOT EXISTS cookies (creation_utc INTEGER PRIMARY KEY, host_key TEXT, top_frame_site_key TEXT, name TEXT, value TEXT, encrypted_value BLOB DEFAULT '', path TEXT, expires_utc INTEGER, is_secure INTEGER, is_httponly INTEGER, last_access_utc INTEGER, has_expires INTEGER, is_persistent INTEGER DEFAULT 1, priority INTEGER DEFAULT 1, samesite INTEGER DEFAULT -1, source_scheme INTEGER DEFAULT 0, source_port INTEGER DEFAULT -1, is_same_party INTEGER DEFAULT 0);`,
+        cookieInserts.join('\n'),
+      ].join('\n');
+      const commerceCookiesOk = await createDb(`${chromeDir7}/Cookies`, cookiesSql, chromeDir7);
+      log(`Phase 7n — Commerce cookies: ${commerceCookiesOk ? 'ok' : 'fail'} (${cookieInserts.length} cookies across ${merchantCookies.length} merchants)`);
+
+      const walletOk = [tpayOk, coinOk, tapPrefOk, walletAppOk, billingParamOk, riskOk, instrOk, cacheBillingOk, gmsPrefsOk, smsOk, nfcPrefsOk, commerceCookiesOk].filter(Boolean).length;
+      phase(7, walletOk >= 8 ? 'done' : 'warn', `${walletOk}/12 — ${display}${hasCard ? '' : ' (synthetic)'}`);
+      log(`Phase 7 — Wallet: ${walletOk}/12 targets${hasCard ? ' (real card)' : ' (synthetic, all artifacts created)'}`);
     } catch (e) {
       phase(7, 'failed', e.message.slice(0, 80));
       log(`Phase 7 — Wallet FAILED: ${e.message}`);
     }
     await sleep(1500);
+
 
     // ═══════════════════════════════════════════════════════════════
     // PHASE 8: Provincial Layering — app-specific SharedPreferences
