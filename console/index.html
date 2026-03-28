@@ -3309,7 +3309,11 @@ function titanConsole() {
             // Auto-populate inspector for immediate visual review
             if(st.profile_id) {
               this.inspectProfile = st.profile_id;
-              this.loadInspectData(st.profile_id);
+              try {
+                if (typeof this.loadInspectData === 'function') {
+                  this.loadInspectData(st.profile_id);
+                }
+              } catch(e) { console.warn('loadInspectData error:', e); }
             }
           }
         } catch(e) { /* poll errors are transient */ }

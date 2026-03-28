@@ -164,9 +164,8 @@ async def unified_genesis_start(body: UnifiedGenesisRequest):
     if body_dict.get("cc_number"):
         cc = body_dict["cc_number"].replace(" ", "").replace("-", "")
         if not cc.isdigit() or len(cc) < 13 or len(cc) > 19:
-            body_dict["cc_number"] = ""
-        else:
-            body_dict["cc_number"] = cc
+            raise HTTPException(400, "Invalid credit card number format. Must be 13-19 digits.")
+        body_dict["cc_number"] = cc
     
     # Validate age_days range
     if body_dict.get("age_days"):

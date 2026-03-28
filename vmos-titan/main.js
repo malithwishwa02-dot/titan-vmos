@@ -115,11 +115,12 @@ function loadDotEnv(envPath) {
 }
 
 function findPython() {
+  // Prefer Python 3.11+ per Titan V13 coding guidelines
   for (const cmd of ['python3', 'python']) {
     try {
       const ver = execSync(`${cmd} --version 2>&1`, { timeout: 5000 }).toString().trim();
       const match = ver.match(/Python\s+(\d+)\.(\d+)/);
-      if (match && (parseInt(match[1]) > 3 || (parseInt(match[1]) === 3 && parseInt(match[2]) >= 10))) {
+      if (match && (parseInt(match[1]) > 3 || (parseInt(match[1]) === 3 && parseInt(match[2]) >= 11))) {
         return { cmd, version: ver };
       }
     } catch (_) { /* not found */ }

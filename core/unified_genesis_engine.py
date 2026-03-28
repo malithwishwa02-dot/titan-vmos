@@ -888,8 +888,8 @@ class UnifiedGenesisEngine:
                 self._log(job_id, "Phase 2 — Using quick_repatch (saved config exists)")
                 report = patcher.quick_repatch()
             else:
-                # Use actual target age_days from config
-                age_days = config.aging.age_days or 1
+                # Use actual target age_days from config (handle 0/None as 1)
+                age_days = config.aging.age_days if config.aging.age_days and config.aging.age_days > 0 else 1
                 report = patcher.full_patch(model, carrier, location, 
                                            lockdown=False, age_days=age_days)
             
