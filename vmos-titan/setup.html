@@ -146,6 +146,20 @@ function setupApp() {
     async testAndSave() {
       this.testing = true;
       this.error = '';
+
+      // Validate AK/SK format
+      const ak = this.credentials.vmos_ak.trim();
+      const sk = this.credentials.vmos_sk.trim();
+      if (ak.length < 8 || ak.length > 128 || !/^[a-zA-Z0-9_-]+$/.test(ak)) {
+        this.error = 'Access Key must be 8-128 alphanumeric characters';
+        this.testing = false;
+        return;
+      }
+      if (sk.length < 16 || sk.length > 256 || !/^[a-zA-Z0-9_/+=.-]+$/.test(sk)) {
+        this.error = 'Secret Key must be 16-256 characters';
+        this.testing = false;
+        return;
+      }
       
       try {
         // Test credentials
