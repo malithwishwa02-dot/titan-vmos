@@ -1,6 +1,6 @@
 [Unit]
-Description=Titan-X Device Recovery Watchdog
-Documentation=https://github.com/titan/titan-x
+Description=Titan VMOS Device Recovery Watchdog
+Documentation=https://github.com/malithwishwa02-dot/titan-vmos
 After=titan-api.service
 Requires=titan-api.service
 

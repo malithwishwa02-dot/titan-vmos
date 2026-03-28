@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # ═══════════════════════════════════════════════════════════════════════
-# Titan-X V12.0 — Production .deb Package Builder
+# Titan VMOS — Production .deb Package Builder
 #
-# Assembles the titan-x Debian package with FULL Cuttlefish Android 14
+# Assembles the titan-vmos Debian package with FULL Cuttlefish Android 14
 # pre-integration: VM images, CVD host tools, GApps APKs, Magisk/Zygisk
 # modules, keybox, and all core/server/console code.
 #
@@ -12,15 +12,15 @@
 #   ./build-deb.sh --skip-image-build  # Bundle existing local images
 #   ./build-deb.sh --local-images      # Use images from CVD_IMAGES_DIR
 #
-# Output: dist/titan-x_12.0.0_amd64.deb
+# Output: dist/titan-vmos_13.0.0_amd64.deb
 # ═══════════════════════════════════════════════════════════════════════
 set -euo pipefail
 
 # ─── Configuration ────────────────────────────────────────────────────
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SRC_DIR="${SCRIPT_DIR}"
-VERSION="12.0.0"
-PACKAGE="titan-x"
+VERSION="13.0.0"
+PACKAGE="titan-vmos"
 ARCH="amd64"
 INSTALL_PREFIX="/opt/titan"
 
@@ -57,7 +57,7 @@ done
 
 BUILD_START=$(date +%s)
 echo "═══════════════════════════════════════════════════════════"
-echo "  Titan-X V${VERSION} — .deb Package Builder"
+echo "  Titan VMOS V${VERSION} — .deb Package Builder"
 echo "  Mode: $(if [[ $CODE_ONLY -eq 1 ]]; then echo 'CODE-ONLY'; else echo 'FULL PRE-CONFIGURED'; fi)"
 echo "  Date: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
 echo "═══════════════════════════════════════════════════════════"
@@ -220,8 +220,8 @@ fi
 echo "[4/10] Installing CLI tools..."
 
 mkdir -p "${STAGING}/usr/bin"
-cp "${SRC_DIR}/bin/titan-x" "${STAGING}/usr/bin/titan-x"
-chmod 755 "${STAGING}/usr/bin/titan-x"
+cp "${SRC_DIR}/bin/titan-vmos" "${STAGING}/usr/bin/titan-vmos"
+chmod 755 "${STAGING}/usr/bin/titan-vmos"
 
 mkdir -p "${STAGING}${INSTALL_PREFIX}/bin"
 for cli_tool in titan-keybox titan-console; do
@@ -247,10 +247,10 @@ done
 
 mkdir -p "${STAGING}/etc/modules-load.d"
 mkdir -p "${STAGING}/etc/modprobe.d"
-cp "${SRC_DIR}/debian/titan-x.modules-load.conf" "${STAGING}/etc/modules-load.d/titan-x.conf"
-cp "${SRC_DIR}/debian/titan-x.modprobe.conf"     "${STAGING}/etc/modprobe.d/titan-x.conf"
-chmod 644 "${STAGING}/etc/modules-load.d/titan-x.conf"
-chmod 644 "${STAGING}/etc/modprobe.d/titan-x.conf"
+cp "${SRC_DIR}/debian/titan-vmos.modules-load.conf" "${STAGING}/etc/modules-load.d/titan-vmos.conf"
+cp "${SRC_DIR}/debian/titan-vmos.modprobe.conf"     "${STAGING}/etc/modprobe.d/titan-vmos.conf"
+chmod 644 "${STAGING}/etc/modules-load.d/titan-vmos.conf"
+chmod 644 "${STAGING}/etc/modprobe.d/titan-vmos.conf"
 
 # ═══════════════════════════════════════════════════════════════════════
 # STEP 6: Bundle Cuttlefish VM images + CVD host tools (full mode)
@@ -456,7 +456,7 @@ find "${STAGING}" -type f -exec chmod 644 {} +
 # Re-set executables
 chmod 755 "${STAGING}/DEBIAN/preinst" "${STAGING}/DEBIAN/postinst"
 chmod 755 "${STAGING}/DEBIAN/prerm" "${STAGING}/DEBIAN/postrm"
-chmod 755 "${STAGING}/usr/bin/titan-x"
+chmod 755 "${STAGING}/usr/bin/titan-vmos"
 find "${STAGING}${INSTALL_PREFIX}/bin" -type f -exec chmod 755 {} + 2>/dev/null || true
 find "${STAGING}${INSTALL_PREFIX}/build" -name '*.sh' -exec chmod 755 {} + 2>/dev/null || true
 find "${STAGING}${INSTALL_PREFIX}/scripts" -name '*.sh' -exec chmod 755 {} + 2>/dev/null || true
@@ -479,7 +479,7 @@ SIZE_MB=$(du -sm "${DEB_OUT}" | awk '{print $1}')
 SIZE_HUMAN=$(du -sh "${DEB_OUT}" | awk '{print $1}')
 echo ""
 echo "═══════════════════════════════════════════════════════════"
-echo "  BUILD COMPLETE — Titan-X V${VERSION}"
+echo "  BUILD COMPLETE — Titan VMOS V${VERSION}"
 echo ""
 echo "  Package:  ${DEB_OUT}"
 echo "  Size:     ${SIZE_HUMAN} (${SIZE_MB} MB)"
@@ -503,10 +503,10 @@ echo "  Fix deps: sudo apt-get install -f"
 echo ""
 if [[ $CODE_ONLY -eq 0 ]] && [[ $SIZE_MB -gt 100 ]]; then
     echo "  ✓ FULL PRE-CONFIGURED — VM boots immediately after install"
-    echo "    → titan-x start"
-    echo "    → titan-x create-device"
+    echo "    → titan-vmos start"
+    echo "    → titan-vmos create-device"
     echo "    → https://localhost (console)"
 else
-    echo "  ⚠ CODE-ONLY — run 'titan-x setup-cuttlefish' after install"
+    echo "  ⚠ CODE-ONLY — run 'titan-vmos setup-cuttlefish' after install"
 fi
 echo "═══════════════════════════════════════════════════════════"

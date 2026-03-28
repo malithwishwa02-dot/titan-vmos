@@ -1,4 +1,4 @@
-module github.com/titan-v13-device/titan-vmospro-standalone
+module github.com/malithwishwa02-dot/titan-vmos/titan-vmospro-standalone
 
 go 1.18
 
