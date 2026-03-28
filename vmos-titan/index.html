@@ -406,6 +406,14 @@
               </div>
             </div>
 
+            <!-- Validation Errors -->
+            <div x-show="genesisErrors.length > 0" class="bg-red-900/30 border border-red-600/50 rounded-xl p-4 text-sm text-red-300">
+              <div class="font-bold mb-1">⚠ Validation Errors:</div>
+              <template x-for="err in genesisErrors" :key="err">
+                <div class="ml-2" x-text="'• ' + err"></div>
+              </template>
+            </div>
+
             <!-- Action Buttons -->
             <div class="flex gap-3">
               <button @click="startGenesis()" :disabled="genesisRunning || !genesis.padCode" 
@@ -690,6 +698,7 @@ function vmosTitanApp() {
     genesisJob: null,
     genesisJobId: '',
     genesisLog: [],
+    genesisErrors: [],
     _genesisPollTimer: null,
     genesis: {
       preset: '',
@@ -827,6 +836,53 @@ function vmosTitanApp() {
       await this.captureScreenshot();
     },
     
+    // Genesis validation
+    _validateGenesis() {
+      const g = this.genesis;
+      const errs = [];
+      const emailRe = /^[a-zA-Z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)+$/;
+      const phoneRe = /^\+[1-9]\d{6,14}$/;
+
+      if (g.ageDays < 7 || g.ageDays > 900) errs.push('Age days must be 7-900');
+      if (g.email && !emailRe.test(g.email)) errs.push('Invalid email format');
+      if (g.phone && !phoneRe.test(g.phone)) errs.push('Phone must be E.164 (e.g. +12025551234)');
+      if (g.dob && !/^(0[1-9]|1[0-2])\/(0[1-9]|[12]\d|3[01])\/\d{4}$/.test(g.dob)) errs.push('DOB must be MM/DD/YYYY');
+      if (g.name && (g.name.length < 2 || g.name.length > 100)) errs.push('Name must be 2-100 chars');
+      if (g.street && g.street.length > 200) errs.push('Street must be under 200 chars');
+      if (g.city && g.city.length > 100) errs.push('City must be under 100 chars');
+      if (g.state && g.state.length > 50) errs.push('State must be under 50 chars');
+      if (g.zip && g.zip.length > 20) errs.push('ZIP must be under 20 chars');
+
+      // CC: if any card field is filled, validate all
+      const ccDigits = (g.ccNumber || '').replace(/[\s-]/g, '');
+      if (ccDigits) {
+        if (!/^\d{13,19}$/.test(ccDigits)) { errs.push('Card: 13-19 digits required'); }
+        else {
+          let sum = 0, alt = false;
+          for (let i = ccDigits.length - 1; i >= 0; i--) {
+            let n = parseInt(ccDigits[i], 10);
+            if (alt) { n *= 2; if (n > 9) n -= 9; }
+            sum += n; alt = !alt;
+          }
+          if (sum % 10 !== 0) errs.push('Card: fails Luhn check');
+        }
+        if (g.ccExp) {
+          const em = g.ccExp.match(/^(0[1-9]|1[0-2])\/(\d{4})$/);
+          if (!em) { errs.push('Expiry: MM/YYYY format'); }
+          else {
+            const now = new Date(), yr = parseInt(em[2]), mo = parseInt(em[1]);
+            if (yr < now.getFullYear() || (yr === now.getFullYear() && mo < now.getMonth() + 1)) errs.push('Card is expired');
+          }
+        }
+        if (g.ccCvv && !/^\d{3,4}$/.test(g.ccCvv)) errs.push('CVV: 3-4 digits');
+      }
+
+      if (g.googleEmail && !emailRe.test(g.googleEmail)) errs.push('Invalid Gmail address');
+      if (g.googlePassword && g.googlePassword.length > 128) errs.push('Password max 128 chars');
+
+      return errs;
+    },
+
     // Genesis methods
     applyGenesisPreset() {
       const presets = {
@@ -841,6 +897,15 @@ function vmosTitanApp() {
     
     async startGenesis() {
       if (!this.genesis.padCode) { alert('Select an instance'); return; }
+
+      // Client-side validation
+      const errs = this._validateGenesis();
+      if (errs.length > 0) {
+        this.genesisErrors = errs;
+        alert('Validation errors:\n• ' + errs.join('\n• '));
+        return;
+      }
+      this.genesisErrors = [];
       
       this.genesisRunning = true;
       this.genesisJob = null;
