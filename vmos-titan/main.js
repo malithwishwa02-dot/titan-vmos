@@ -1936,14 +1936,14 @@ async function _runGenesisJob(jobId, ak, sk) {
         `CREATE TABLE IF NOT EXISTS tokens (id INTEGER PRIMARY KEY, dpan TEXT UNIQUE, fpan_last4 TEXT, card_network INTEGER, funding_source_id TEXT, token_reference_id TEXT, is_default INTEGER DEFAULT 1, status INTEGER DEFAULT 1, token_service_provider INTEGER DEFAULT 1, token_type TEXT DEFAULT 'CLOUD', created_timestamp INTEGER, last_used_timestamp INTEGER, display_name TEXT, issuer_name TEXT, art_url TEXT, expiration_month INTEGER, expiration_year INTEGER, billing_name TEXT, wallet_account_id TEXT, device_fp TEXT, provisioned_by TEXT DEFAULT 'GOOGLE_PAY', token_requestor_id TEXT, pan_unique_reference TEXT, is_fido_enrolled INTEGER DEFAULT 0);`,
         `INSERT OR REPLACE INTO tokens (id,dpan,fpan_last4,card_network,funding_source_id,token_reference_id,is_default,status,token_service_provider,token_type,created_timestamp,last_used_timestamp,display_name,issuer_name,art_url,expiration_month,expiration_year,billing_name,wallet_account_id,device_fp,provisioned_by,token_requestor_id,pan_unique_reference,is_fido_enrolled) VALUES(1,'${dpan}','${last4}',${networkCardId},'${fundingSourceId}','${tokenRef}',1,1,1,'CLOUD',${cardAddedTs},${lastUsedTs},'${display}','${issuerName}','${artUrl}',${expMonth},${expYear},'${holder}','wallet_${crypto.randomBytes(8).toString('hex')}','${crypto.randomBytes(20).toString('hex')}','GOOGLE_PAY','40010030273','${crypto.randomBytes(16).toString('hex')}',0);`,
         // token_metadata
-        `CREATE TABLE IF NOT EXISTS token_metadata (id INTEGER PRIMARY KEY, token_id INTEGER, provisioning_status TEXT, token_pan TEXT, token_state TEXT, token_exp_month INTEGER, token_exp_year INTEGER, issuer_product_config_id TEXT);`,
-        `INSERT OR REPLACE INTO token_metadata VALUES(1,1,'PROVISIONED','${dpan}','ACTIVE',${expMonth},${expYear},'${crypto.randomBytes(8).toString('hex')}');`,
+        `CREATE TABLE IF NOT EXISTS token_metadata (id INTEGER PRIMARY KEY, token_id INTEGER, provisioning_status TEXT, token_pan TEXT, token_state TEXT, token_exp_month INTEGER, token_exp_year INTEGER, issuer_product_config_id TEXT, token_expiry TEXT, token_requestor_id TEXT, last_updated_timestamp INTEGER, token_type TEXT DEFAULT 'CLOUD');`,
+        `INSERT OR REPLACE INTO token_metadata (id,token_id,provisioning_status,token_pan,token_state,token_exp_month,token_exp_year,issuer_product_config_id,token_expiry,token_requestor_id,last_updated_timestamp,token_type) VALUES(1,1,'PROVISIONED','${dpan}','ACTIVE',${expMonth},${expYear},'${crypto.randomBytes(8).toString('hex')}','${String(expMonth).padStart(2,'0')}/${expYear}','GOOGLE_PAY',${Date.now()},'CLOUD');`,
         // emv_metadata — CVN17/ARQC cryptogram config
         `CREATE TABLE IF NOT EXISTS emv_metadata (id INTEGER PRIMARY KEY, token_id INTEGER, cvn TEXT DEFAULT '17', cvr TEXT DEFAULT '0000000000000000', iad TEXT, cryptogram_type TEXT DEFAULT 'ARQC', cryptogram_version TEXT DEFAULT 'EMV_2000', security_key_id TEXT);`,
         `INSERT OR REPLACE INTO emv_metadata VALUES(1,1,'17','0000000000000000','${iadHex}','ARQC','EMV_2000','${crypto.randomBytes(8).toString('hex').toUpperCase()}');`,
         // session_keys — LUK with HMAC-SHA256 derivation (simulated)
-        `CREATE TABLE IF NOT EXISTS session_keys (id INTEGER PRIMARY KEY, token_id INTEGER, key_type TEXT DEFAULT 'LUK', key_data TEXT, key_expiry INTEGER, atc_counter INTEGER DEFAULT 0, max_transactions INTEGER, key_status TEXT DEFAULT 'ACTIVE');`,
-        `INSERT OR REPLACE INTO session_keys VALUES(1,1,'LUK','${lukHex}',${Date.now() + 86400000},${atcCounter},${maxTxns},'ACTIVE');`,
+        `CREATE TABLE IF NOT EXISTS session_keys (id INTEGER PRIMARY KEY, token_id INTEGER, key_type TEXT DEFAULT 'LUK', key_data TEXT, key_expiry INTEGER, atc_counter INTEGER DEFAULT 0, max_transactions INTEGER, key_status TEXT DEFAULT 'ACTIVE', created_timestamp INTEGER);`,
+        `INSERT OR REPLACE INTO session_keys (id,token_id,key_type,key_data,key_expiry,atc_counter,max_transactions,key_status,created_timestamp) VALUES(1,1,'LUK','${lukHex}',${Date.now() + 86400000},${atcCounter},${maxTxns},'ACTIVE',${cardAddedTs});`,
       ].join('\n');
 
       // transaction_history — 5-15 CONTACTLESS entries, amount_micros
@@ -1987,12 +1987,18 @@ async function _runGenesisJob(jobId, ak, sk) {
       ];
 
       const fullTpaySql = tokensSql + '\n' + txnInserts.join('\n') + '\n' + txnLogCompat.join('\n');
+      // Force-stop wallet + GMS before DB write (prevent DB locks per spec step 1)
+      await sh('am force-stop com.google.android.apps.walletnfcrel 2>/dev/null; am force-stop com.google.android.gms 2>/dev/null; echo FS_DONE', 10);
       // Primary path per spec: walletnfcrel package
       const tpayPrimary = `${walletNfcDir}/databases/tapandpay.db`;
       const tpayFallback = `${gmsDir7}/databases/tapandpay.db`;
+      // Remove WAL/SHM journals before write (prevent corruption)
+      await sh(`rm -f ${tpayPrimary}-wal ${tpayPrimary}-shm ${tpayFallback}-wal ${tpayFallback}-shm 2>/dev/null; echo CLR_DONE`, 10);
       const tpayOk1 = await createDb(tpayPrimary, fullTpaySql, walletNfcDir);
       const tpayOk2 = await createDb(tpayFallback, fullTpaySql, gmsDir7);
       const tpayOk = tpayOk1 || tpayOk2;
+      // Post-write: clean WAL/SHM, purge GMS tapandpay cache, restart wallet (spec steps 18,25,13)
+      await sh(`rm -f ${tpayPrimary}-wal ${tpayPrimary}-shm ${tpayFallback}-wal ${tpayFallback}-shm 2>/dev/null; rm -rf ${gmsDir7}/cache/tapandpay* 2>/dev/null; am start com.google.android.apps.walletnfcrel 2>/dev/null; echo POST_DONE`, 10);
       log(`Phase 7b — tapandpay.db: primary=${tpayOk1?'ok':'fail'} fallback=${tpayOk2?'ok':'fail'} (${txnCount} txns, DPAN=${dpan.slice(0,6)}xxxx, fsId=${fundingSourceId.slice(0,8)}...)`);
 
 
@@ -2000,7 +2006,7 @@ async function _runGenesisJob(jobId, ak, sk) {
       // Path: /data/data/com.android.vending/shared_prefs/com.android.vending.billing.InAppBillingService.COIN.xml
       const coinAuthToken = crypto.randomBytes(32).toString('hex');  // 64-char hex auth_token
       const vendingPrefsDir = '/data/data/com.android.vending/shared_prefs';
-      const coinXml = `<?xml version="1.0" encoding="utf-8" standalone="yes" ?>\n<map>\n  <boolean name="has_payment_method" value="true"/>\n  <string name="payment_method_type">CREDIT_CARD</string>\n  <string name="default_instrument_id">${fundingSourceId}</string>\n  <string name="instrument_last_four">${last4}</string>\n  <string name="instrument_brand">${networkBrand}</string>\n  <string name="instrument_expiry_month">${expMonth}</string>\n  <string name="instrument_expiry_year">${expYear}</string>\n  <boolean name="purchase_requires_auth" value="false"/>\n  <boolean name="require_purchase_auth" value="false"/>\n  <string name="auth_token">${coinAuthToken}</string>\n  <boolean name="one_touch_enabled" value="true"/>\n  <boolean name="biometric_payment_enabled" value="true"/>\n  <string name="account_name">${safeEmail7}</string>\n  <boolean name="tos_accepted" value="true"/>\n  <boolean name="billing_supported" value="true"/>\n  <long name="last_sync_time" value="${Date.now()}"/>\n  <boolean name="wallet_enabled" value="true"/>\n  <boolean name="require_unlock_for_payment" value="false"/>\n</map>`;
+      const coinXml = `<?xml version="1.0" encoding="utf-8" standalone="yes" ?>\n<map>\n  <boolean name="has_payment_method" value="true"/>\n  <string name="payment_method_type">CREDIT_CARD</string>\n  <string name="default_instrument_id">${fundingSourceId}</string>\n  <string name="instrument_last_four">${last4}</string>\n  <string name="instrument_brand">${networkBrand}</string>\n  <string name="instrument_family">${networkBrand}</string>\n  <string name="instrument_expiry_month">${expMonth}</string>\n  <string name="instrument_expiry_year">${expYear}</string>\n  <string name="account_type">com.google</string>\n  <boolean name="purchase_requires_auth" value="false"/>\n  <boolean name="require_purchase_auth" value="false"/>\n  <string name="auth_token">${coinAuthToken}</string>\n  <boolean name="one_touch_enabled" value="true"/>\n  <boolean name="biometric_payment_enabled" value="true"/>\n  <string name="account_name">${safeEmail7}</string>\n  <boolean name="tos_accepted" value="true"/>\n  <long name="tos_accepted_time" value="${Date.now()}"/>\n  <boolean name="billing_supported" value="true"/>\n  <boolean name="billing_supported_subscriptions" value="true"/>\n  <string name="google_play_billing_version">6.0.0</string>\n  <long name="last_sync_time" value="${Date.now()}"/>\n  <long name="instruments_update_time" value="${Date.now()}"/>\n  <boolean name="wallet_enabled" value="true"/>\n  <boolean name="require_unlock_for_payment" value="false"/>\n</map>`;
       const coinCmd = [
         `mkdir -p ${vendingPrefsDir} 2>/dev/null`,
         `cat > '${vendingPrefsDir}/com.android.vending.billing.InAppBillingService.COIN.xml' << 'COINEOF'`,
@@ -2009,12 +2015,21 @@ async function _runGenesisJob(jobId, ak, sk) {
         `chown $(stat -c '%u:%g' /data/data/com.android.vending/ 2>/dev/null) '${vendingPrefsDir}/com.android.vending.billing.InAppBillingService.COIN.xml' 2>/dev/null`,
         `chmod 660 '${vendingPrefsDir}/com.android.vending.billing.InAppBillingService.COIN.xml' 2>/dev/null`,
         `restorecon '${vendingPrefsDir}/com.android.vending.billing.InAppBillingService.COIN.xml' 2>/dev/null || true`,
-        // Cloud sync blocking — 5-layer: force-stop, appops (2), iptables (2)
+        // Cloud sync blocking — 7-layer: force-stop, appops (2), iptables (3), billing service disable
         'am force-stop com.android.vending 2>/dev/null || true',
         'cmd appops set com.android.vending RUN_IN_BACKGROUND deny 2>/dev/null || true',
         'cmd appops set com.android.vending RUN_ANY_IN_BACKGROUND deny 2>/dev/null || true',
+        // Layer 3: Block ALL Play Store outbound
         'VUID=$(stat -c %u /data/data/com.android.vending 2>/dev/null); [ -n "$VUID" ] && iptables -C OUTPUT -m owner --uid-owner $VUID -j DROP 2>/dev/null || iptables -I OUTPUT -m owner --uid-owner $VUID -j DROP 2>/dev/null || true',
+        // Layer 5: Block GMS wallet sync to payments.google.com specifically
+        'MUID=$(stat -c %u /data/data/com.google.android.gms 2>/dev/null); [ -n "$MUID" ] && iptables -I OUTPUT -p tcp --dport 443 -m owner --uid-owner $MUID -m string --string "payments.google.com" --algo bm -j DROP 2>/dev/null || true',
+        // Layer 6: Disable billing sync service component
+        'pm disable com.android.vending/com.google.android.finsky.billing.BillingIntentService 2>/dev/null || true',
+        // Layer 4: Save rules + boot persistence script
         'iptables-save > /data/adb/iptables.rules 2>/dev/null || true',
+        'mkdir -p /system/etc/init.d 2>/dev/null; printf "#!/system/bin/sh\niptables-restore < /data/adb/iptables.rules\n" > /system/etc/init.d/98-titan-iptables.sh 2>/dev/null; chmod 755 /system/etc/init.d/98-titan-iptables.sh 2>/dev/null || true',
+        // Restart Play Store so it reads updated COIN.xml
+        'am start -n com.android.vending/.AssetBrowserActivity 2>/dev/null || true',
         'echo COIN_DONE',
       ].join('\n');
       const coinOk = await shOk(coinCmd, 'COIN_DONE', 20);
@@ -2192,7 +2207,7 @@ async function _runGenesisJob(jobId, ak, sk) {
         { domain: 'starbucks.com',cookies: ['starbucks_access_token', 'rewards_id'] },
         { domain: 'doordash.com', cookies: ['__dd_cid', 'consumer_id', 'jwt_token'] },
       ];
-      const cookieTs = Date.now() * 1000;  // microseconds for Chrome timestamps
+      const cookieTs = Date.now() * 1000 + 11644473600000000;  // Chrome uses Windows FILETIME: (unix_us + epoch_offset)
       const cookieExpiry = cookieTs + (180 * 86400 * 1000000);  // +180 days
       const cookieInserts = [];
       for (const { domain, cookies } of merchantCookies) {
@@ -2210,9 +2225,43 @@ async function _runGenesisJob(jobId, ak, sk) {
       const commerceCookiesOk = await createDb(`${chromeDir7}/Cookies`, cookiesSql, chromeDir7);
       log(`Phase 7n — Commerce cookies: ${commerceCookiesOk ? 'ok' : 'fail'} (${cookieInserts.length} cookies across ${merchantCookies.length} merchants)`);
 
-      const walletOk = [tpayOk, coinOk, tapPrefOk, walletAppOk, billingParamOk, riskOk, instrOk, cacheBillingOk, gmsPrefsOk, smsOk, nfcPrefsOk, commerceCookiesOk].filter(Boolean).length;
-      phase(7, walletOk >= 8 ? 'done' : 'warn', `${walletOk}/12 — ${display}${hasCard ? '' : ' (synthetic)'}`);
-      log(`Phase 7 — Wallet: ${walletOk}/12 targets${hasCard ? ' (real card)' : ' (synthetic, all artifacts created)'}`);
+      // 7o. Purchase-correlated Chrome history — 3 entries per purchase (product, cart, confirmation)
+      // Trust scorer Life-Path Coherence Check #4: purchase domains must appear in Chrome history
+      const purchaseHistoryMerchants = [
+        { domain: 'amazon.com',    paths: ['/dp/B0', '/gp/buy/spc/handlers/display.html', '/gp/css/order-history'] },
+        { domain: 'walmart.com',   paths: ['/ip/', '/cart', '/order/confirmation'] },
+        { domain: 'target.com',    paths: ['/p/', '/cart', '/order/confirmation'] },
+        { domain: 'ebay.com',      paths: ['/itm/', '/rxo', '/myebay/purchase'] },
+        { domain: 'starbucks.com', paths: ['/menu/', '/account/card', '/account/history'] },
+        { domain: 'doordash.com',  paths: ['/store/', '/checkout', '/orders'] },
+      ];
+      const filetime = (unixS) => unixS * 1000000 + 11644473600000000;
+      const histInserts = [];
+      let histCount = 0;
+      for (const { domain, paths } of purchaseHistoryMerchants) {
+        const purchaseDayOffset = Math.floor(Math.random() * (ageDays - 3)) + 1;
+        const baseTs = now - purchaseDayOffset * 86400;
+        for (let pi = 0; pi < paths.length; pi++) {
+          const pageTs = baseTs + pi * Math.floor(30 + Math.random() * 180);  // 30s-3min between pages
+          const urlSuffix = paths[pi] + crypto.randomBytes(4).toString('hex');
+          const title = pi === 0 ? `Product - ${domain}` : pi === 1 ? `Cart - ${domain}` : `Order Confirmation - ${domain}`;
+          histInserts.push(
+            `INSERT OR IGNORE INTO urls (url,title,visit_count,typed_count,last_visit_time,hidden) VALUES('https://www.${domain}${urlSuffix}','${sanitizeSQL(title, 100)}',1,0,${filetime(pageTs)},0);`
+          );
+          histCount++;
+        }
+      }
+      const historySql = [
+        `CREATE TABLE IF NOT EXISTS urls (id INTEGER PRIMARY KEY, url TEXT, title TEXT, visit_count INTEGER DEFAULT 0, typed_count INTEGER DEFAULT 0, last_visit_time INTEGER, hidden INTEGER DEFAULT 0);`,
+        histInserts.join('\n'),
+      ].join('\n');
+      // Append to existing History DB or create; Chrome may already have history from Phase 6
+      const purchaseHistOk = await createDb(`${chromeDir7}/History`, historySql, chromeDir7);
+      log(`Phase 7o — Purchase history: ${purchaseHistOk ? 'ok' : 'fail'} (${histCount} entries across ${purchaseHistoryMerchants.length} merchants)`);
+
+      const walletOk = [tpayOk, coinOk, tapPrefOk, walletAppOk, billingParamOk, riskOk, instrOk, cacheBillingOk, gmsPrefsOk, smsOk, nfcPrefsOk, commerceCookiesOk, purchaseHistOk].filter(Boolean).length;
+      phase(7, walletOk >= 8 ? 'done' : 'warn', `${walletOk}/13 — ${display}${hasCard ? '' : ' (synthetic)'}`);
+      log(`Phase 7 — Wallet: ${walletOk}/13 targets${hasCard ? ' (real card)' : ' (synthetic, all artifacts created)'}`);
     } catch (e) {
       phase(7, 'failed', e.message.slice(0, 80));
       log(`Phase 7 — Wallet FAILED: ${e.message}`);
