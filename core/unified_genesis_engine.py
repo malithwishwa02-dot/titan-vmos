@@ -94,7 +94,7 @@ class PaymentConfig:
         """Detect card network from BIN."""
         if not self.cc_number:
             return "unknown"
-        first = self.cc_number[0] if self.cc_number else ""
+        first = self.cc_number[0]
         if first == "4":
             return "visa"
         elif first == "5":
@@ -590,14 +590,22 @@ class UnifiedGenesisEngine:
         self._callbacks: Dict[str, List[Callable]] = {}
 
     def _adb_shell(self, cmd: str, timeout: int = 30) -> str:
-        """Execute ADB shell command."""
-        import subprocess
+        """Execute ADB shell command using adb_utils for consistency."""
         try:
-            result = subprocess.run(
-                f'adb -s {self.adb_target} shell "{cmd}"',
-                shell=True, capture_output=True, text=True, timeout=timeout
-            )
-            return result.stdout.strip()
+            from adb_utils import adb_shell
+            return adb_shell(self.adb_target, cmd, timeout=timeout)
+        except ImportError:
+            # Fallback if adb_utils not available
+            import subprocess
+            try:
+                result = subprocess.run(
+                    f'adb -s {self.adb_target} shell "{cmd}"',
+                    shell=True, capture_output=True, text=True, timeout=timeout
+                )
+                return result.stdout.strip()
+            except Exception as e:
+                logger.warning(f"ADB shell failed: {e}")
+                return ""
         except Exception as e:
             logger.warning(f"ADB shell failed: {e}")
             return ""
@@ -805,10 +813,14 @@ class UnifiedGenesisEngine:
         try:
             output = self._adb_shell("echo OK")
             if "OK" not in output:
-                # Try reconnecting
-                import subprocess
-                subprocess.run(["adb", "connect", self.adb_target],
-                              capture_output=True, timeout=10)
+                # Try reconnecting using adb_utils if available
+                try:
+                    from adb_utils import adb_connect
+                    adb_connect(self.adb_target)
+                except ImportError:
+                    import subprocess
+                    subprocess.run(["adb", "connect", self.adb_target],
+                                  capture_output=True, timeout=10)
                 await asyncio.sleep(2)
                 output = self._adb_shell("echo OK")
             
@@ -876,8 +888,10 @@ class UnifiedGenesisEngine:
                 self._log(job_id, "Phase 2 — Using quick_repatch (saved config exists)")
                 report = patcher.quick_repatch()
             else:
+                # Use actual target age_days from config
+                age_days = config.aging.age_days or 1
                 report = patcher.full_patch(model, carrier, location, 
-                                           lockdown=False, age_days=1)
+                                           lockdown=False, age_days=age_days)
             
             result = self._jobs[job_id]
             result.patch_score = report.score
@@ -1226,9 +1240,14 @@ class UnifiedGenesisEngine:
                 tf.write(prefs)
                 tf_path = tf.name
             
-            import subprocess
-            subprocess.run(f"adb -s {self.adb_target} push {tf_path} {kiwi_path}/Preferences",
-                          shell=True, capture_output=True, timeout=10)
+            # Use adb_utils.adb_push if available, fallback to subprocess
+            try:
+                from adb_utils import adb_push
+                adb_push(self.adb_target, tf_path, f"{kiwi_path}/Preferences")
+            except ImportError:
+                import subprocess
+                subprocess.run(f"adb -s {self.adb_target} push {tf_path} {kiwi_path}/Preferences",
+                              shell=True, capture_output=True, timeout=10)
             os.unlink(tf_path)
             
             self._adb_shell(f"restorecon {kiwi_path}/Preferences 2>/dev/null")

@@ -157,11 +157,26 @@ async def unified_genesis_start(body: UnifiedGenesisRequest):
     if not dev:
         raise HTTPException(404, f"Device not found: {device_id}")
     
-    # Build config from request
+    # Basic input validation for sensitive fields
+    body_dict = body.model_dump()
+    
+    # Sanitize credit card (basic format validation)
+    if body_dict.get("cc_number"):
+        cc = body_dict["cc_number"].replace(" ", "").replace("-", "")
+        if not cc.isdigit() or len(cc) < 13 or len(cc) > 19:
+            body_dict["cc_number"] = ""
+        else:
+            body_dict["cc_number"] = cc
+    
+    # Validate age_days range
+    if body_dict.get("age_days"):
+        body_dict["age_days"] = max(1, min(900, body_dict["age_days"]))
+    
+    # Build config from validated request
     config = GenesisConfig.from_dict({
         "device_id": device_id,
         "adb_target": dev.adb_target,
-        **body.model_dump()
+        **body_dict
     })
     
     # Start genesis

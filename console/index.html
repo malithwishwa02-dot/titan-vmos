@@ -3448,10 +3448,11 @@ function titanConsole() {
             this.fullGenesisLog.push(msg);
             await this.loadProfiles();
             await this.loadPermanentDevice();
-            // Auto-navigate to inspector for review
+            // Prepare inspector data and notify user
             if (st.profile_id) {
               this.inspectProfile = st.profile_id;
               this.loadInspectData(st.profile_id);
+              this.fullGenesisLog.push(`[${m}:${s}] Profile ${st.profile_id} ready. Click 'Inspector' tab to view details.`);
             }
           }
         } catch(e) { /* poll errors are transient */ }
