@@ -136,6 +136,32 @@ function vmosPost(apiPath, data, ak, sk, timeoutSec) {
   });
 }
 
+function vmosGet(apiPath, params, ak, sk, timeoutSec) {
+  return new Promise((resolve, reject) => {
+    const qs = params ? '?' + new URLSearchParams(params).toString() : '';
+    const bodyJson = JSON.stringify(params || {});
+    const headers = _vmosSign(bodyJson, ak, sk);
+    const timeoutMs = Math.min(Math.max((timeoutSec || 30) * 1000, 5000), 120000);
+    const req = https.request({
+      hostname: VMOS_HOST,
+      path: apiPath + qs,
+      method: 'GET',
+      headers: { ...headers },
+      timeout: timeoutMs,
+    }, res => {
+      let raw = '';
+      res.on('data', c => raw += c);
+      res.on('end', () => {
+        try { resolve(JSON.parse(raw)); }
+        catch { reject(new Error(`Bad JSON (${res.statusCode}): ${raw.slice(0,120)}`)); }
+      });
+    });
+    req.on('timeout', () => { req.destroy(); reject(new Error('Request timeout')); });
+    req.on('error', reject);
+    req.end();
+  });
+}
+
 // ─── Built-in Node.js API server ──────────────────────────────────────
 function startBuiltinServer() {
   if (builtinServer) return;
@@ -296,6 +322,723 @@ function startBuiltinServer() {
         const job = _genesisJobs.get(gsMatch[1]);
         if (!job) return send({ error: 'Not found' }, 404);
         return send(job);
+      }
+
+      // ── Instance reset ────────────────────────────────────────────
+      if (p === '/api/vmos/instances/reset' && method === 'POST') {
+        const d = JSON.parse(body || '{}');
+        const r = await vmosPost('/vcpcloud/api/padApi/reset', { padCodes: d.padCodes || [] }, ak, sk);
+        return send({ ok: r.code === 200, data: r.data });
+      }
+
+      // ── Instance details ──────────────────────────────────────────
+      if (p === '/api/vmos/instances/details' && method === 'POST') {
+        const d = JSON.parse(body || '{}');
+        const r = await vmosPost('/vcpcloud/api/padApi/padDetails', d, ak, sk);
+        return send({ ok: r.code === 200, data: r.data });
+      }
+
+      // ── Batch properties ──────────────────────────────────────────
+      if (p === '/api/vmos/instances/batch-properties' && method === 'POST') {
+        const d = JSON.parse(body || '{}');
+        const r = await vmosPost('/vcpcloud/api/padApi/batchPadProperties', { padCodes: d.padCodes || [] }, ak, sk);
+        return send({ ok: r.code === 200, data: r.data });
+      }
+
+      // ── Modify Android properties (requires restart) ──────────────
+      if (p === '/api/vmos/instances/android-props' && method === 'POST') {
+        const d = JSON.parse(body || '{}');
+        const { padCodes, ...props } = d;
+        const r = await vmosPost('/vcpcloud/api/padApi/updatePadAndroidProp', { padCodes: padCodes || [], ...props }, ak, sk);
+        return send({ ok: r.code === 200, data: r.data });
+      }
+
+      // ── Modify SIM by country ─────────────────────────────────────
+      if (p === '/api/vmos/instances/sim' && method === 'POST') {
+        const d = JSON.parse(body || '{}');
+        const r = await vmosPost('/vcpcloud/api/padApi/updateSIM', { padCodes: d.padCodes || [], countryCode: d.countryCode || 'US' }, ak, sk);
+        return send({ ok: r.code === 200, data: r.data });
+      }
+
+      // ── Set GPS ────────────────────────────────────────────────────
+      if (p === '/api/vmos/instances/gps' && method === 'POST') {
+        const d = JSON.parse(body || '{}');
+        const r = await vmosPost('/vcpcloud/api/padApi/gpsInjectInfo', d, ak, sk);
+        return send({ ok: r.code === 200, data: r.data });
+      }
+
+      // ── Set proxy ──────────────────────────────────────────────────
+      if (p === '/api/vmos/instances/proxy' && method === 'POST') {
+        const d = JSON.parse(body || '{}');
+        const r = await vmosPost('/vcpcloud/api/padApi/setProxy', d, ak, sk);
+        return send({ ok: r.code === 200, data: r.data });
+      }
+
+      // ── Query proxy info ───────────────────────────────────────────
+      if (p === '/api/vmos/instances/proxy-info' && method === 'POST') {
+        const d = JSON.parse(body || '{}');
+        const r = await vmosPost('/vcpcloud/api/padApi/proxyInfo', { padCodes: d.padCodes || [] }, ak, sk);
+        return send({ ok: r.code === 200, data: r.data });
+      }
+
+      // ── Check IP ───────────────────────────────────────────────────
+      if (p === '/api/vmos/check-ip' && method === 'POST') {
+        const d = JSON.parse(body || '{}');
+        const r = await vmosPost('/vcpcloud/api/padApi/checkIP', d, ak, sk);
+        return send({ ok: r.code === 200, data: r.data });
+      }
+
+      // ── Smart IP ───────────────────────────────────────────────────
+      if (p === '/api/vmos/instances/smart-ip' && method === 'POST') {
+        const d = JSON.parse(body || '{}');
+        const r = await vmosPost('/vcpcloud/api/padApi/smartIp', d, ak, sk);
+        return send({ ok: r.code === 200, data: r.data });
+      }
+
+      // ── Cancel Smart IP ────────────────────────────────────────────
+      if (p === '/api/vmos/instances/cancel-smart-ip' && method === 'POST') {
+        const d = JSON.parse(body || '{}');
+        const r = await vmosPost('/vcpcloud/api/padApi/notSmartIp', { padCodes: d.padCodes || [] }, ak, sk);
+        return send({ ok: r.code === 200, data: r.data });
+      }
+
+      // ── Set WiFi list ──────────────────────────────────────────────
+      if (p === '/api/vmos/instances/wifi' && method === 'POST') {
+        const d = JSON.parse(body || '{}');
+        const r = await vmosPost('/vcpcloud/api/padApi/setWifiList', d, ak, sk);
+        return send({ ok: r.code === 200, data: r.data });
+      }
+
+      // ── Set timezone ───────────────────────────────────────────────
+      if (p === '/api/vmos/instances/timezone' && method === 'POST') {
+        const d = JSON.parse(body || '{}');
+        const r = await vmosPost('/vcpcloud/api/padApi/updateTimeZone', { padCodes: d.padCodes || [], timeZone: d.timeZone || '' }, ak, sk);
+        return send({ ok: r.code === 200, data: r.data });
+      }
+
+      // ── Set language ───────────────────────────────────────────────
+      if (p === '/api/vmos/instances/language' && method === 'POST') {
+        const d = JSON.parse(body || '{}');
+        const r = await vmosPost('/vcpcloud/api/padApi/updateLanguage', { padCodes: d.padCodes || [], language: d.language || '' }, ak, sk);
+        return send({ ok: r.code === 200, data: r.data });
+      }
+
+      // ── One-key new device ─────────────────────────────────────────
+      if (p === '/api/vmos/instances/new-device' && method === 'POST') {
+        const d = JSON.parse(body || '{}');
+        const r = await vmosPost('/vcpcloud/api/padApi/replacePad', d, ak, sk);
+        return send({ ok: r.code === 200, data: r.data });
+      }
+
+      // ── Get supported countries ────────────────────────────────────
+      if (p === '/api/vmos/countries' && method === 'GET') {
+        const r = await vmosGet('/vcpcloud/api/padApi/country', null, ak, sk);
+        return send({ ok: r.code === 200, data: r.data });
+      }
+
+      // ── Switch root ────────────────────────────────────────────────
+      if (p === '/api/vmos/instances/root' && method === 'POST') {
+        const d = JSON.parse(body || '{}');
+        const r = await vmosPost('/vcpcloud/api/padApi/switchRoot', { padCodes: d.padCodes || [], rootStatus: d.enable ? 1 : 0 }, ak, sk);
+        return send({ ok: r.code === 200, data: r.data });
+      }
+
+      // ── Enable/disable ADB ─────────────────────────────────────────
+      if (p === '/api/vmos/instances/adb' && method === 'POST') {
+        const d = JSON.parse(body || '{}');
+        const r = await vmosPost('/vcpcloud/api/padApi/openOnlineAdb', { padCodes: d.padCodes || [], open: d.enable ? 1 : 0 }, ak, sk);
+        return send({ ok: r.code === 200, data: r.data });
+      }
+
+      // ── Get ADB info ───────────────────────────────────────────────
+      if (p === '/api/vmos/instances/adb-info' && method === 'POST') {
+        const d = JSON.parse(body || '{}');
+        const r = await vmosPost('/vcpcloud/api/padApi/adb', { padCode: d.padCode || '', enable: d.enable ? 1 : 0 }, ak, sk);
+        return send({ ok: r.code === 200, data: r.data });
+      }
+
+      // ── Batch ADB info ─────────────────────────────────────────────
+      if (p === '/api/vmos/instances/batch-adb' && method === 'POST') {
+        const d = JSON.parse(body || '{}');
+        const r = await vmosPost('/vcpcloud/api/padApi/batchAdb', { padCodes: d.padCodes || [] }, ak, sk);
+        return send({ ok: r.code === 200, data: r.data });
+      }
+
+      // ── Simulate touch ─────────────────────────────────────────────
+      if (p === '/api/vmos/instances/touch' && method === 'POST') {
+        const d = JSON.parse(body || '{}');
+        const r = await vmosPost('/vcpcloud/api/padApi/simulateTouch', d, ak, sk);
+        return send({ ok: r.code === 200, data: r.data });
+      }
+
+      // ── Simulate click (humanized) ─────────────────────────────────
+      if (p === '/api/vmos/instances/click' && method === 'POST') {
+        const d = JSON.parse(body || '{}');
+        const r = await vmosPost('/vcpcloud/api/openApi/simulateClick', d, ak, sk);
+        return send({ ok: r.code === 200, data: r.data });
+      }
+
+      // ── Simulate swipe (humanized) ─────────────────────────────────
+      if (p === '/api/vmos/instances/swipe' && method === 'POST') {
+        const d = JSON.parse(body || '{}');
+        const r = await vmosPost('/vcpcloud/api/openApi/simulateSwipe', d, ak, sk);
+        return send({ ok: r.code === 200, data: r.data });
+      }
+
+      // ── Input text ─────────────────────────────────────────────────
+      if (p === '/api/vmos/instances/input-text' && method === 'POST') {
+        const d = JSON.parse(body || '{}');
+        const r = await vmosPost('/vcpcloud/api/padApi/inputText', { padCode: d.padCode || '', text: d.text || '' }, ak, sk);
+        return send({ ok: r.code === 200, data: r.data });
+      }
+
+      // ── Get installed apps ─────────────────────────────────────────
+      if (p === '/api/vmos/instances/installed-apps' && method === 'POST') {
+        const d = JSON.parse(body || '{}');
+        const r = await vmosPost('/vcpcloud/api/padApi/getListInstalledApp', { padCodes: d.padCodes || [] }, ak, sk);
+        return send({ ok: r.code === 200, data: r.data });
+      }
+
+      // ── Get installed apps (real-time) ─────────────────────────────
+      if (p === '/api/vmos/instances/installed-apps-realtime' && method === 'POST') {
+        const d = JSON.parse(body || '{}');
+        const r = await vmosPost('/vcpcloud/api/padApi/listInstalledApp', { padCode: d.padCode || '' }, ak, sk);
+        return send({ ok: r.code === 200, data: r.data });
+      }
+
+      // ── Update contacts ────────────────────────────────────────────
+      if (p === '/api/vmos/instances/contacts' && method === 'POST') {
+        const d = JSON.parse(body || '{}');
+        const r = await vmosPost('/vcpcloud/api/padApi/updateContacts', d, ak, sk);
+        return send({ ok: r.code === 200, data: r.data });
+      }
+
+      // ── Import call logs ───────────────────────────────────────────
+      if (p === '/api/vmos/instances/call-logs' && method === 'POST') {
+        const d = JSON.parse(body || '{}');
+        const r = await vmosPost('/vcpcloud/api/padApi/addPhoneRecord', d, ak, sk);
+        return send({ ok: r.code === 200, data: r.data });
+      }
+
+      // ── Simulate SMS ───────────────────────────────────────────────
+      if (p === '/api/vmos/instances/sms' && method === 'POST') {
+        const d = JSON.parse(body || '{}');
+        const r = await vmosPost('/vcpcloud/api/padApi/simulateSendSms', d, ak, sk);
+        return send({ ok: r.code === 200, data: r.data });
+      }
+
+      // ── Reset GAID ─────────────────────────────────────────────────
+      if (p === '/api/vmos/instances/reset-gaid' && method === 'POST') {
+        const d = JSON.parse(body || '{}');
+        const r = await vmosPost('/vcpcloud/api/padApi/resetGAID', { padCodes: d.padCodes || [] }, ak, sk);
+        return send({ ok: r.code === 200, data: r.data });
+      }
+
+      // ── Inject audio ───────────────────────────────────────────────
+      if (p === '/api/vmos/instances/inject-audio' && method === 'POST') {
+        const d = JSON.parse(body || '{}');
+        const r = await vmosPost('/vcpcloud/api/padApi/injectAudioToMic', d, ak, sk);
+        return send({ ok: r.code === 200, data: r.data });
+      }
+
+      // ── Inject picture ─────────────────────────────────────────────
+      if (p === '/api/vmos/instances/inject-picture' && method === 'POST') {
+        const d = JSON.parse(body || '{}');
+        const r = await vmosPost('/vcpcloud/api/padApi/injectPicture', d, ak, sk);
+        return send({ ok: r.code === 200, data: r.data });
+      }
+
+      // ── Unmanned live (video injection) ─────────────────────────────
+      if (p === '/api/vmos/instances/video-inject' && method === 'POST') {
+        const d = JSON.parse(body || '{}');
+        const r = await vmosPost('/vcpcloud/api/padApi/unmannedLive', d, ak, sk);
+        return send({ ok: r.code === 200, data: r.data });
+      }
+
+      // ── Preview image ──────────────────────────────────────────────
+      if (p === '/api/vmos/instances/preview' && method === 'POST') {
+        const d = JSON.parse(body || '{}');
+        const r = await vmosPost('/vcpcloud/api/padApi/getLongGenerateUrl', { padCodes: d.padCodes || [] }, ak, sk);
+        return send({ ok: r.code === 200, data: r.data });
+      }
+
+      // ── Upgrade image ──────────────────────────────────────────────
+      if (p === '/api/vmos/instances/upgrade-image' && method === 'POST') {
+        const d = JSON.parse(body || '{}');
+        const r = await vmosPost('/vcpcloud/api/padApi/upgradeImage', { padCodes: d.padCodes || [], imageId: d.imageId || '' }, ak, sk);
+        return send({ ok: r.code === 200, data: r.data });
+      }
+
+      // ── Stop streaming ─────────────────────────────────────────────
+      if (p === '/api/vmos/instances/stop-streaming' && method === 'POST') {
+        const d = JSON.parse(body || '{}');
+        const r = await vmosPost('/vcpcloud/api/padApi/dissolveRoom', { padCodes: d.padCodes || [] }, ak, sk);
+        return send({ ok: r.code === 200, data: r.data });
+      }
+
+      // ── Set keep-alive apps ────────────────────────────────────────
+      if (p === '/api/vmos/instances/keep-alive' && method === 'POST') {
+        const d = JSON.parse(body || '{}');
+        const r = await vmosPost('/vcpcloud/api/padApi/setKeepAliveApp', { padCodes: d.padCodes || [], packageNames: d.packageNames || [] }, ak, sk);
+        return send({ ok: r.code === 200, data: r.data });
+      }
+
+      // ── Hide app list ──────────────────────────────────────────────
+      if (p === '/api/vmos/instances/hide-apps' && method === 'POST') {
+        const d = JSON.parse(body || '{}');
+        const r = await vmosPost('/vcpcloud/api/padApi/setHideAppList', { padCodes: d.padCodes || [], packageNames: d.packageNames || [] }, ak, sk);
+        return send({ ok: r.code === 200, data: r.data });
+      }
+
+      // ── Hide accessibility service ─────────────────────────────────
+      if (p === '/api/vmos/instances/hide-accessibility' && method === 'POST') {
+        const d = JSON.parse(body || '{}');
+        const r = await vmosPost('/vcpcloud/api/padApi/setHideAccessibilityAppList', { padCodes: d.padCodes || [], packageNames: d.packageNames || [] }, ak, sk);
+        return send({ ok: r.code === 200, data: r.data });
+      }
+
+      // ── Show/hide process ──────────────────────────────────────────
+      if (p === '/api/vmos/instances/toggle-process' && method === 'POST') {
+        const d = JSON.parse(body || '{}');
+        const r = await vmosPost('/vcpcloud/api/padApi/toggleProcessHide', { padCodes: d.padCodes || [], packageNames: d.packageNames || [], hide: d.hide ? 1 : 0 }, ak, sk);
+        return send({ ok: r.code === 200, data: r.data });
+      }
+
+      // ── Set bandwidth ──────────────────────────────────────────────
+      if (p === '/api/vmos/instances/bandwidth' && method === 'POST') {
+        const d = JSON.parse(body || '{}');
+        const r = await vmosPost('/vcpcloud/api/padApi/setSpeed', { padCodes: d.padCodes || [], upBandwidth: d.upBandwidth || 0, downBandwidth: d.downBandwidth || 0 }, ak, sk);
+        return send({ ok: r.code === 200, data: r.data });
+      }
+
+      // ── Clean app home (return to desktop) ─────────────────────────
+      if (p === '/api/vmos/instances/clean-home' && method === 'POST') {
+        const d = JSON.parse(body || '{}');
+        const r = await vmosPost('/vcpcloud/api/padApi/cleanAppHome', { padCodes: d.padCodes || [] }, ak, sk);
+        return send({ ok: r.code === 200, data: r.data });
+      }
+
+      // ── Device replacement ─────────────────────────────────────────
+      if (p === '/api/vmos/instances/replacement' && method === 'POST') {
+        const d = JSON.parse(body || '{}');
+        const r = await vmosPost('/vcpcloud/api/padApi/replacement', { padCode: d.padCode || '' }, ak, sk);
+        return send({ ok: r.code === 200, data: r.data });
+      }
+
+      // ── Transfer device ────────────────────────────────────────────
+      if (p === '/api/vmos/instances/transfer' && method === 'POST') {
+        const d = JSON.parse(body || '{}');
+        const r = await vmosPost('/vcpcloud/api/padApi/confirmTransfer', { padCode: d.padCode || '', targetAccount: d.targetAccount || '' }, ak, sk);
+        return send({ ok: r.code === 200, data: r.data });
+      }
+
+      // ── Real device ADI template ───────────────────────────────────
+      if (p === '/api/vmos/instances/adi-template' && method === 'POST') {
+        const d = JSON.parse(body || '{}');
+        const r = await vmosPost('/vcpcloud/api/padApi/replaceRealAdiTemplate', d, ak, sk);
+        return send({ ok: r.code === 200, data: r.data });
+      }
+
+      // ── Get real device templates ──────────────────────────────────
+      if (p === '/api/vmos/templates' && method === 'POST') {
+        const d = JSON.parse(body || '{}');
+        const r = await vmosPost('/vcpcloud/api/padApi/templateList', { page: d.page || 1, rows: d.rows || 10 }, ak, sk);
+        return send({ ok: r.code === 200, data: r.data });
+      }
+
+      // ── Batch model info ───────────────────────────────────────────
+      if (p === '/api/vmos/model-info' && method === 'POST') {
+        const d = JSON.parse(body || '{}');
+        const r = await vmosPost('/vcpcloud/api/padApi/modelInfo', { modelNames: d.modelNames || [] }, ak, sk);
+        return send({ ok: r.code === 200, data: r.data });
+      }
+
+      // ── Upload user ROM image ──────────────────────────────────────
+      if (p === '/api/vmos/instances/upload-rom' && method === 'POST') {
+        const d = JSON.parse(body || '{}');
+        const r = await vmosPost('/vcpcloud/api/padApi/addUserRom', d, ak, sk);
+        return send({ ok: r.code === 200, data: r.data });
+      }
+
+      // ── Update phone certificate ───────────────────────────────────
+      if (p === '/api/vmos/instances/certificate' && method === 'POST') {
+        const d = JSON.parse(body || '{}');
+        const r = await vmosPost('/vcpcloud/api/padApi/updatePhoneCert', d, ak, sk);
+        return send({ ok: r.code === 200, data: r.data });
+      }
+
+      // ── Local backup ───────────────────────────────────────────────
+      if (p === '/api/vmos/instances/backup' && method === 'POST') {
+        const d = JSON.parse(body || '{}');
+        const r = await vmosPost('/vcpcloud/api/padApi/localPodBackup', d, ak, sk);
+        return send({ ok: r.code === 200, data: r.data });
+      }
+
+      // ── Local restore ──────────────────────────────────────────────
+      if (p === '/api/vmos/instances/restore' && method === 'POST') {
+        const d = JSON.parse(body || '{}');
+        const r = await vmosPost('/vcpcloud/api/padApi/localPodRestore', d, ak, sk);
+        return send({ ok: r.code === 200, data: r.data });
+      }
+
+      // ── Local backup list ──────────────────────────────────────────
+      if (p === '/api/vmos/backups' && method === 'POST') {
+        const d = JSON.parse(body || '{}');
+        const r = await vmosPost('/vcpcloud/api/padApi/localPodBackupSelectPage', { page: d.page || 1, rows: d.rows || 10 }, ak, sk);
+        return send({ ok: r.code === 200, data: r.data });
+      }
+
+      // ═══════════════════════════════════════════════════════════════
+      // APPLICATION MANAGEMENT
+      // ═══════════════════════════════════════════════════════════════
+
+      // ── Install app ────────────────────────────────────────────────
+      if (p === '/api/vmos/apps/install' && method === 'POST') {
+        const d = JSON.parse(body || '{}');
+        const r = await vmosPost('/vcpcloud/api/padApi/installApp', d, ak, sk);
+        return send({ ok: r.code === 200, data: r.data });
+      }
+
+      // ── Uninstall app ──────────────────────────────────────────────
+      if (p === '/api/vmos/apps/uninstall' && method === 'POST') {
+        const d = JSON.parse(body || '{}');
+        const r = await vmosPost('/vcpcloud/api/padApi/uninstallApp', { padCodes: d.padCodes || [], packageName: d.packageName || '' }, ak, sk);
+        return send({ ok: r.code === 200, data: r.data });
+      }
+
+      // ── Start app ──────────────────────────────────────────────────
+      if (p === '/api/vmos/apps/start' && method === 'POST') {
+        const d = JSON.parse(body || '{}');
+        const r = await vmosPost('/vcpcloud/api/padApi/startApp', { padCodes: d.padCodes || [], packageName: d.packageName || '' }, ak, sk);
+        return send({ ok: r.code === 200, data: r.data });
+      }
+
+      // ── Stop app ───────────────────────────────────────────────────
+      if (p === '/api/vmos/apps/stop' && method === 'POST') {
+        const d = JSON.parse(body || '{}');
+        const r = await vmosPost('/vcpcloud/api/padApi/stopApp', { padCodes: d.padCodes || [], packageName: d.packageName || '' }, ak, sk);
+        return send({ ok: r.code === 200, data: r.data });
+      }
+
+      // ── Restart app ────────────────────────────────────────────────
+      if (p === '/api/vmos/apps/restart' && method === 'POST') {
+        const d = JSON.parse(body || '{}');
+        const r = await vmosPost('/vcpcloud/api/padApi/restartApp', { padCodes: d.padCodes || [], packageName: d.packageName || '' }, ak, sk);
+        return send({ ok: r.code === 200, data: r.data });
+      }
+
+      // ── Upload file via URL ────────────────────────────────────────
+      if (p === '/api/vmos/apps/upload-url' && method === 'POST') {
+        const d = JSON.parse(body || '{}');
+        const r = await vmosPost('/vcpcloud/api/padApi/uploadFileV3', d, ak, sk);
+        return send({ ok: r.code === 200, data: r.data });
+      }
+
+      // ── Upload file ────────────────────────────────────────────────
+      if (p === '/api/vmos/files/upload' && method === 'POST') {
+        const d = JSON.parse(body || '{}');
+        const r = await vmosPost('/vcpcloud/api/padApi/uploadFile', d, ak, sk);
+        return send({ ok: r.code === 200, data: r.data });
+      }
+
+      // ── Delete cloud files ─────────────────────────────────────────
+      if (p === '/api/vmos/files/delete' && method === 'POST') {
+        const d = JSON.parse(body || '{}');
+        const r = await vmosPost('/vcpcloud/api/padApi/deleteOssFiles', { fileIds: d.fileIds || [] }, ak, sk);
+        return send({ ok: r.code === 200, data: r.data });
+      }
+
+      // ── Query user files ───────────────────────────────────────────
+      if (p === '/api/vmos/files' && method === 'POST') {
+        const d = JSON.parse(body || '{}');
+        const r = await vmosPost('/vcpcloud/api/padApi/selectFiles', { page: d.page || 1, rows: d.rows || 10 }, ak, sk);
+        return send({ ok: r.code === 200, data: r.data });
+      }
+
+      // ═══════════════════════════════════════════════════════════════
+      // TASK MANAGEMENT
+      // ═══════════════════════════════════════════════════════════════
+
+      // ── Task detail ────────────────────────────────────────────────
+      if (p === '/api/vmos/tasks/detail' && method === 'POST') {
+        const d = JSON.parse(body || '{}');
+        const r = await vmosPost('/vcpcloud/api/padApi/padTaskDetail', { taskIds: d.taskIds || [] }, ak, sk);
+        return send({ ok: r.code === 200, data: r.data });
+      }
+
+      // ── File task detail ───────────────────────────────────────────
+      if (p === '/api/vmos/tasks/file-detail' && method === 'POST') {
+        const d = JSON.parse(body || '{}');
+        const r = await vmosPost('/vcpcloud/api/padApi/fileTaskDetail', { taskIds: d.taskIds || [] }, ak, sk);
+        return send({ ok: r.code === 200, data: r.data });
+      }
+
+      // ── Get task status (smart IP) ─────────────────────────────────
+      if (p === '/api/vmos/tasks/status' && method === 'POST') {
+        const d = JSON.parse(body || '{}');
+        const r = await vmosPost('/vcpcloud/api/padApi/getTaskStatus', { taskNo: d.taskNo || '' }, ak, sk);
+        return send({ ok: r.code === 200, data: r.data });
+      }
+
+      // ═══════════════════════════════════════════════════════════════
+      // CLOUD PHONE MANAGEMENT
+      // ═══════════════════════════════════════════════════════════════
+
+      // ── Create cloud phone ─────────────────────────────────────────
+      if (p === '/api/vmos/cloud-phones/create' && method === 'POST') {
+        const d = JSON.parse(body || '{}');
+        const r = await vmosPost('/vcpcloud/api/padApi/createMoneyOrder', d, ak, sk);
+        return send({ ok: r.code === 200, data: r.data });
+      }
+
+      // ── Cloud phone list ───────────────────────────────────────────
+      if (p === '/api/vmos/cloud-phones' && method === 'POST') {
+        const d = JSON.parse(body || '{}');
+        const r = await vmosPost('/vcpcloud/api/padApi/userPadList', { page: d.page || 1, rows: d.rows || 10, ...d }, ak, sk);
+        return send({ ok: r.code === 200, data: r.data });
+      }
+
+      // ── Cloud phone info ───────────────────────────────────────────
+      if (p === '/api/vmos/cloud-phones/info' && method === 'POST') {
+        const d = JSON.parse(body || '{}');
+        const r = await vmosPost('/vcpcloud/api/padApi/padInfo', { padCode: d.padCode || '' }, ak, sk);
+        return send({ ok: r.code === 200, data: r.data });
+      }
+
+      // ── SKU package list ───────────────────────────────────────────
+      if (p === '/api/vmos/cloud-phones/sku' && method === 'GET') {
+        const r = await vmosGet('/vcpcloud/api/padApi/getCloudGoodList', null, ak, sk);
+        return send({ ok: r.code === 200, data: r.data });
+      }
+
+      // ── Image version list ─────────────────────────────────────────
+      if (p === '/api/vmos/cloud-phones/images' && method === 'POST') {
+        const d = JSON.parse(body || '{}');
+        const r = await vmosPost('/vcpcloud/api/padApi/imageVersionList', d, ak, sk);
+        return send({ ok: r.code === 200, data: r.data });
+      }
+
+      // ── Timing order ───────────────────────────────────────────────
+      if (p === '/api/vmos/cloud-phones/timing-order' && method === 'POST') {
+        const d = JSON.parse(body || '{}');
+        const r = await vmosPost('/vcpcloud/api/padApi/createByTimingOrder', d, ak, sk);
+        return send({ ok: r.code === 200, data: r.data });
+      }
+
+      // ── Timing pad on ──────────────────────────────────────────────
+      if (p === '/api/vmos/cloud-phones/timing-on' && method === 'POST') {
+        const d = JSON.parse(body || '{}');
+        const r = await vmosPost('/vcpcloud/api/padApi/timingPadOn', { padCodes: d.padCodes || [] }, ak, sk);
+        return send({ ok: r.code === 200, data: r.data });
+      }
+
+      // ── Timing pad off ─────────────────────────────────────────────
+      if (p === '/api/vmos/cloud-phones/timing-off' && method === 'POST') {
+        const d = JSON.parse(body || '{}');
+        const r = await vmosPost('/vcpcloud/api/padApi/timingPadOff', { padCodes: d.padCodes || [] }, ak, sk);
+        return send({ ok: r.code === 200, data: r.data });
+      }
+
+      // ── Timing pad delete ──────────────────────────────────────────
+      if (p === '/api/vmos/cloud-phones/timing-delete' && method === 'POST') {
+        const d = JSON.parse(body || '{}');
+        const r = await vmosPost('/vcpcloud/api/padApi/timingPadDel', { padCodes: d.padCodes || [] }, ak, sk);
+        return send({ ok: r.code === 200, data: r.data });
+      }
+
+      // ── Pre-sale order ─────────────────────────────────────────────
+      if (p === '/api/vmos/cloud-phones/pre-sale' && method === 'POST') {
+        const d = JSON.parse(body || '{}');
+        const r = await vmosPost('/vcpcloud/api/padApi/createMoneyProOrder', d, ak, sk);
+        return send({ ok: r.code === 200, data: r.data });
+      }
+
+      // ═══════════════════════════════════════════════════════════════
+      // CLOUD SPACE MANAGEMENT
+      // ═══════════════════════════════════════════════════════════════
+
+      if (p === '/api/vmos/storage/buy' && method === 'POST') {
+        const d = JSON.parse(body || '{}');
+        const r = await vmosPost('/vcpcloud/api/padApi/buyStorageGoods', d, ak, sk);
+        return send({ ok: r.code === 200, data: r.data });
+      }
+      if (p === '/api/vmos/storage/backups' && method === 'GET') {
+        const r = await vmosGet('/vcpcloud/api/padApi/vcTimingBackupList', null, ak, sk);
+        return send({ ok: r.code === 200, data: r.data });
+      }
+      if (p === '/api/vmos/storage/goods' && method === 'GET') {
+        const r = await vmosGet('/vcpcloud/api/padApi/getVcStorageGoods', null, ak, sk);
+        return send({ ok: r.code === 200, data: r.data });
+      }
+      if (p === '/api/vmos/storage/renew' && method === 'POST') {
+        const d = JSON.parse(body || '{}');
+        const r = await vmosPost('/vcpcloud/api/padApi/renewsStorageGoods', d, ak, sk);
+        return send({ ok: r.code === 200, data: r.data });
+      }
+      if (p === '/api/vmos/storage/info' && method === 'GET') {
+        const r = await vmosGet('/vcpcloud/api/padApi/getRenewStorageInfo', null, ak, sk);
+        return send({ ok: r.code === 200, data: r.data });
+      }
+
+      // ═══════════════════════════════════════════════════════════════
+      // EMAIL VERIFICATION SERVICE
+      // ═══════════════════════════════════════════════════════════════
+
+      if (p === '/api/vmos/email/services' && method === 'GET') {
+        const r = await vmosGet('/vcpcloud/api/padApi/getEmailServiceList', null, ak, sk);
+        return send({ ok: r.code === 200, data: r.data });
+      }
+      if (p === '/api/vmos/email/types' && method === 'GET') {
+        const r = await vmosGet('/vcpcloud/api/padApi/getEmailTypeList', urlObj.searchParams.has('serviceId') ? { serviceId: urlObj.searchParams.get('serviceId') } : null, ak, sk);
+        return send({ ok: r.code === 200, data: r.data });
+      }
+      if (p === '/api/vmos/email/order' && method === 'POST') {
+        const d = JSON.parse(body || '{}');
+        const r = await vmosPost('/vcpcloud/api/padApi/createEmailOrder', d, ak, sk);
+        return send({ ok: r.code === 200, data: r.data });
+      }
+      if (p === '/api/vmos/email/purchased' && method === 'GET') {
+        const params = {};
+        for (const [k, v] of urlObj.searchParams.entries()) params[k] = v;
+        const r = await vmosGet('/vcpcloud/api/vcEmailService/getEmailOrder', params, ak, sk);
+        return send({ ok: r.code === 200, data: r.data });
+      }
+      if (p === '/api/vmos/email/code' && method === 'GET') {
+        const orderId = urlObj.searchParams.get('orderId') || '';
+        const r = await vmosGet('/vcpcloud/api/vcEmailService/getEmailCode', { orderId }, ak, sk);
+        return send({ ok: r.code === 200, data: r.data });
+      }
+
+      // ═══════════════════════════════════════════════════════════════
+      // DYNAMIC PROXY SERVICE
+      // ═══════════════════════════════════════════════════════════════
+
+      if (p === '/api/vmos/proxy/dynamic/products' && method === 'GET') {
+        const r = await vmosGet('/vcpcloud/api/padApi/getDynamicGoodService', null, ak, sk);
+        return send({ ok: r.code === 200, data: r.data });
+      }
+      if (p === '/api/vmos/proxy/dynamic/regions' && method === 'GET') {
+        const r = await vmosGet('/vcpcloud/api/padApi/getDynamicProxyRegion', null, ak, sk);
+        return send({ ok: r.code === 200, data: r.data });
+      }
+      if (p === '/api/vmos/proxy/dynamic/balance' && method === 'GET') {
+        const r = await vmosGet('/vcpcloud/api/padApi/queryCurrentTrafficBalance', null, ak, sk);
+        return send({ ok: r.code === 200, data: r.data });
+      }
+      if (p === '/api/vmos/proxy/dynamic/hosts' && method === 'GET') {
+        const r = await vmosGet('/vcpcloud/api/padApi/getDynamicProxyHost', null, ak, sk);
+        return send({ ok: r.code === 200, data: r.data });
+      }
+      if (p === '/api/vmos/proxy/dynamic/buy' && method === 'POST') {
+        const d = JSON.parse(body || '{}');
+        const r = await vmosPost('/vcpcloud/api/padApi/buyDynamicProxy', d, ak, sk);
+        return send({ ok: r.code === 200, data: r.data });
+      }
+      if (p === '/api/vmos/proxy/dynamic/create' && method === 'POST') {
+        const d = JSON.parse(body || '{}');
+        const r = await vmosPost('/vcpcloud/api/padApi/createProxy', d, ak, sk);
+        return send({ ok: r.code === 200, data: r.data });
+      }
+      if (p === '/api/vmos/proxy/dynamic/list' && method === 'GET') {
+        const page = urlObj.searchParams.get('page') || '1';
+        const rows = urlObj.searchParams.get('rows') || '10';
+        const r = await vmosGet('/vcpcloud/api/padApi/getProxys', { page, rows }, ak, sk);
+        return send({ ok: r.code === 200, data: r.data });
+      }
+      if (p === '/api/vmos/proxy/dynamic/configure' && method === 'POST') {
+        const d = JSON.parse(body || '{}');
+        const r = await vmosPost('/vcpcloud/api/padApi/batchPadConfigProxy', d, ak, sk);
+        return send({ ok: r.code === 200, data: r.data });
+      }
+      if (p === '/api/vmos/proxy/dynamic/renew' && method === 'POST') {
+        const d = JSON.parse(body || '{}');
+        const r = await vmosPost('/vcpcloud/api/padApi/renewDynamicProxy', d, ak, sk);
+        return send({ ok: r.code === 200, data: r.data });
+      }
+      if (p === '/api/vmos/proxy/dynamic/delete' && method === 'POST') {
+        const d = JSON.parse(body || '{}');
+        const r = await vmosPost('/vcpcloud/api/padApi/delProxyByIds', d, ak, sk);
+        return send({ ok: r.code === 200, data: r.data });
+      }
+
+      // ═══════════════════════════════════════════════════════════════
+      // STATIC RESIDENTIAL PROXY SERVICE
+      // ═══════════════════════════════════════════════════════════════
+
+      if (p === '/api/vmos/proxy/static/products' && method === 'GET') {
+        const r = await vmosGet('/vcpcloud/api/padApi/proxyGoodList', null, ak, sk);
+        return send({ ok: r.code === 200, data: r.data });
+      }
+      if (p === '/api/vmos/proxy/static/regions' && method === 'GET') {
+        const r = await vmosGet('/vcpcloud/api/padApi/getProxyRegion', null, ak, sk);
+        return send({ ok: r.code === 200, data: r.data });
+      }
+      if (p === '/api/vmos/proxy/static/buy' && method === 'POST') {
+        const d = JSON.parse(body || '{}');
+        const r = await vmosPost('/vcpcloud/api/padApi/createProxyOrder', d, ak, sk);
+        return send({ ok: r.code === 200, data: r.data });
+      }
+      if (p === '/api/vmos/proxy/static/list' && method === 'POST') {
+        const d = JSON.parse(body || '{}');
+        const r = await vmosPost('/vcpcloud/api/padApi/queryProxyList', { page: d.page || 1, rows: d.rows || 10 }, ak, sk);
+        return send({ ok: r.code === 200, data: r.data });
+      }
+      if (p === '/api/vmos/proxy/static/orders' && method === 'POST') {
+        const d = JSON.parse(body || '{}');
+        const r = await vmosPost('/vcpcloud/api/padApi/selectProxyOrderList', { page: d.page || 1, rows: d.rows || 10 }, ak, sk);
+        return send({ ok: r.code === 200, data: r.data });
+      }
+      if (p === '/api/vmos/proxy/static/renew' && method === 'POST') {
+        const d = JSON.parse(body || '{}');
+        const r = await vmosPost('/vcpcloud/api/padApi/createRenewProxyOrder', d, ak, sk);
+        return send({ ok: r.code === 200, data: r.data });
+      }
+
+      // ═══════════════════════════════════════════════════════════════
+      // TK AUTOMATION
+      // ═══════════════════════════════════════════════════════════════
+
+      if (p === '/api/vmos/automation/tasks' && method === 'POST') {
+        const d = JSON.parse(body || '{}');
+        const r = await vmosPost('/vcpcloud/api/padApi/autoTaskList', { page: d.page || 1, rows: d.rows || 10 }, ak, sk);
+        return send({ ok: r.code === 200, data: r.data });
+      }
+      if (p === '/api/vmos/automation/create' && method === 'POST') {
+        const d = JSON.parse(body || '{}');
+        const r = await vmosPost('/vcpcloud/api/padApi/addAutoTask', d, ak, sk);
+        return send({ ok: r.code === 200, data: r.data });
+      }
+      if (p === '/api/vmos/automation/retry' && method === 'POST') {
+        const d = JSON.parse(body || '{}');
+        const r = await vmosPost('/vcpcloud/api/padApi/reExecutionAutoTask', { taskId: d.taskId }, ak, sk);
+        return send({ ok: r.code === 200, data: r.data });
+      }
+      if (p === '/api/vmos/automation/cancel' && method === 'POST') {
+        const d = JSON.parse(body || '{}');
+        const r = await vmosPost('/vcpcloud/api/padApi/cancelAutoTask', { taskId: d.taskId }, ak, sk);
+        return send({ ok: r.code === 200, data: r.data });
+      }
+
+      // ═══════════════════════════════════════════════════════════════
+      // SDK TOKEN
+      // ═══════════════════════════════════════════════════════════════
+
+      if (p === '/api/vmos/sdk-token/get' && method === 'POST') {
+        const d = JSON.parse(body || '{}');
+        const r = await vmosPost('/vcpcloud/api/padApi/stsTokenByPadCode', { padCode: d.padCode || '' }, ak, sk);
+        return send({ ok: r.code === 200, data: r.data });
+      }
+      if (p === '/api/vmos/sdk-token/clear' && method === 'POST') {
+        const d = JSON.parse(body || '{}');
+        const r = await vmosPost('/vcpcloud/api/padApi/clearStsToken', { padCode: d.padCode || '' }, ak, sk);
+        return send({ ok: r.code === 200, data: r.data });
+      }
+
+      // ── Async shell command ─────────────────────────────────────────
+      if (p === '/api/vmos/instances/async-cmd' && method === 'POST') {
+        const d = JSON.parse(body || '{}');
+        const r = await vmosPost('/vcpcloud/api/padApi/asyncCmd', { padCodes: d.padCodes || [], scriptContent: d.command || '' }, ak, sk);
+        return send({ ok: r.code === 200, data: r.data });
       }
 
       send({ error: 'Not found' }, 404);
