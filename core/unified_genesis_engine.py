@@ -51,6 +51,20 @@ logger = logging.getLogger("titan.unified-genesis")
 
 TITAN_DATA = Path(os.environ.get("TITAN_DATA", "/opt/titan/data"))
 
+# Lazy import guard for VMOS Cloud dependencies (httpx, vmos_cloud_api).
+# The import is attempted at module load so failures are caught early; if the
+# VMOS stack is not installed the engine still works in local-ADB mode.
+try:
+    from vmos_genesis_engine import (  # noqa: E402
+        VMOSGenesisEngine as _VMOSGenesisEngine,
+        PipelineConfig as _VMOSPipelineConfig,
+    )
+    _VMOS_AVAILABLE = True
+except Exception:  # pragma: no cover – optional dependency
+    _VMOSGenesisEngine = None  # type: ignore[assignment,misc]
+    _VMOSPipelineConfig = None  # type: ignore[assignment,misc]
+    _VMOS_AVAILABLE = False
+
 
 # ═══════════════════════════════════════════════════════════════════════
 # CONFIGURATION DATA CLASSES
@@ -167,7 +181,10 @@ class GenesisConfig:
     # Core settings
     device_id: str = ""
     adb_target: str = "0.0.0.0:6520"
-    
+    # VMOS Cloud device code — when set, the engine runs in cloud mode via
+    # VMOSGenesisEngine instead of direct local ADB.
+    pad_code: str = ""
+
     # Sub-configurations
     persona: PersonaConfig = field(default_factory=PersonaConfig)
     payment: PaymentConfig = field(default_factory=PaymentConfig)
@@ -176,14 +193,20 @@ class GenesisConfig:
     aging: AgingConfig = field(default_factory=AgingConfig)
     options: ExecutionOptions = field(default_factory=ExecutionOptions)
 
+    @property
+    def cloud_mode(self) -> bool:
+        """Return True when operating against a VMOS Cloud device."""
+        return bool(self.pad_code)
+
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> 'GenesisConfig':
         """Create config from flat dictionary (e.g., from API request)."""
         config = cls()
         
-        # Device ID
+        # Device ID / targeting
         config.device_id = data.get("device_id", "")
         config.adb_target = data.get("adb_target", "0.0.0.0:6520")
+        config.pad_code = data.get("pad_code", "")
         
         # Persona
         config.persona.name = data.get("name", "")
@@ -253,6 +276,8 @@ class GenesisConfig:
         return {
             "device_id": self.device_id,
             "adb_target": self.adb_target,
+            "pad_code": self.pad_code,
+            "cloud_mode": self.cloud_mode,
             "persona": asdict(self.persona),
             "payment": {
                 "cc_number_last4": self.payment.last4,
@@ -729,7 +754,18 @@ class UnifiedGenesisEngine:
                 break
 
     async def _run_all_phases(self, job_id: str, config: GenesisConfig):
-        """Execute all genesis phases in sequence."""
+        """Execute all genesis phases in sequence.
+
+        When ``config.cloud_mode`` is True the entire pipeline is delegated to
+        :class:`VMOSGenesisEngine` which routes every operation through the
+        VMOS Cloud OpenAPI instead of local ADB.  The resulting
+        :class:`~vmos_genesis_engine.PipelineResult` is then reflected back
+        into the :class:`GenesisResult` stored in ``self._jobs``.
+        """
+        if config.cloud_mode:
+            await self._run_cloud_pipeline(job_id, config)
+            return
+
         result = self._jobs[job_id]
         
         # Phase 0: Pre-flight check
@@ -800,6 +836,133 @@ class UnifiedGenesisEngine:
         
         # Phase 15: Final verify
         await self._phase_final_verify(job_id, config, profile_data)
+
+    # ═══════════════════════════════════════════════════════════════════
+    # VMOS CLOUD MODE DELEGATION
+    # ═══════════════════════════════════════════════════════════════════
+
+    async def _run_cloud_pipeline(self, job_id: str, config: GenesisConfig):
+        """Delegate the full pipeline to VMOSGenesisEngine (VMOS Cloud API).
+
+        Translates :class:`GenesisConfig` into a :class:`PipelineConfig`,
+        runs all 11 cloud phases via VMOS OpenAPI, then reflects every phase
+        result and final scores back into the :class:`GenesisResult` stored in
+        ``self._jobs[job_id]`` so callers see a uniform status structure.
+        """
+        if not _VMOS_AVAILABLE:
+            raise RuntimeError(
+                "VMOS Cloud stack not available — install vmos_genesis_engine dependencies"
+            )
+
+        result = self._jobs[job_id]
+        self._log(job_id, f"Cloud mode — delegating to VMOSGenesisEngine for pad={config.pad_code}")
+
+        # Build VMOS PipelineConfig from unified GenesisConfig
+        vmos_cfg = _VMOSPipelineConfig(
+            name=config.persona.name,
+            email=config.persona.email,
+            phone=config.persona.phone,
+            dob=config.persona.dob,
+            ssn=config.persona.ssn,
+            street=config.persona.street,
+            city=config.persona.city,
+            state=config.persona.state,
+            zip=config.persona.zip_code,
+            country=config.persona.country,
+            gender=config.persona.gender,
+            occupation=config.persona.occupation,
+            cc_number=config.payment.cc_number,
+            cc_exp=config.payment.cc_exp,
+            cc_cvv=config.payment.cc_cvv,
+            cc_holder=config.payment.cc_holder or config.persona.name,
+            google_email=config.google.email,
+            google_password=config.google.password,
+            real_phone=config.google.real_phone,
+            otp_code=config.google.otp_code,
+            proxy_url=config.device.proxy_url,
+            device_model=config.device.model,
+            carrier=config.device.carrier,
+            location=config.device.location,
+            age_days=config.aging.age_days,
+            skip_wipe=config.options.skip_wipe,
+            skip_patch=config.options.skip_patch,
+        )
+
+        engine = _VMOSGenesisEngine(config.pad_code)
+
+        def _on_update(pipeline_result):
+            """Mirror live phase updates into the unified GenesisResult."""
+            try:
+                self._reflect_pipeline_result(job_id, pipeline_result)
+            except Exception as _e:
+                logger.warning("[%s] cloud phase reflection error: %s", job_id, _e)
+
+        pipeline_result = await engine.run_pipeline(vmos_cfg, job_id=job_id, on_update=_on_update)
+
+        # Final reflection after completion
+        self._reflect_pipeline_result(job_id, pipeline_result)
+        result.profile_id = pipeline_result.profile_id
+
+    def _reflect_pipeline_result(self, job_id: str, pipeline_result) -> None:
+        """Copy phase statuses from a VMOSGenesisEngine PipelineResult into our GenesisResult.
+
+        The VMOS engine has 11 phases (0-10).  The unified engine has 16 phases
+        (0-15).  We map VMOS phases onto the closest corresponding unified phase
+        slots so the UI shows consistent progress.  Unified-only phases (e.g.
+        Sensor Warmup, Immune Watchdog) that have no VMOS counterpart remain in
+        their current state.
+
+        Phase mapping (VMOS index → unified index):
+          0 Wipe            → 1  Factory Wipe
+          1 Stealth Patch   → 2  Stealth Patch
+          2 Network/Proxy   → 3  Network Config
+          3 Forge Profile   → 4  Forge Profile
+          4 Google Account  → 6  Google Account
+          5 Inject          → 7  Profile Inject
+          6 Wallet/GPay     → 8  Wallet Provision
+          7 Provincial Layer→ 9  App Bypass  (same data-layer seeding concept)
+          8 Post-Harden     → 10 Browser Harden
+          9 Attestation     → 11 Play Integrity
+         10 Trust Audit     → 14 Trust Audit
+        """
+        result = self._jobs.get(job_id)
+        if not result or not pipeline_result:
+            logger.debug("_reflect_pipeline_result: skipped (result=%s, pipeline=%s)", result, pipeline_result)
+            return
+
+        # VMOS phase index → unified phase index
+        vmos_to_unified = {
+            0: 1,   # Wipe
+            1: 2,   # Stealth Patch
+            2: 3,   # Network/Proxy
+            3: 4,   # Forge Profile
+            4: 6,   # Google Account
+            5: 7,   # Inject
+            6: 8,   # Wallet/GPay
+            7: 9,   # Provincial Layer → App Bypass (both seed app-layer data)
+            8: 10,  # Post-Harden → Browser Harden
+            9: 11,  # Attestation → Play Integrity
+            10: 14, # Trust Audit
+        }
+
+        for vmos_phase in pipeline_result.phases:
+            unified_idx = vmos_to_unified.get(vmos_phase.phase)
+            if unified_idx is None:
+                continue
+            for unified_phase in result.phases:
+                if unified_phase.phase_id == unified_idx:
+                    unified_phase.status = vmos_phase.status
+                    unified_phase.notes = vmos_phase.notes
+                    break
+
+        # Propagate scalar scores
+        result.trust_score = pipeline_result.trust_score
+        result.trust_grade = getattr(pipeline_result, "grade", "")
+        if pipeline_result.status == "completed":
+            result.attestation_ok = result.trust_score >= 60
+        for entry in pipeline_result.log[-50:]:
+            if entry not in result.log:
+                result.log.append(entry)
 
     # ═══════════════════════════════════════════════════════════════════
     # PHASE IMPLEMENTATIONS
