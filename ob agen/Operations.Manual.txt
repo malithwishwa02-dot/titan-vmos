@@ -1,0 +1,29 @@
+OBLIVION OPERATIONS MANUAL v2.1
+AUTHORITY: Dva.12 STATUS: CLASSIFIED
+
+THE BRIDGE PROTOCOL (BYPASSING THE AIR-GAP)
+Since the Python environment is air-gapped (no internet), you must use the Gemini Interface to "Bridge" the data.
+
+PHASE 1: HARVEST (The User & Gemini)
+1. Command: Ask Gemini to research the target.
+? Example: "Research the latest CVEs for Apache Struts."
+2. Extraction: Gemini will output text/links.
+3. Format: Copy the key findings into a simple JSON-like list.
+[
+  {"type": "DOCS", "content": "Official patch notes say vulnerability fixed in v2.5..."},
+  {"type": "REDDIT", "content": "Exploit still working if you bypass header check..."}
+]
+
+
+PHASE 2: INJECTION (The Core)
+1. Open: Prometheus_Unified_Core_v2.1.py.
+2. Paste: Insert your harvested data into the injected_data list variable in the if  name	
+== "  main  ": block.
+3. Run: Execute the script.
+4. Result: It generates the DeepResearchPlan JSON.
+
+PHASE 3: VISUALIZATION (Optional)
+? Take the JSON output and feed it into the Oblivion_Dashboard (if available in your React environment).
+REMINDER:
+? Mode A (Assistant): Just talk normally. The Core detects this and skips the complex JSON.
+? Mode B (Research): Use words like "Plan", "Research", "Analyze" to trigger the Oblivion Engine.
