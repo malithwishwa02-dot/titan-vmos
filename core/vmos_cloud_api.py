@@ -124,13 +124,17 @@ class VMOSCloudClient:
         if not self.ak or not self.sk:
             raise ValueError("VMOS_CLOUD_AK and VMOS_CLOUD_SK must be set")
 
-    async def _post(self, path: str, data: dict[str, Any] | None = None) -> dict:
+    async def _post(self, path: str, data: dict[str, Any] | None = None,
+                   timeout_sec: float | None = None) -> dict:
+        """Execute POST request with optional custom timeout."""
         body = data or {}
         body_json = json.dumps(body, separators=(",", ":"), ensure_ascii=False)
         headers = _build_headers(body_json, self.ak, self.sk)
         url = f"{self.base_url}{path}"
+        # E-06 fix: Allow custom timeout (default 30s, max 120s)
+        timeout = min(max(timeout_sec or _TIMEOUT, 5.0), 120.0)
 
-        async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
+        async with httpx.AsyncClient(timeout=timeout) as client:
             resp = await client.post(url, content=body_json, headers=headers)
             resp.raise_for_status()
             result = resp.json()
@@ -140,12 +144,16 @@ class VMOSCloudClient:
                         path, result.get("code"), result.get("msg"))
         return result
 
-    async def _get(self, path: str, params: dict[str, Any] | None = None) -> dict:
+    async def _get(self, path: str, params: dict[str, Any] | None = None,
+                   timeout_sec: float | None = None) -> dict:
+        """Execute GET request with optional custom timeout."""
         body_json = json.dumps(params or {}, separators=(",", ":"), ensure_ascii=False)
         headers = _build_headers(body_json, self.ak, self.sk)
         url = f"{self.base_url}{path}"
+        # E-06 fix: Allow custom timeout (default 30s, max 120s)
+        timeout = min(max(timeout_sec or _TIMEOUT, 5.0), 120.0)
 
-        async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
+        async with httpx.AsyncClient(timeout=timeout) as client:
             resp = await client.get(url, params=params, headers=headers)
             resp.raise_for_status()
             result = resp.json()
@@ -298,6 +306,29 @@ class VMOSCloudClient:
         return await self._post("/vcpcloud/api/padApi/setKeepAliveApp", {
             "padCodes": pad_codes, "packageNames": packages,
         })
+
+    async def sync_cmd(self, pad_code: str, command: str, timeout_sec: int = 30) -> dict:
+        """
+        Synchronous shell command execution on instance.
+        
+        This is the preferred method for real-time shell execution as it waits
+        for command completion. Uses syncCmd endpoint which has:
+        - ~4KB command character limit (E-08)
+        - Returns empty string on device offline/error (E-07)
+        - Default 30s timeout (E-06 fix: now configurable)
+        
+        Args:
+            pad_code: Instance ID
+            command: Shell command to execute
+            timeout_sec: Command timeout in seconds (default 30, max 120)
+            
+        Returns:
+            dict with code, data containing taskStatus and errorMsg (stdout)
+        """
+        return await self._post("/vcpcloud/api/padApi/syncCmd", {
+            "padCode": pad_code,
+            "scriptContent": command,
+        }, timeout_sec=timeout_sec)
 
     async def async_adb_cmd(self, pad_codes: list[str], command: str) -> dict:
         """Async execute ADB command on instances."""
