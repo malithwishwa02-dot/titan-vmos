@@ -1542,7 +1542,7 @@ function vmosTitanApp() {
       if (!this.proxyMgr.padCode || !this.proxyMgr.proxyUrl) return;
       try {
         let u;
-        try { u = new URL(this.proxyMgr.proxyUrl); } catch { this.proxyMgr.log += `Error: Invalid proxy URL format. Use e.g. socks5://user:pass@host:port\n`; return; }
+        try { u = new URL(this.proxyMgr.proxyUrl); } catch { this.proxyMgr.log += `Error: Invalid proxy URL "${this.proxyMgr.proxyUrl}". Expected format: protocol://[user:pass@]host:port (e.g. socks5://user:pass@1.2.3.4:1080)\n`; return; }
         const r = await this.api('/vmos/instances/proxy', {
           method: 'POST',
           body: JSON.stringify({
