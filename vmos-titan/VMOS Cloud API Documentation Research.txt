@@ -1,0 +1,321 @@
+﻿Comprehensive Architecture and Integration Analysis of the VMOS Cloud OpenAPI
+Executive Summary and Strategic Positioning
+The paradigm of mobile device management has shifted significantly with the advent of ARM-based cloud virtualization. The VMOS Cloud OpenAPI represents a highly sophisticated Platform-as-a-Service (PaaS) architecture designed to orchestrate vast fleets of virtualized Android environments.1 By exposing native hardware capabilities, network configurations, and application states through a standardized RESTful interface, the platform enables unprecedented scale in automated mobile operations.1 The integration of the VMOS Cloud API is highly critical for enterprises engaged in social media matrix management, automated application testing, massive-scale mobile game idling, and cross-border e-commerce.2 The API abstracts the underlying complexities of ARM containerization, WebRTC audio/video streaming, and device fingerprint manipulation, providing developers with deterministic control over highly volatile virtual environments.4
+This exhaustive analysis evaluates the entirety of the VMOS Cloud API documentation, systematically decoding its endpoint structures, authentication mechanisms, device spoofing capabilities, SDK implementations, and cryptographic security models. The strategic value of this platform lies not merely in providing remote access to Android operating systems, but in its "Geek-Level Risk Control".5 Through deep integration with frameworks like Zygisk (Magisk core) and the ability to manipulate hardware properties at the kernel level, the VMOS infrastructure bypasses sophisticated anti-bot detection algorithms employed by modern social platforms such as TikTok, Facebook, WhatsApp, and Instagram.2 Supported by a 99.9% SLA, the architecture permits the orchestration of thousands of instances simultaneously, ensuring that automated behaviors appear entirely organic to third-party tracking systems.1 The platform operates natively on enterprise-grade ARM chips sharing the identical instruction set as physical consumer devices, guaranteeing zero compatibility friction during execution.5
+Platform Architecture, Hardware Taxonomy, and Economic Models
+Before architecting an integration with the OpenAPI, it is strictly necessary to understand the underlying infrastructure variations and their associated billing models, as API routing, latency expectations, and programmatic capabilities often depend on the specific hardware class provisioned.4 The VMOS Cloud ecosystem relies on diverse hardware deployments globally distributed across nodes in the United States, Taiwan, Singapore, and Hong Kong.1 The system partitions its offerings into three primary virtual and physical ecosystems, each optimized for distinct operational profiles.
+Virtualization and Hardware Tiers
+The core foundation of the platform rests upon its diverse computational instances. These instances dictate the memory, processing power, and foundational Android version accessible via the API.5
+
+
+Hardware Tier
+	Core Definition
+	Technical Specifications & Pricing
+	Strategic Application
+	Standard Cloud Devices (Timed & Monthly)
+	Virtual Android instances based on ARM server architecture and containerization technology.5
+	V08: 8-core CPU, 4GB RAM, 32GB Storage ($4.99/mo).
+
+
+V06: 8-core CPU, 5.4GB RAM, 43GB Storage ($6.99/mo or $0.006/min).
+
+
+V04: 8-core CPU, 8GB RAM, 64GB Storage ($8.99/mo).
+
+
+V03: 8-core CPU, 10.7GB RAM, 85GB Storage ($10.99/mo).5
+	Optimized for maximum cost-efficiency. Ideal for game auto-farming, baseline social media matrix operations, and high-volume parallel scraping.4
+	High-End & Premium Real Devices
+	Genuine physical mobile hardware deployed within a cloud data center, connected via specialized network uplinks.5
+	Generally features 8-core CPUs, 12GB RAM, and 85GB Storage at $13.99/month.5 Support spans Android 10 through Android 15.4
+	Designed for high-risk control projects where physical-level anti-detection and authentic hardware fingerprints are mandatory.5
+	Real Device Testing Fleet
+	An on-demand rental service providing access to a massive library of varied consumer device models.5
+	Pay-per-use billing model structured at $0.20 per minute.5 Full API support for instant device switching.
+	Dedicated to CI/CD pipelines, application compatibility testing, and bug reproduction without the overhead of maintaining a physical device farm.5
+	The Real Device tiers are particularly notable for their exhaustive model representation. The infrastructure maintains distinct physical profiles categorized by operating system. For instance, the Android 15 fleet includes ultra-modern flagship models such as the Samsung S24 Ultra, Google Pixel 6 Pro, OPPO Reno12 Pro, Xiaomi 15 Pro, and Vivo X200 Pro.5 The Android 14 and 13 tiers offer legacy profiles including the Google Pixel 9, OnePlus Ace 2, Redmi K70 Ultra, Vivo Y35, and Sony Xperia XZ3.5 This granularity ensures that API-driven applications can simulate user traffic originating from virtually any demographic or economic bracket globally.2
+Network and Proxy Infrastructure Operations
+A critical component of the API's automation capability is its IP routing flexibility. Operating thousands of virtual devices from a centralized data center necessitates advanced IP spoofing and proxy tunneling to prevent immediate network-level correlation by target platforms.8 The VMOS API natively supports dynamic assignment of IP addresses.
+* Static ISP Residential IPs: These IPs permanently locate an instance on the same IP address, simulating a real user anchored in one of over 80 supported countries and regions.8 Pricing scales by zone, with Zone A Premium at $4.8/IP/month, Zone A Standard at $2.29/IP/month, and varying rates up to $8.99/IP/month for Zones B, C, and D.5 This configuration is mandated for operations requiring a fixed IP, such as continuous social media account nurturing or bypassing strict fraud-detection systems.8
+* Dynamic Residential IPs: Billed on a traffic-consumption basis ranging from $6 for 2GB up to $1000 for 1000GB.5 This IP class automatically rotates without manual configuration, mitigating the risk of IP-level bans during aggressive operations, such as distributed application testing or temporary account creation workflows.8
+* Static Datacenter IPs: Available at a baseline of $4/IP/month, suitable for general-purpose automation where residential masking is not strictly required.5
+Cryptographic Authentication and Security Architecture
+Security within the VMOS Cloud API is strictly enforced through a combination of Bearer tokens, Security Token Services (STS), and cryptographic signatures. The architecture isolates administrative privileges from client-side execution environments, ensuring that compromised endpoints cannot access the broader cluster management capabilities.9
+Temporary Security Token Service (STS)
+For client-side applications utilizing the Web H5 SDK, Android SDK, or Windows PC SDK, the architecture relies on a Security Token Service (STS).10 The API exposes endpoints such as /openapi/open/token/stsToken and /vsphone/api/padApi/stsToken to issue ephemeral authentication tokens.10 Furthermore, tokens can be generated for specific instances utilizing the /vsphone/api/padApi/stsTokenByPadCode endpoint.12 By utilizing STS, developers embed short-lived access credentials into their client applications, safeguarding the primary administrative API keys.10 The platform also provides a /vsphone/api/padApi/clearStsToken endpoint to forcefully invalidate an active session, allowing for immediate session revocation in the event of detected anomalous activity.12
+HMAC-SHA256 Signature Algorithm
+Server-to-server API calls—which command the cluster, provision new instances, and manipulate hardware properties—rely on a Hash-based Message Authentication Code (HMAC) utilizing the SHA-256 cryptographic hash function.14 This verification protocol guarantees that the payload remains immutable during transit and authenticates the origin of the request.16
+The signature construction sequence follows strict cryptographic concatenation rules, requiring the implementation of the following logical steps 11:
+1. String Construction: The raw string is assembled by concatenating the exact Request Timestamp, the assigned AccessId (the public API Key), and the raw Request Body. Any deviation in whitespace or encoding during this concatenation will result in a validation failure.
+2. HMAC Execution: The combined string is subsequently hashed against the developer's private SecretKey using the HMAC-SHA256 algorithm.
+3. Encoding: The resulting cryptographic digest must be transformed via Base64 or Hex encoding to form the final transmitable signature.14
+All authenticated requests must include the Authorization header containing this encoded signature, alongside other mandatory headers such as the timestamp to prevent replay attacks.9 Failure to accurately compute the hash results in standardized error responses from the API gateway, explicitly triggering Error Code 2019: Signature verification failed or Error Code 100004: Invalid signature.9
+Comprehensive Server OpenAPI Specification
+The server-side API operates as the primary command-and-control center for the entire VMOS infrastructure. It is categorized by domain, allowing automated systems to handle every aspect of the device lifecycle, from initial provisioning and application deployment to granular touchscreen simulations and task telemetry.1
+Instance Lifecycle and Hardware Management
+The core of the API governs the physical and virtual state of the Android containers. The ability to dynamically reset, restart, and modify devices allows orchestration scripts to maintain pristine execution environments, completely free from accumulated cache or tracking cookies.2
+
+
+API Path
+	HTTP Method
+	Analytical Context and Functionality
+	/vsphone/api/padApi/restart
+	POST
+	Executes a hard restart of the designated instance. This is a critical operation for clearing memory leaks during prolonged automated gaming or streaming sessions, simulating a physical device reboot.12
+	/vsphone/api/padApi/reset
+	POST
+	Performs a deep wipe of all user data, cache, and installed applications, returning the cloud instance to a pristine factory state.12
+	/vsphone/api/padApi/replacePad
+	POST
+	Engages the highly critical "One-Key New Device" function. This endpoint clears all data while simultaneously actively regenerating core Android properties (IMEI, MAC, Android ID). To tracking algorithms, the device appears as a completely new physical hardware acquisition.12
+	/vsphone/api/padApi/country
+	POST
+	Queries the master database for a list of supported countries applicable to the "one-key new device" feature, allowing dynamic generation of localized hardware profiles.12
+	/vsphone/api/padApi/padProperties
+	POST
+	Retrieves the current state of system properties (ro.* and persist.*). This enables automated systems to audit the device fingerprint before executing sensitive actions like social media logins.12
+	/vsphone/api/padApi/batchPadProperties
+	POST
+	Allows bulk auditing of device fingerprints across thousands of instances simultaneously to ensure cluster compliance.12
+	/vsphone/api/padApi/updatePadProperties
+	POST
+	Dynamically modifies runtime instance properties (system and settings) on the fly without requiring a full instance restart.12
+	/vsphone/api/padApi/updatePadAndroidProp
+	POST
+	Executes a static write of Android modification properties to the system configuration. Because these modifications alter deep system identity, an instance restart is mandatory for the changes to take effect.12
+	/vsphone/api/padApi/switchRoot
+	POST
+	Toggles root (su) privileges within one or more instances. This allows automation scripts to seamlessly alternate between high-privilege configuration states and standard, unrooted states designed to bypass banking or application integrity validations.12
+	Network and Geolocation Orchestration
+A major requirement for remote automation is the ability to convincingly spoof the network origin of the device. The OpenAPI offers extensive routing controls.12
+
+
+API Path
+	HTTP Method
+	Analytical Context and Functionality
+	/vsphone/api/padApi/smartIp
+	POST
+	The apex network command. It automatically coordinates the proxy exit IP, the SIM card's Mobile Country Code (MCC), and the GPS coordinates to match a specific geographic target in a unified, believable profile.12
+	/vsphone/api/padApi/checkIP
+	POST
+	Executes an active pre-flight check on a proxy IP, detecting latency, availability, and ensuring the geographic location precisely matches the expected targeting criteria before binding it to an instance.12
+	/vsphone/api/padApi/notSmartIp
+	POST
+	Reverts the smart IP configuration, returning the exit IP, SIM info, and GPS coordinates to their default states.12
+	/vsphone/api/padApi/setWifiList
+	POST
+	Manipulates the local Wi-Fi environment properties visible to the Android system. This operates mutually exclusively with the one-key new device setup to avoid configuration collisions.12
+	/vsphone/api/padApi/updateTimeZone
+	POST
+	Aligns the internal system clock and Android timezone settings with the assigned proxy IP. This defeats advanced fingerprinting techniques that compare the IP geolocation against the local system time.12
+	/vsphone/api/padApi/updateLanguage
+	POST
+	Modifies the device locale, ensuring the operating system language matches the simulated geographic environment.12
+	/vsphone/api/padApi/gpsInjectInfo
+	POST
+	Bypasses the Android LocationManager to directly set rigid latitude and longitude coordinates into the system.12
+	/vsphone/api/padApi/setProxy
+	POST
+	Directly binds proxy server credentials to a specific instance, overriding all default network routing.12
+	Application Deployment, Management, and Keep-Alive Mechanisms
+Managing software across vast fleets requires asynchronous, resilient batch processing to prevent API timeout failures and ensure uniform deployment.1
+
+
+API Path
+	Analytical Context and Functionality
+	/vsphone/api/padApi/installApp
+	Pushes APK binaries to the container asynchronously. Given the variable size of APK files, this endpoint returns a Task ID for subsequent polling, rather than blocking the connection.12
+	/vsphone/api/padApi/startApp
+	Initiates the primary activity of a specified application package name (e.g., com.facebook.katana).12
+	/vsphone/api/padApi/stopApp
+	Executes a force-stop on a package, forcefully severing its network connections and clearing its active memory footprint. Used to reset application states between automation cycles.12
+	/vsphone/api/padApi/restartApp
+	Immediately cycles the application process.12
+	/vsphone/api/padApi/listInstalledApp
+	Performs a real-time query of the PackageManager to return all installed application packages. Vital for verifying deployment success before a bot script begins execution.12
+	/vsphone/api/padApi/setKeepAliveApp
+	Configures deep Android battery optimization subsystems (specifically for Android 13, 14, and 15) to whitelist particular applications. This is critical for 24/7 automation, preventing the native Android memory manager from terminating background scripts or game clients.12
+	/vsphone/api/padApi/uploadFileV3
+	Facilitates direct file injection into the virtual file system using a remote URL link, circumventing the need to route massive binaries through the control API.12
+	Synchronous Interaction, Data Injection, and Execution Emulation
+Modern automation often requires simulating literal human interaction—bypassing standard APIs to touch the screen, inject audio, or execute low-level shell scripts.17
+
+
+API Path
+	Analytical Context and Functionality
+	/vsphone/api/padApi/asyncCmd
+	Executes raw Android Debug Bridge (ADB) shell commands asynchronously across single or bulk instances. This grants the developer ultimate execution capability over the Linux subsystem underlying the Android OS.12
+	/vsphone/api/padApi/simulateTouch
+	Injects raw X/Y coordinate pointer events into the device's input event buffer. This mimics human swiping and tapping perfectly, making automated interactions indistinguishable from physical usage.12
+	/vsphone/api/padApi/inputText
+	Directly pushes string values into the currently focused Android EditText field. This technique circumvents the need to emulate the virtual keyboard visually, vastly speeding up automated data entry.12
+	/vsphone/api/padApi/screenshot
+	Captures the active framebuffer and saves the resulting image file locally on the instance's storage subsystem.12
+	/vsphone/api/padApi/getLongGenerateUrl
+	Captures the current display state and generates a real-time preview image URL, frequently used by developers to populate overarching visual monitoring dashboards.12
+	/vsphone/api/padApi/injectAudioToMic
+	A highly specialized endpoint that bypasses the hardware Audio HAL. It streams a pre-recorded audio file directly into the microphone buffer. This is extensively utilized to bypass voice verification checks or to automate "live" audio broadcasts on social platforms.12
+	/vsphone/api/padApi/simulateSendSms
+	Injects a simulated SMS text message directly into the Android telephony provider, triggering standard push notifications and allowing testing of SMS verification parsers without utilizing real cellular networks.12
+	/vsphone/api/padApi/addPhoneRecord
+	Injects synthetic call log data into the system database, helping to generate an organic, "used" profile for the device.12
+	Automated Task Telemetry and Diagnostics
+Because the architecture emphasizes asynchronous execution for heavy operations, developers must implement robust polling mechanisms to track the state of their commands.12
+
+
+API Path
+	Analytical Context and Functionality
+	/vsphone/api/padApi/padTaskDetail
+	Retrieves the granular status (e.g., Pending, Executing, Completed, Failed) of general instance operations, allowing the orchestration engine to proceed only upon verified completion.12
+	/vsphone/api/padApi/getTaskStatus
+	Monitors the progress of background infrastructure tasks, specifically the application of Smart IP routing rules.12
+	/vsphone/api/padApi/fileTaskDetail
+	Provides detailed execution results for file injection or application installation tasks, mitigating issues arising from network latency during large binary transfers.12
+	Exhaustive Emulation and Device Fingerprint Manipulation
+The true technological moat of the VMOS Cloud API is its exhaustive capability to manipulate the Android property space (specifically, ro. and persist. values). Modern mobile applications employ highly aggressive fingerprinting, correlating the Android ID, IMEI, OpenGL renderer, and baseband versions to identify and ban automated device farms.3 The VMOS API neutralizes this threat vector by granting the developer full read/write access to over 40 distinct, critical system identifiers.5
+Hardware and OS Identity Properties
+The API allows developers to patch the Read-Only (ro.*) namespaces prior to device boot. This forms the cornerstone of any Anti-Association strategy.5
+* Surface Level Identity Parsing: Modifying properties such as ro.product.model, ro.product.brand, ro.product.name, ro.product.device, and ro.product.manufacturer alters the surface-level device profile reported to basic analytics SDKs.5
+* Deep Hardware Fingerprints: More sophisticated checks are defeated by altering ro.build.fingerprint alongside partition-specific values. The system permits granular modification of ro.odm.build.fingerprint, ro.product.build.fingerprint, ro.system.build.fingerprint, ro.system_ext.build.fingerprint, and ro.vendor.build.fingerprint. Ensuring these low-level hardware queries align perfectly with the surface parameters is crucial to passing Google's CTS checks.5
+* Build Metadata: The API allows modification of the exact compilation details, including the incremental version (ro.build.version.incremental), build flavor (ro.build.flavor), and the underlying board architecture (ro.product.board and ro.hardware).5
+* Core Unique Identifiers: The platform allows precise definition of the advertising and network tracking identifiers: the Android ID (ro.sys.cloud.android_id), IMEI (persist.sys.cloud.imeinum), ICCID (persist.sys.cloud.iccidnum), and IMSI (persist.sys.cloud.imsinum). By rotating these concurrently with the IP address via the API, a single virtual instance appears as an entirely different physical entity to the cellular network.5
+* Media DRM Spoofing: Premium streaming applications and advanced security frameworks utilizing Widevine cryptography rely heavily on DRM provisioning IDs. The API facilitates the manipulation of persist.sys.cloud.drm.id (altering the deviceUniqueId) and persist.sys.cloud.drm.puid (altering the provisioningUniqueId on modern ROMs), completely bypassing DRM-based user tracking.5
+* Graphics and Display Engine Emulation: Advanced anti-cheat engines (prevalent in mobile gaming) and anti-bot systems hash the WebGL/OpenGL rendering output. By explicitly defining persist.sys.cloud.gpu.gl_vendor, persist.sys.cloud.gpu.gl_renderer, and persist.sys.cloud.gpu.gl_version (e.g., forcing it to report "OpenGL ES 3.2"), developers can effectively mask the underlying server-grade GPUs, forcing the system to mimic consumer mobile architectures like Adreno or Mali.5
+Telephony, Network, and Geolocation Subsystems
+For accurate geographic simulation, altering the IP address is vastly insufficient. The virtualized baseband, Wi-Fi drivers, and GPS subsystems must all corroborate the IP location to prevent anomaly detection.8
+* Wi-Fi Subsystem Simulation: The API natively injects synthetic network data into the Wi-Fi manager. This includes spoofing the SSID/WiFi name (persist.sys.cloud.wifi.ssid), the hardware MAC address (persist.sys.cloud.wifi.mac), the assigned IP address (persist.sys.cloud.wifi.ip), the local Gateway (persist.sys.cloud.wifi.gateway), and the primary DNS server (persist.sys.cloud.wifi.dns1). This completely defeats applications that attempt to use local WLAN BSSID scanning to deduce the user's true geographical location.5
+* Cellular Baseband Telemetry: The persist.sys.cloud.cellinfo parameter supports deep, structural manipulation of mobile network tower data. It requires a hex-encoded string strictly adhering to the format type,mcc,mnc,tac(hex),cellid(hex),narfcn(hex),pci(hex). The network type operates fixedly at the value 9, which denotes a 5G NR connection.5 Complementing this, persist.sys.cloud.mobileinfo sets the broad Mobile Country Code (MCC) and Mobile Network Code (MNC), while persist.sys.cloud.phonenum explicitly defines the injected phone number (which must conform to international standards, e.g., starting with "65" for Singapore).5 This level of microscopic detail thoroughly fools carrier-validation checks.
+* Proxy Routing Mechanics: Network traffic isolation is managed via the ro.sys.cloud.proxy.mode property. The proxy mode relies on underlying Linux iptables for standard packet forwarding, whereas the vpn mode utilizes the native Android VpnService API. The VPN mode is particularly valuable as it guarantees DNS leak protection.5 Furthermore, proxy injection relies on ro.sys.cloud.proxy.type (accepting protocols like socks5 or http-relay) and ro.sys.cloud.proxy.data (formatted exactly as IP|port|username|password|enable). Developers can also establish highly explicit bypass rules utilizing properties like ro.sys.cloud.proxy.byPassPackageName1, ro.sys.cloud.proxy.byPassIpName1, and ro.sys.cloud.proxy.byByPassDomain1 to route specific app traffic outside the encrypted tunnel.5
+* DNS Settings Configuration: Hardcoded DNS resolution is achieved via ro.boot.redroid_net_ndns (defining the number of servers), alongside ro.boot.redroid_net_dns1 and ro.boot.redroid_net_dns2.5
+* GPS Coordinate Emulation: Geographical truth is enforced by injecting values into persist.sys.cloud.gps.lat (Latitude), persist.sys.cloud.gps.lon (Longitude), persist.sys.cloud.gps.speed (Speed), persist.sys.cloud.gps.altitude (Altitude), and persist.sys.cloud.gps.bearing (Bearing).5
+Additional Environmental Camouflage
+To ensure the device appears organically utilized, several other system states are modifiable:
+* Battery Emulation: persist.sys.cloud.battery.capacity dictates the total mAh capacity, while persist.sys.cloud.battery.level sets the initial charge state upon boot. Following initialization, the VMOS system naturally emulates standard charging and discharging curves.5
+* Time and Locale Emulation: persist.sys.timezone (e.g., "Asia/Hong_Kong") aligns the system clock, and persist.sys.locale (e.g., "en-US" or "zh-CN") ensures all UI elements and web-requests default to the targeted regional language.5
+* Installation Source Verification: Setting persist.sys.cloud.pm.install_source (e.g., to com.android.vending) convinces the operating system and subsequent apps that the software was organically downloaded from the Google Play Store, rather than sideloaded via an API.5
+* Boot and Multimedia States: Developers can adjust the boot time offset in seconds (persist.sys.cloud.boottime.offset) and define a unique kernel random boot ID (ro.sys.cloud.boot_id). Furthermore, ro.sys.cloud.rand_pics instructs the system to procedurally generate a specified volume of random images in the device gallery upon its first boot, instantly defeating "empty device" heuristic checks.5
+Dynamic Sensor Simulation and Advanced Edge-Cloud Communication
+Bridging the inherent gap between static server environments and the kinetic reality of a physical mobile device requires sophisticated sensor simulation.5 VMOS allows the real-time, continuous injection of telemetry data via the persist.sys.cloud.sensor.tpl_dp property, which points the operating system to a dynamically generated local data file.5
+Sensor Telemetry Data Architectures
+The simulation engine parses UTF-8 encoded text files (which can scale up to an immense 1GB in size) that contain sequential lines of sensor readings followed by explicit delay commands (e.g., delay:50 representing milliseconds).5 A standard execution pattern utilizes the command adb shell setprop persist.sys.cloud.sensor.tpl_dp /data/local/tmp/sensor_data.txt to begin the simulation, and adb shell setprop persist.sys.cloud.sensor.tpl_dp "" to terminate it.5
+The system comprehensively supports four primary categories of sensor spoofing:
+1. Motion, Pose, and Kinematics:
+   * Accelerometers & Gyroscopes: Data formats strictly conform to x:y:z. By injecting fluctuating acceleration (measured in $m/s^2$) and gyroscope (measured in $rad/s$) data, the system successfully mimics the organic micro-movements of a human physically interacting with a phone.5 The platform also supports linear-acceleration, acceleration-uncalibrated, and gyroscope-uncalibrated for granular data analysis.
+   * Gravity and Quaternions: For advanced 3D game clients and VR/AR emulation, the gravity sensor, rotation-vector, game-rotation-vector, and geomagnetic_rotation provide high-fidelity 3D attitude control using quaternion mathematics.5
+2. Environmental and Position Mapping:
+   * Magnetometer: Simulated via magnetic-field and magnetic-field-uncalibrated in $\mu T$, which is utterly critical for applications relying on compass navigation.5
+   * Proximity & Light: The proximity sensor (cm) allows simulation of a device being held against an ear, while the light sensor (lux) emulates the device moving through differently lit environments.5
+   * Atmospheric: Emulation of pressure (hPa), temperature (℃), and humidity (%) data allows the circumvention of hyper-specific environmental checks.5
+3. Biometrics and Health Telemetry:
+   * Pedometer Emulation: Injecting step-counter and step-detector values facilitates unattended automation within health-to-earn applications or fitness tracking ecosystems.5
+   * Advanced Motion Triggers: Sensors like significant-motion, motion-detect, tilt-detector, pick-up gesture, and wrist-tilt can trigger wake-up states or security monitoring algorithms.5
+   * Heart Rate: Manipulated via the heart-rate key (measured in BPM), though this is heavily dependent on specific physical device template support.5
+4. Foldable Device Specific Sensors:
+   * Hinge Mechanics: In an impressive demonstration of emulation depth, the platform supports hinge-angle0 through hinge-angle2 (measured in degrees). This simulates the screen folding angle and is exclusively effective on foldable device models such as the Samsung Galaxy Fold or Huawei Mate X.5
+For maximum optimization, developers are advised to use interpolation algorithms to smooth transitions between stationary and motion states. For VR/gaming, delay intervals should be targeted at ~16ms (60Hz), whereas general apps can operate at 50-100ms (10-20Hz).5
+Xposed/LSPosed Hook Integration Engine
+For operational logic manipulation that extends beyond mere hardware spoofing, the VMOS API incorporates a native plugin-loading framework structurally equivalent to the legendary Xposed and LSPosed frameworks.5
+The framework enables "Custom Plugin Development" and is managed exclusively via the command-line tool apmt accessible through the ADB shell. Through this integration, developers can dynamically load localized or remote .apk payloads that intercept Dalvik and ART method calls at runtime.
+* Deployment Syntax: apmt patch add -n <name> -p <package> -f <local_path> (or utilizing -u <url> for remote binary downloads).5 Plugins can be audited via apmt patch list and removed via apmt patch del -n <name>.5
+* Java Hooking Mechanisms: The entry class for any custom plugin must strictly be named androidx.app.Entry. Developers utilize the XC_MethodHook structure to override beforeHookedMethod and afterHookedMethod.
+   * App-Level Hooking: Utilizing the appMain method allows developers to use XSHelpers.findAndHookMethod to target specific classes (like MainActivity). This enables arbitrary interception of Android APIs—from altering method return values via param.setResult to bypassing localized, application-specific security and integrity checks.5
+   * System-Level Hooking: For profound operational control, the systemMain entry method permits hooking directly into core Android services, such as com.android.server.SystemServer. When deploying system hooks, the target package parameter (-p) must be specified as "android", and a hard device reboot is mandatory to apply the hooks into the system boot sequence.5 This grants the developer ultimate, unchecked control over the Android framework itself.
+Client-Side SDK Integration Frameworks
+While the Server OpenAPI manages the backend infrastructure, the client SDKs deliver the interactive audio/visual stream to the end-user. The API ecosystem provides three primary SDKs: Android, Web H5, and Windows PC, standardizing the complex deployment of remote cloud instances into localized viewports.5
+Android SDK Integration
+The Android SDK is engineered to embed the cloud phone interface seamlessly inside native Android applications, operating flawlessly on any host device running Android 5.0 or higher with JDK 1.8.5
+1. Dependency and Repository Management: The SDK is distributed via a private VMOS Maven repository. Developers must append maven { url "https://maven.vmos.cn" } to their project's root build.gradle and define the specific artifact dependency: implementation "net.armcloud.armcloudsdk:armcloudsdkv3:1.1.4".5
+2. Strict Permission Manifest: To facilitate advanced edge-cloud data synchronization, the AndroidManifest.xml must declare an extensive list of permissions. These include network access (INTERNET, ACCESS_NETWORK_STATE), location tunneling (ACCESS_COARSE_LOCATION, ACCESS_FINE_LOCATION), multimedia capture bridging (RECORD_AUDIO, CAMERA), and deep storage access (READ_EXTERNAL_STORAGE, WRITE_EXTERNAL_STORAGE, and MANAGE_EXTERNAL_STORAGE for Android 11+ API level 30).5
+3. Engine Initialization: The ArmCloudEngine.prepare(this, listener) method bootstraps the networking, decoding, and rendering subsystems, asynchronously triggering the onPrepared() callback of the ICloudCoreManagerStatusListener upon environmental readiness.5
+4. Session Configuration (PhonePlayConfig): Instantiating an active streaming session requires building a PhonePlayConfig object to define granular interaction parameters:
+   * Core Authentication: Demands the context, a custom userId, the padCode (Instance ID), the temporary STS token, the clientType, and the target DOM container.5
+   * Hardware Sync & Sensors: Boolean flags such as enableGyroscopeSensor, enableVibrator, enableLocationService, enableCamera, and enableMic dictate whether the local device's physical hardware sensors should be mapped directly and tunneled into the cloud instance.5
+   * Stream Quality & Rendering: videoStreamProfileId determines the H.264/H.265 encoding clarity, videoRenderMode controls viewport scaling algorithms, and rotation handles orientation state locking.5
+   * Operational Management: autoRecycleTime establishes a rigorous idle timeout (defaulting to 300 seconds) to conserve bandwidth.5
+Web H5 SDK (WebRTC Architecture)
+The Web H5 SDK represents a profound architectural achievement, encapsulating highly complex WebRTC signaling, NAT traversal, and low-latency stream decoding into a lightweight JavaScript/TypeScript wrapper. It requires Chrome 58+ or Safari 11+.5
+1. Installation and Containerization: The package is distributed via standard node package managers (npm i armcloud-rtc, yarn add armcloud-rtc). The incoming video stream targets a localized DOM element, typically formatted as a restricted div (e.g., <div id="phoneBox">).5
+2. Engine Parameterization: The ArmcloudEngine constructor (const armCloud = new ArmcloudEngine(params)) receives a comprehensive configuration object:
+   * Networking Configuration: The baseUrl parameter dynamically routes API requests. Domestic usage targets https://openapi.armcloud.net, while international routing requires https://openapi-hk.armcloud.net.13 Connection stability is managed via retryCount (default 2) and retryTime (default 2000ms).5
+   * Media and Bitrate Configuration: The nested videoStream object accepts highly custom parameters to manage bandwidth: resolution (defaulting to profile 12, yielding 540x960), frameRate (defaulting to profile 2 for 25fps), and bitrate (defaulting to profile 3 for 2Mbps). The mediaType flag enables audio-only (1), video-only (2), or combined streaming (3).5
+   * Interactive Design: The keyboard property toggles between standard local input interception or injecting a specialized pad (cloud-rendered) keypad.5
+3. Callback Lifecycle Hooks: The SDK exposes extensive event hooks for managing the inherently volatile nature of WebSocket and WebRTC connections:
+   * onInit and onConnectSuccess: Handle the initial handshake. Developers check armCloud.value.isSupported() during initialization and retrieve the specific SDK version via armCloud.value.version upon connection.5
+   * onAutoplayFailed: A crucial lifecycle hook for modern browser compliance. It gracefully catches scenarios where Chrome or Safari's strict autoplay policies block unmuted media, supplying an event object (e.kind === "video") that requires the developer to bind the armCloud.value.startPlay() function to a manual user interaction.5
+   * onRunInformation: Streams real-time network telemetry (packet loss, jitter, latency) allowing developers to build adaptive bitrate handling.5
+   * onOutputClipper: When saveCloudClipboard is true, this callback seamlessly synchronizes the cloud instance's internal clipboard to the local browser DOM.5
+   * onRenderedFirstFrame: Fired the exact millisecond the H.264 decoder successfully paints the initial video frame to the canvas.5
+Windows PC SDK Architecture
+Designed for enterprise deployment and heavy control center applications, the Windows PC SDK integrates directly with C++ desktop environments.
+* System Requirements: The SDK maintains broad backward compatibility, functioning on environments as minimal as Windows 7, Visual Studio 2015, and C++11, though it recommends Windows 10, Visual Studio 2022, and C++14.5
+* Linkage and Deployment: The integration requires rigid C++ compilation workflows. Developers must strictly configure the "Linker > General > Additional Library Directories" and "Linker > Input > Additional Dependencies" within Visual Studio, subsequently migrating the compiled .dll libraries from the SDK's /bin directory directly into the executable's execution path.5
+System Resilience, Telemetry, and Diagnostic Error Matrices
+In vastly distributed cloud-phone architectures, deterministic error handling represents the dividing line between a resilient automation pipeline and cascading, unrecoverable failures. The VMOS API documentation delineates highly rigid error matrices for both the Server OpenAPI interactions and the client SDK media layers.9
+Server System API Error Diagnostics
+These codes generally signify HTTP-level authentication failures, JSON parameter malformation, or infrastructure-level state concurrency issues.9
+
+
+Error Code
+	Designation and Architectural Context
+	2031
+	Invalid key. The provided AccessId in the cryptographic hashing function is completely unrecognized by the database.9
+	2032 / 100003
+	Required parameter missing / Missing request header. The mandatory Authorization header was stripped during transit or omitted entirely.9
+	2019 / 100004 / 100005
+	Signature verification failed / Invalid signature. The HMAC-SHA256 digest payload is malformed. This is almost exclusively caused by incorrect string concatenation order, encoding discrepancies, or significant clock drift in the injected timestamp.9
+	100006 / 100007 / 100008
+	Token issues. The required STS authentication token is absent, has mathematically expired, or its internal validation has failed.9
+	110031
+	Instance is not ready. A highly common race condition encountered when an automated script polls a device immediately after executing a /restart or /replacePad command. The underlying Android system's boot_completed intent has not yet fired to the PaaS controller.9
+	110014
+	Submissions too frequently. API rate limiting has been intentionally triggered to protect the PaaS control plane from denial-of-service conditions.9
+	100011
+	The same request is in progress. A concurrency lock designed to prevent overlapping state-change commands (e.g., sending two reboot commands within milliseconds), which could corrupt the container state.9
+	100013
+	Parameter type and format errors. The JSON payload contains data types that conflict with the schema definitions.9
+	Client SDK Diagnostic Codes
+The client-side frameworks, which interact directly with WebRTC signaling servers and local hardware media abstraction layers, return distinct error sets designed to guide automated application recovery logic.9
+* Fatal Errors (10xxx and 4xxx Series):
+   * 10000 (ERROR_START_GENERAL): Indicates a catastrophic failure during the initial container boot sequence.9
+   * 10001 (ERROR_START_JOIN_ROOM): The WebRTC signaling server failed to negotiate the peer connection for the specific room instance.9
+   * 10100 (ERROR_DISCONNECT): The TCP/WebSocket maintaining the system heartbeat dropped unexpectedly.9
+   * 4010 (ERROR_RENDER): The client device failed to decode or paint the incoming video buffer, typically indicating a local GPU or hardware acceleration fault.9
+* Media, Permission, and Room Warnings (-2000 & -5000 Series):
+   * -2001 (WARNING_CODE_JOIN_ROOM_FAILED): Room entry failed due to high packet loss or temporary server load. The SDK employs internal logic to automatically retry.9
+   * -2002 (WARNING_CODE_PUBLISH_STREAM_FAILED): The cloud instance failed to encode its screen buffer for upstream transmission.9
+   * -2003 (WARNING_CODE_SUBSCRIBE_STREAM_FAILED404): The requested audio/video stream ID is entirely absent from the current room. The SDK will retry, but persistent failures dictate that the client application should forcefully disconnect and re-authenticate.9
+   * -5001 (WARNING_CODE_NO_CAMERA_PERMISSION) & -5002 (WARNING_CODE_NO_MICROPHONE_PERMISSION): Missing Camera or Microphone permissions at the local host OS level. This explicitly blocks the SDK from capturing local data streams to inject into the cloud instance.9
+   * -5003 (WARNING_CODE_RECODING_DEVICE_START_FAILED): The local audio capture device failed to initialize, frequently caused by another background application maintaining an exclusive lock on the microphone hardware.9
+Data Privacy, Permissions, and Legal Architectures
+Operating a massive fleet of remote Android devices inherently raises significant user privacy, data governance, and legal compliance complexities. These are comprehensively detailed within the platform's Privacy Agreement.5
+The operational architecture rigorously categorizes telemetry and data ingestion into two strictly delineated tiers:
+1. Necessary Information (Infrastructure Metadata): In order to maintain WebRTC routing, load balancing, and diagnostic integrity across global nodes, the SDK mandates the absolute collection of core device brand, operating system API versions, CPU architecture, screen resolution, and IP addresses. Because this is critical for service delivery, this data stream does not require explicit secondary user consent.5
+2. Optional / Sensor Information (Data Tunneling): Advanced platform features that tunnel highly specific local user data directly into the cloud instance (such as bridging the local magnetometer, GPS coordinates, local clipboard contents, or live microphone and camera feeds) fall under rigorous opt-in consent models. To enable these features, the SDK explicitly forces the developer to request ACCESS_FINE_LOCATION, RECORD_AUDIO, and CAMERA permissions utilizing standard Android manifest paradigms.5
+From a data lifecycle and forensic perspective, the system retains operational metadata strictly for the duration specified by the developer's contractual instructions. The security architecture heavily employs anonymization routines and cryptographic transmission protocols. By isolating individual virtual instances within the broader ARM cluster through strict containerization boundaries, the architecture explicitly prevents horizontal privilege escalation or cross-tenant data leakage.5
+Strategic Implications and Final Synthesis
+The VMOS Cloud OpenAPI is a structurally massive, highly resilient orchestration platform that fundamentally alters the logistics of how automated mobile environments are provisioned, manipulated, and executed at scale.
+By exhaustively analyzing the staggering depth of the endpoint availability—ranging from rudimentary installApp commands to the granular, microscopic manipulation of the ro.sys.cloud.proxy.mode and the cryptographic integrity mandated by the HMAC-SHA256 pipelines—it becomes unequivocally evident that the API is engineered specifically for enterprise scenarios demanding extreme anti-detection resilience.
+The integration of profound features like the "One-Key New Device" endpoint, combined with the capability for dynamic sensor data injection, advanced WebRTC parameterization, and deep LSPosed module hooking, indicates that the platform natively anticipates and effortlessly circumvents the defense mechanisms of contemporary mobile applications. Furthermore, the inclusion of robust, highly configurable SDKs across Android, Web H5, and Windows PC environments empowers developers to seamlessly embed these volatile, highly controlled virtual instances into broader consumer-facing applications or centralized enterprise-grade control panels.
+Ultimately, mastering the integration of the VMOS Cloud API requires a profound, cross-disciplinary understanding of Android OS kernel internals, WebRTC signaling constraints, cryptographic token lifecycle management, and stateless REST architectures. When utilized to its full, exhaustive potential, the OpenAPI abstracts the rigid physical limitations of mobile hardware into infinitely scalable, highly fluid, and utterly programmatic code.
+Works cited
+1. VMOS Cloud Open API, accessed on March 29, 2026, https://www.vmoscloud.com/open-api
+2. How to Efficiently Scale Your TikTok Selling Business with Multiple Accounts - VMOS Cloud, accessed on March 29, 2026, https://www.vmoscloud.com/blog/efficiently-scale-your-tiktok-selling-business-with-multiple-accounts
+3. What Is a Device Fingerprint and Proven Strategies to Stay Undetected - VMOS Cloud, accessed on March 29, 2026, https://www.vmoscloud.com/blog/what-is-a-device-fingerprint-and-proven-strategies-to-stay-undetected
+4. VMOS Cloud Review: $0.11/Day Cloud Android Phones with Built-in AI Automation — First Purchase 25% Off · GitHub, accessed on March 29, 2026, https://gist.github.com/yaaet020/7d79aaae2f7127697ece8c02327aa872
+5. Android device modification attribute list | VMOS Cloud API, accessed on March 29, 2026, https://cloud.vmoscloud.com/vmoscloud/doc/en/server/InstanceAndroidPropList.html
+6. Cloud Phone vs Proxy Browser: Which Builds Stronger Social Media Profiles?, accessed on March 29, 2026, https://www.vmoscloud.com/blog/builds-stronger-social-media-profiles
+7. Create & Use Your Cloud Phone – Comprehensive Guide - VMOS Cloud, accessed on March 29, 2026, https://www.vmoscloud.com/help/create-use-cloud-phone
+8. How to Set a Proxy on VMOS Cloud?, accessed on March 29, 2026, https://www.vmoscloud.com/help/how-to-set-ip-proxy-or-vpn-on-vmoscloud.html
+9. Error Code | VMOS Cloud API, accessed on March 29, 2026, https://cloud.vmoscloud.com/vmoscloud/doc/en/server/ErrorCode.html
+10. Example Build | VMOS Cloud API, accessed on March 29, 2026, https://cloud.vmoscloud.com/vmoscloud/doc/en/client/h5/example.html
+11. Alibaba Cloud SDK:Request syntax and signature method V3, accessed on March 29, 2026, https://www.alibabacloud.com/help/en/sdk/product-overview/v3-request-structure-and-signature
+12. API Documentation | VSPhone API, accessed on March 29, 2026, https://cloud.vsphone.com/vsphone/doc/en/server/OpenAPI.html
+13. Example Build | ARMCLOUD Documentation Center, accessed on March 29, 2026, https://docs.armcloud.net/en/client/h5/example.html
+14. Signature Authentication (Recommended) - Tencent Cloud, accessed on March 29, 2026, https://www.tencentcloud.com/document/product/1024/34213
+15. HMAC-SHA256 Signature Verification of Request-Response, accessed on March 29, 2026, https://docs.sentinel.thalesgroup.com/softwareandservices/rms/RMSDocumentation/APIREF/Content/Connected%20(Cloud%20LM)%20REST%20API/MessageSigning.htm
+16. Information Security | PDF - Scribd, accessed on March 29, 2026, https://www.scribd.com/document/622804309/Information-Security
+17. Safely Warm Up Facebook Accounts To Build Trust and Avoid Bans in 2025 - VMOS Cloud, accessed on March 29, 2026, https://www.vmoscloud.com/blog/safely-warm-up-facebook-accounts-to-build-trust-and-avoid-bans
+18. Automate Telegram Engagement Using Bots on Cloud Phones, accessed on March 29, 2026, https://www.vmoscloud.com/blog/automate-telegram-engagement-using-bots-on-cloud-phones
+19. Browser Fingerprinting: Complete Guide to Detection & Protection (2025) - Multilogin, accessed on March 29, 2026, https://multilogin.com/blog/browser-fingerprinting-the-surveillance-you-can-t-stop/
+20. Example Construction | VMOS Cloud API, accessed on March 29, 2026, https://cloud.vmoscloud.com/vmoscloud/doc/en/client/android/example.html
+21. Privacy Policy | VMOS Cloud API, accessed on March 29, 2026, https://cloud.vmoscloud.com/vmoscloud/doc/en/system/PrivacyAgreement.html

@@ -39,3 +39,21 @@ device-viewer/node_modules/
 # Large database
 data/devices.db
 root/
+
+# Debug screenshots
+*.jpg
+
+# Editor / agent configs
+.windsurf/
+_copilot_memories/
+
+# Environment files
+.env
+
+# Build artifacts
+vmos-titan/dist/
+vmos-titan/generated-data/
+vmos-titan/node_modules/
+
+# SQLite databases in working dirs
+vmos-titan/ops-web/*.db

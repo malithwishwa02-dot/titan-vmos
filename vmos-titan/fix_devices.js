@@ -1,8 +1,14 @@
 const https = require('https');
 const crypto = require('crypto');
 
-const ak = "BPWNWxfXMQsjsREyzIOXmCtndRZO8iVi";
-const sk = "Q2SgcSwEfuwoedY0cijp6Mce";
+const path = require('path');
+const fs = require('fs');
+const envPath = path.resolve(__dirname, '..', '.env');
+const envLines = fs.existsSync(envPath) ? fs.readFileSync(envPath, 'utf8').split('\n') : [];
+const envGet = (k) => { const l = envLines.find(l => l.startsWith(k + '=')); return l ? l.split('=').slice(1).join('=').trim() : ''; };
+const ak = envGet('VMOS_CLOUD_AK');
+const sk = envGet('VMOS_CLOUD_SK');
+if (!ak || !sk) { console.error('Missing VMOS_CLOUD_AK or VMOS_CLOUD_SK in ../.env'); process.exit(1); }
 
 const VMOS_HOST    = 'api.vmoscloud.com';
 const VMOS_SERVICE = 'armcloud-paas';
@@ -81,15 +87,18 @@ async function fix() {
     console.log("Checking current devices states...");
     let statuses = await getDeviceStatus();
     
-    // ACP2509244LGV1MV stuck at 11 or showing connection error
-    if (statuses['ACP2509244LGV1MV'] !== undefined && statuses['ACP2509244LGV1MV'] !== 10) {
-        console.log(`[ACP2509244LGV1MV] is in status ${statuses['ACP2509244LGV1MV']}. Applying HARD RESET via replacePad (wipeData: 1) to clear error 120002...`);
-        const r1 = await vmosPost('/vcpcloud/api/padApi/replacePad', {
-            padCodes: ['ACP2509244LGV1MV'], countryCode: 'US', wipeData: 1, androidPropMap: {}
-        });
-        console.log(`-> replacePad response: ${JSON.stringify(r1)}`);
-    } else if (statuses['ACP2509244LGV1MV'] === 10) {
+    // ACP2509244LGV1MV — safe recovery (NEVER use replacePad — causes unpredictable resets)
+    const s1 = statuses['ACP2509244LGV1MV'];
+    if (s1 === 10) {
         console.log(`[ACP2509244LGV1MV] is already status 10 (Running).`);
+    } else if (s1 === 14) {
+        console.log(`[ACP2509244LGV1MV] is in status 14 (Stopped). Sending ONE restart...`);
+        const r1 = await vmosPost('/vcpcloud/api/padApi/restart', { padCodes: ['ACP2509244LGV1MV'] });
+        console.log(`-> restart response: ${JSON.stringify(r1)}`);
+    } else if (s1 === 11) {
+        console.log(`[ACP2509244LGV1MV] is in status 11 (Booting). DO NOT restart — wait for 11→10 transition.`);
+    } else if (s1 !== undefined) {
+        console.log(`[ACP2509244LGV1MV] is in status ${s1}. Waiting — no action taken.`);
     }
 
     // ACP251008CRDQZPF stopped at 14
@@ -113,9 +122,9 @@ async function fix() {
             break;
         }
         
-        // If replacePad resets device to 14, send a restart once to boot it
+        // If device reached 14, send ONE restart to boot it
         if (statuses['ACP2509244LGV1MV'] === 14) {
-             console.log(`[ACP2509244LGV1MV] reached status 14 after reset. Sending restart to boot up...`);
+             console.log(`[ACP2509244LGV1MV] reached status 14. Sending ONE restart...`);
              await vmosPost('/vcpcloud/api/padApi/restart', { padCodes: ['ACP2509244LGV1MV'] });
         }
     }

@@ -51,8 +51,12 @@ def init(device_manager: DeviceManager):
 
 class UnifiedGenesisRequest(BaseModel):
     """Complete unified genesis request body."""
-    # Device
+    # Device — local ADB
     device_id: str = ""
+    # Device — VMOS Cloud (mutually exclusive with device_id / adb_target).
+    # When pad_code is non-empty the engine switches to cloud mode and routes
+    # all pipeline operations through the VMOS Cloud OpenAPI.
+    pad_code: str = ""
     
     # Identity
     name: str = ""
@@ -149,14 +153,7 @@ async def unified_genesis_start(body: UnifiedGenesisRequest):
     
     if not _engine:
         _engine = UnifiedGenesisEngine(device_manager=dm)
-    
-    # Get device
-    device_id = body.device_id or PERMANENT_DEVICE_ID
-    dev = dm.get_device(device_id) if dm else None
-    
-    if not dev:
-        raise HTTPException(404, f"Device not found: {device_id}")
-    
+
     # Basic input validation for sensitive fields
     body_dict = body.model_dump()
     
@@ -170,6 +167,26 @@ async def unified_genesis_start(body: UnifiedGenesisRequest):
     # Validate age_days range
     if body_dict.get("age_days"):
         body_dict["age_days"] = max(1, min(900, body_dict["age_days"]))
+
+    # ── Cloud mode: pad_code provided → VMOS Cloud API ──────────────────
+    if body.pad_code:
+        config = GenesisConfig.from_dict(body_dict)
+        result = _engine.start(config)
+        return {
+            "status": "started",
+            "job_id": result.job_id,
+            "mode": "cloud",
+            "pad_code": body.pad_code,
+            "poll_url": f"/api/unified-genesis/status/{result.job_id}",
+            "phases_count": len(result.phases),
+        }
+
+    # ── Local ADB mode: resolve device ────────────────────────────────
+    device_id = body.device_id or PERMANENT_DEVICE_ID
+    dev = dm.get_device(device_id) if dm else None
+
+    if not dev:
+        raise HTTPException(404, f"Device not found: {device_id}")
     
     # Build config from validated request
     config = GenesisConfig.from_dict({
@@ -184,6 +201,7 @@ async def unified_genesis_start(body: UnifiedGenesisRequest):
     return {
         "status": "started",
         "job_id": result.job_id,
+        "mode": "local",
         "device_id": device_id,
         "poll_url": f"/api/unified-genesis/status/{result.job_id}",
         "phases_count": len(result.phases),

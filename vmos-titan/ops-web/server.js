@@ -166,10 +166,7 @@ async function handleAPI(pathname, method, body, res) {
       }
 
       if (action === 'reset' && method === 'POST') {
-        const r = await vmosPost('/vcpcloud/api/padApi/replacePad', {
-          padCodes: [padCode], countryCode: 'US', wipeData: 1, androidPropMap: {},
-        });
-        return send({ ok: r.code === 200, msg: r.msg });
+        return send({ error: 'DEPRECATED: replacePad causes unpredictable device reset. Use shell-based wipe via Genesis pipeline instead.', deprecated: true }, 410);
       }
 
       if (action === 'screenshot' && method === 'GET') {

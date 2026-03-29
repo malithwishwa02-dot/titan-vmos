@@ -11,4 +11,23 @@ ALWAYS consult your `.github/skills/genesis-engine/SKILL.md` skill for deep cont
 
 ## Knowledge Scope
 * **Purchase Validation**: For any payment questions, check the docs in `purchase-validation/*.md` (Google Pay DPANs, Play Store `COIN.xml`, Chrome Autofill).
-* **Pipeline API**: Reference `VMOS-API-ERRORS-AND-DEBUGGING-LOG.md` for undocumented API quirks. Device status: `10`=Running, `11`=Booting, `12`=Resetting, `14`=Stopped.
+* **Pipeline API**: Reference `VMOS-API-ERRORS-AND-DEBUGGING-LOG.md` for undocumented API quirks. Device status: `10`=Running, `11`=Booting, `12`=Resetting, `14`=Abnormal.
+
+## CRITICAL Crash Prevention Rules
+* **NEVER** `pm disable-user com.cloud.rtcgesture` — VMOS WebRTC control channel; causes permanent status=11 (device bricked, needs full RESET)
+* **NEVER** `pm disable-user com.android.expansiontools` — VMOS management app; may brick device
+* **NEVER** mount tmpfs over `/system/priv-app/` — breaks PackageManagerService
+* **NEVER** mass chmod on `/sys/block/` — 679 loop + 64 NBD devices; kernel read-only; timeout causes crash
+* **NEVER** rapid-fire async_adb_cmd calls (<3s apart) — triggers 110031 cascade → status=14
+* **NEVER** restart a device in status=11 — causes 11↔14 boot loop; wait patiently for 11→10
+* VMOS `/system` is device-mapper (dm-6) protected — `remount rw` ALWAYS fails
+* Space ADB commands ≥3s apart; batch related commands into single shell strings
+
+## Safe Stealth Techniques
+* `tmpfs` staging at `/dev/.sc` (anonymous mount)
+* `bind-mount` sterile files over `/proc/cmdline`, `/proc/mounts`, `/proc/1/cgroup`
+* `resetprop --delete` for non-boot properties
+* `resetprop <prop> ""` for boot-locked `ro.boot.*` properties
+* `rmmod selinux_leak_fix` (unloads VMOS kernel module)
+* Process comm rename via `echo newname > /proc/PID/comm`
+* Full iptables control for network filtering

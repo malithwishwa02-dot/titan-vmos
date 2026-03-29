@@ -39,6 +39,11 @@
       "main.js",
       "preload.js",
       "index.html",
+      "setup.html",
+      "validators.js",
+      "check_device.js",
+      "fix_devices.js",
+      "start_stopped_device.js",
       "assets/**/*"
     ],
     "extraResources": [

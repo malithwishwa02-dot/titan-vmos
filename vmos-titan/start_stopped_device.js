@@ -1,8 +1,14 @@
 const https = require('https');
 const crypto = require('crypto');
 
-const ak = "BPWNWxfXMQsjsREyzIOXmCtndRZO8iVi";
-const sk = "Q2SgcSwEfuwoedY0cijp6Mce";
+const path = require('path');
+const fs = require('fs');
+const envPath = path.resolve(__dirname, '..', '.env');
+const envLines = fs.existsSync(envPath) ? fs.readFileSync(envPath, 'utf8').split('\n') : [];
+const envGet = (k) => { const l = envLines.find(l => l.startsWith(k + '=')); return l ? l.split('=').slice(1).join('=').trim() : ''; };
+const ak = envGet('VMOS_CLOUD_AK');
+const sk = envGet('VMOS_CLOUD_SK');
+if (!ak || !sk) { console.error('Missing VMOS_CLOUD_AK or VMOS_CLOUD_SK in ../.env'); process.exit(1); }
 
 const VMOS_HOST    = 'api.vmoscloud.com';
 const VMOS_SERVICE = 'armcloud-paas';
