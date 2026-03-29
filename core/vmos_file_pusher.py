@@ -56,8 +56,8 @@ class VMOSFilePusher:
         pad_code: Target VMOS Cloud device pad code.
         shell_timeout: Per-command ADB shell timeout in seconds.
         inter_chunk_delay: Seconds to wait between chunk writes to avoid
-            triggering VMOS rate-limit (error 110031).  Minimum 0.5s
-            recommended; the plan warns against rapid-fire commands.
+            triggering VMOS rate-limit (error 110031).  Minimum 0.3s
+            enforced internally; the plan warns against rapid-fire commands.
     """
 
     def __init__(

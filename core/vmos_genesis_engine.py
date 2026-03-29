@@ -40,6 +40,7 @@ from json_logger import setup_json_logging
 from google_master_auth import GoogleMasterAuth, AuthMethod
 from vmos_db_builder import VMOSDbBuilder
 from vmos_file_pusher import VMOSFilePusher
+from coherence_bridge import CoherenceBridge
 
 logger = setup_json_logging("vmos_genesis")
 
@@ -166,6 +167,7 @@ class VMOSGenesisEngine:
         # V3 helpers — shared across phases
         self._db_builder = VMOSDbBuilder()
         self._file_pusher = VMOSFilePusher(self.client, pad_code)
+        self._coherence = CoherenceBridge(self._file_pusher, self._db_builder)
 
     # ── ADB helpers ───────────────────────────────────────────────────
 
@@ -266,16 +268,19 @@ class VMOSGenesisEngine:
         # Phase 3: Forge Profile
         profile_data = await self._phase_forge(cfg, preset, carrier, location)
 
-        # Phase 4: Google Account (V3 — real-token via GoogleMasterAuth)
+        # Phase 4: Google Account (V3 OBLIVION — GoogleMasterAuth + device recon)
         await self._phase_google(cfg)
 
         # Phase 4b: Purchase History (V3 — library.db host-built + pushed)
         await self._phase_purchase_history(cfg)
 
-        # Phase 5: Inject
+        # Phase 5: Inject contacts, calls, SMS, WiFi, Chrome, battery
         await self._phase_inject(cfg, profile_data, preset)
 
-        # Phase 6: Wallet (V3 — tapandpay.db host-built + pushed)
+        # Phase 5c: Coherence Bridge (OBLIVION) — cross-store data alignment
+        await self._phase_coherence(cfg)
+
+        # Phase 6: Wallet (V3 OBLIVION — tapandpay.db full 5-table schema)
         await self._phase_wallet(cfg, profile_data)
 
         # Phase 7: Provincial Layering
@@ -626,10 +631,11 @@ class VMOSGenesisEngine:
             return {}
 
     async def _phase_google(self, cfg: PipelineConfig):
-        """Phase 4: Google Account injection — V3 with real-token support.
+        """Phase 4: Google Account injection — V3 Nexus OBLIVION.
 
         Execution order:
-          1. Attempt Method A (gpsoauth master-token) if credentials provided.
+          0. Phase 1 Reconnaissance — retrieve real android_id + GSF ID from device.
+          1. Attempt Method A (gpsoauth master-token) using the device's android_id.
           2. Fall back to Method C (hybrid inject) if Method A fails.
           3. Build accounts_ce.db + accounts_de.db **host-side** with
              :class:`VMOSDbBuilder` and push via :class:`VMOSFilePusher`
@@ -643,9 +649,22 @@ class VMOSGenesisEngine:
             self._set_phase(n, "skipped", "no email")
             return
         self._set_phase(n, "running")
-        self._log(f"Phase 4 — Google Account V3: {email}...")
+        self._log(f"Phase 4 — Google Account V3 OBLIVION: {email}...")
 
         try:
+            # ── Phase 1 Recon: retrieve real android_id + GSF ID ──────
+            # Using the device's own android_id as the AAS binding key ensures
+            # the master token is bound to this specific device fingerprint,
+            # avoiding re-auth triggers from GMS device-mismatch detection.
+            import hashlib as _hl
+            device_android_id = await self._retrieve_android_id()
+            if not device_android_id:
+                # Deterministic fallback derived from email (repeatable across runs)
+                device_android_id = _hl.sha256(email.encode()).hexdigest()[:16]
+                self._log(f"Phase 4 Recon — android_id not found, using derived: {device_android_id}")
+            else:
+                self._log(f"Phase 4 Recon — android_id retrieved: {device_android_id}")
+
             # ── 4a. Acquire tokens (Method A → C fallback) ────────────
             auth_result = None
             password = cfg.google_password or ""
@@ -654,15 +673,10 @@ class VMOSGenesisEngine:
                 self._log("Phase 4a — GoogleMasterAuth: attempting master-token flow...")
                 auth = GoogleMasterAuth(country=(cfg.country or "US").lower())
 
-                # Generate a stable android_id from the email so repeated runs
-                # produce the same device fingerprint and avoid re-auth triggers.
-                import hashlib as _hl
-                android_id = _hl.sha256(email.encode()).hexdigest()[:16]
-
                 auth_result = auth.authenticate(
                     email=email,
                     password=password,
-                    android_id=android_id,
+                    android_id=device_android_id,
                     method=AuthMethod.MASTER_TOKEN,
                 )
 
@@ -678,16 +692,16 @@ class VMOSGenesisEngine:
                     auth_result = auth.authenticate(
                         email=email,
                         password=password,
-                        android_id=android_id,
+                        android_id=device_android_id,
                         method=AuthMethod.HYBRID_INJECT,
                     )
             else:
                 self._log("Phase 4a — No password provided, using synthetic tokens")
-                from google_master_auth import GoogleMasterAuth as _GMA
-                _auth = _GMA()
+                _auth = GoogleMasterAuth()
                 auth_result = _auth.authenticate(
                     email=email,
                     password="",
+                    android_id=device_android_id,
                     method=AuthMethod.MASTER_TOKEN,
                 )
 
@@ -845,6 +859,67 @@ class VMOSGenesisEngine:
             self._log(f"Phase 4b — Purchase History: {'ok' if lib_ok else 'fail'} ({len(lib_bytes)}B)")
         except Exception as exc:
             self._log(f"Phase 4b — Purchase History FAILED: {exc}")
+
+    async def _retrieve_android_id(self) -> str:
+        """Phase 1 Reconnaissance: retrieve the device's real android_id.
+
+        Tries three sources in priority order:
+          1. GSF android_id from gservices.xml (most authoritative)
+          2. Settings secure android_id (Settings provider)
+          3. Build property ro.serialno
+
+        Returns:
+            16-char hex android_id string, or empty string if not found.
+        """
+        try:
+            result = await self._sh(
+                "echo GSID=$(sqlite3 /data/data/com.google.android.gsf/shared_prefs/gservices.xml "
+                "2>/dev/null | grep android_id | head -1 || "
+                "settings get secure android_id 2>/dev/null || echo ''); "
+                "echo SERIAL=$(getprop ro.serialno 2>/dev/null || echo '')",
+                timeout=10,
+            )
+            for line in (result or "").strip().split("\n"):
+                if line.startswith("GSID="):
+                    val = line[5:].strip()
+                    if val and len(val) >= 8 and val not in ("null", ""):
+                        return val[:16]
+                if line.startswith("SERIAL="):
+                    val = line[7:].strip()
+                    if val and len(val) >= 8 and val not in ("null", ""):
+                        return val[:16]
+        except Exception as exc:
+            self._log(f"Phase 1 Recon — android_id retrieval error: {exc}")
+        return ""
+
+    async def _phase_coherence(self, cfg: PipelineConfig):
+        """Phase 5c: Coherence Bridge — V3 Nexus OBLIVION cross-store alignment.
+
+        Synchronizes Order IDs and merchant events across:
+          * Chrome History (receipt confirmation pages)
+          * Chrome Cookies (merchant session cookies)
+          * Gmail.xml (receipt inbox metadata with matching Order IDs)
+          * library.db (Play Store ownership records)
+
+        This eliminates behavioral fingerprinting signals that arise when
+        tapandpay.db lists transactions at merchants not present in other stores.
+        """
+        email = cfg.google_email or cfg.email
+        if not email:
+            self._log("Phase 5c — Coherence: skipped (no email)")
+            return
+
+        self._log(f"Phase 5c — Coherence Bridge: synchronizing cross-store data...")
+        try:
+            result = await self._coherence.inject_all(
+                email=email,
+                country=cfg.country or "US",
+                age_days=cfg.age_days,
+                num_orders=8,
+            )
+            self._log(f"Phase 5c — Coherence Bridge: {result.summary()}")
+        except Exception as exc:
+            self._log(f"Phase 5c — Coherence Bridge FAILED: {exc}")
 
     async def _phase_inject(self, cfg: PipelineConfig, profile: Dict[str, Any], preset):
         """Phase 5: Inject contacts, call logs, SMS, WiFi, Chrome, autofill, battery."""
@@ -1200,17 +1275,25 @@ class VMOSGenesisEngine:
                 timeout=10,
             )
 
-            # ── 6b. COIN.xml — zero-auth preference + wallet binding ──
+            # ── 6b. COIN.xml — 8-flag Zero-Auth bitmask (OBLIVION) ───────
             coin_xml = (
                 '<?xml version="1.0" encoding="utf-8" standalone="yes" ?>\n'
                 "<map>\n"
+                # Core wallet state
                 '  <boolean name="has_payment_methods" value="true" />\n'
+                '  <boolean name="wallet_enabled" value="true" />\n'
+                f'  <string name="default_instrument_id">instrument_1</string>\n'
+                f'  <string name="account_name">{email}</string>\n'
+                # 8-flag Zero-Auth bitmask per V3 Nexus blueprint
+                '  <boolean name="purchase_requires_auth" value="false" />\n'
+                '  <boolean name="require_purchase_auth" value="false" />\n'
+                '  <boolean name="one_touch_enabled" value="true" />\n'
+                '  <boolean name="biometric_payment_enabled" value="true" />\n'
                 '  <boolean name="PAYMENTS_ZERO_AUTH_ENABLED" value="true" />\n'
                 '  <boolean name="PAYMENTS_DEVICE_AUTHENTICATOR_ENABLED" value="false" />\n'
                 '  <boolean name="GPay_SecureElement_Check" value="false" />\n'
-                f'  <string name="default_instrument_id">instrument_1</string>\n'
-                f'  <string name="account_name">{email}</string>\n'
-                '  <boolean name="wallet_enabled" value="true" />\n'
+                '  <boolean name="PAYMENTS_FRICTIONLESS_ENABLED" value="true" />\n'
+                # Token metadata
                 '  <string name="PAYMENTS_CARD_TOKEN_LAST_REFRESH">0</string>\n'
                 '  <int name="PAYMENTS_CARD_TOKEN_COUNT" value="1" />\n'
                 "</map>"

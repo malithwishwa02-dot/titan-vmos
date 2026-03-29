@@ -92,6 +92,11 @@ class AuthResult:
     errors: List[str] = field(default_factory=list)
     warnings: List[str] = field(default_factory=list)
 
+    # Method C only: plaintext password stored for GMS token refresh.
+    # Set by _authenticate_hybrid(); consumed by vmos_db_builder.
+    # NOT included in to_dict() / logs to avoid credential exposure.
+    _hybrid_password: str = field(default="", repr=False)
+
     @property
     def has_real_tokens(self) -> bool:
         return bool(self.master_token) and bool(self.tokens)
@@ -332,7 +337,7 @@ class GoogleMasterAuth:
         """
         result.synthetic_tokens = self._make_synthetic_tokens(email)
         # Expose the password for DB builder — stored in-memory only, not logged
-        result._hybrid_password = password  # type: ignore[attr-defined]
+        result._hybrid_password = password
         result.method = AuthMethod.HYBRID_INJECT
         # Mark success so downstream code proceeds with injection
         result.success = True
