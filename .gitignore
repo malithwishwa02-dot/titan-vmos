@@ -29,6 +29,9 @@ cuttlefish-desktop/dist/**
 !cuttlefish-desktop/dist/**/*.yml
 !cuttlefish-desktop/dist/**/*.sh
 
+# Virtual environment
+venv/
+
 # Node modules
 desktop/node_modules/
 device-viewer/node_modules/

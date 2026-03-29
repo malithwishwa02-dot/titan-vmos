@@ -169,35 +169,15 @@ done
 [[ -f "${SRC_DIR}/.env.example" ]] && cp "${SRC_DIR}/.env.example" "${STAGING}${INSTALL_PREFIX}/"
 
 # ═══════════════════════════════════════════════════════════════════════
-# STEP 3: Scripts, Docker, Templates, Desktop
+# STEP 3: Scripts, Desktop
 # ═══════════════════════════════════════════════════════════════════════
-echo "[3/10] Copying scripts, Docker, templates, and desktop configs..."
+echo "[3/10] Copying scripts and desktop configs..."
 
 # Deployment/setup scripts
 mkdir -p "${STAGING}${INSTALL_PREFIX}/scripts"
 rsync -a --exclude='__pycache__' --exclude='*.pyc' --exclude='_deprecated' \
     "${SRC_DIR}/scripts/" "${STAGING}${INSTALL_PREFIX}/scripts/"
 chmod +x "${STAGING}${INSTALL_PREFIX}/scripts/"*.sh 2>/dev/null || true
-
-# Docker configs
-mkdir -p "${STAGING}${INSTALL_PREFIX}/docker"
-for f in nginx.conf docker-compose.yml docker-compose.prod.yml; do
-    [[ -f "${SRC_DIR}/docker/${f}" ]] && cp "${SRC_DIR}/docker/${f}" "${STAGING}${INSTALL_PREFIX}/docker/"
-done
-mkdir -p "${STAGING}${INSTALL_PREFIX}/docker/ssl"
-
-# GApps overlay configs
-if [[ -d "${SRC_DIR}/docker/gapps" ]]; then
-    rsync -a "${SRC_DIR}/docker/gapps/" "${STAGING}${INSTALL_PREFIX}/docker/gapps/"
-fi
-if [[ -d "${SRC_DIR}/docker/init.d" ]]; then
-    rsync -a "${SRC_DIR}/docker/init.d/" "${STAGING}${INSTALL_PREFIX}/docker/init.d/"
-fi
-
-# HTML templates
-if [[ -d "${SRC_DIR}/templates" ]]; then
-    rsync -a "${SRC_DIR}/templates/" "${STAGING}${INSTALL_PREFIX}/templates/"
-fi
 
 # Desktop (Electron — optional)
 if [[ -d "${SRC_DIR}/desktop" ]]; then
