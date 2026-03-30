@@ -237,6 +237,179 @@ Common error codes:
 - `3` — Completed
 - `9` — Queued
 
+### Hardware Tiers & Pricing
+
+| Tier | CPU | RAM | Storage | Price | Use Case |
+|------|-----|-----|---------|-------|----------|
+| V08 Standard | 8-core | 4GB | 32GB | $4.99/mo | Game farming, baseline social matrix |
+| V06 Standard | 8-core | 5.4GB | 43GB | $6.99/mo or $0.006/min | General automation |
+| V04 Standard | 8-core | 8GB | 64GB | $8.99/mo | Medium workload |
+| V03 Standard | 8-core | 10.7GB | 85GB | $10.99/mo | Heavy automation |
+| Premium Real | 8-core | 12GB | 85GB | $13.99/mo | High-risk anti-detection |
+| Real Device Test | Various | Various | Various | $0.20/min | CI/CD, compatibility testing |
+
+Real device fleet: Samsung S24 Ultra, Pixel 6 Pro, OPPO Reno12 Pro, Xiaomi 15 Pro, Vivo X200 Pro (A15), Pixel 9, OnePlus Ace 2, Redmi K70 Ultra (A14/A13).
+
+### Device Fingerprint Property Namespaces
+
+#### Surface Identity (ro.product.*)
+`ro.product.model`, `ro.product.brand`, `ro.product.name`, `ro.product.device`, `ro.product.manufacturer`
+
+#### Deep Hardware Fingerprints (partition-specific)
+`ro.build.fingerprint`, `ro.odm.build.fingerprint`, `ro.product.build.fingerprint`, `ro.system.build.fingerprint`, `ro.system_ext.build.fingerprint`, `ro.vendor.build.fingerprint`
+
+All partition fingerprints MUST align with surface `ro.product.*` values to pass Google CTS checks.
+
+#### Build Metadata
+`ro.build.version.incremental`, `ro.build.flavor`, `ro.product.board`, `ro.hardware`
+
+#### Core Unique Identifiers
+| Property | Controls |
+|----------|----------|
+| `ro.sys.cloud.android_id` | Android ID |
+| `persist.sys.cloud.imeinum` | IMEI |
+| `persist.sys.cloud.iccidnum` | ICCID (SIM card ID) |
+| `persist.sys.cloud.imsinum` | IMSI (subscriber ID) |
+
+Rotate these concurrently with IP to make one instance appear as an entirely different device.
+
+#### Media DRM Spoofing
+| Property | Controls |
+|----------|----------|
+| `persist.sys.cloud.drm.id` | Widevine `deviceUniqueId` |
+| `persist.sys.cloud.drm.puid` | Widevine `provisioningUniqueId` (modern ROMs) |
+
+#### GPU / Graphics
+| Property | Controls |
+|----------|----------|
+| `persist.sys.cloud.gpu.gl_vendor` | OpenGL vendor string |
+| `persist.sys.cloud.gpu.gl_renderer` | OpenGL renderer (e.g., Adreno 750) |
+| `persist.sys.cloud.gpu.gl_version` | OpenGL ES version (e.g., "OpenGL ES 3.2") |
+
+#### WiFi Subsystem
+`persist.sys.cloud.wifi.ssid`, `persist.sys.cloud.wifi.mac`, `persist.sys.cloud.wifi.ip`, `persist.sys.cloud.wifi.gateway`, `persist.sys.cloud.wifi.dns1`
+
+Defeats WLAN BSSID geolocation scanning.
+
+#### Cellular Baseband Telemetry
+- `persist.sys.cloud.cellinfo` — hex-encoded: `type,mcc,mnc,tac(hex),cellid(hex),narfcn(hex),pci(hex)` — type=9 is 5G NR
+- `persist.sys.cloud.mobileinfo` — MCC+MNC (e.g., "310260" for T-Mobile US)
+- `persist.sys.cloud.phonenum` — injected phone number (international, e.g., "6512345678" for Singapore)
+
+#### Proxy Properties
+| Property | Controls |
+|----------|----------|
+| `ro.sys.cloud.proxy.mode` | `proxy` (iptables) or `vpn` (VpnService — DNS leak protection) |
+| `ro.sys.cloud.proxy.type` | `socks5` or `http-relay` |
+| `ro.sys.cloud.proxy.data` | Format: `IP\|port\|username\|password\|enable` |
+| `ro.sys.cloud.proxy.byPassPackageName1` | Bypass proxy for specific package |
+| `ro.sys.cloud.proxy.byPassIpName1` | Bypass proxy for specific IP |
+| `ro.sys.cloud.proxy.byByPassDomain1` | Bypass proxy for specific domain |
+
+#### DNS
+`ro.boot.redroid_net_ndns` (server count), `ro.boot.redroid_net_dns1`, `ro.boot.redroid_net_dns2`
+
+#### GPS (via API or properties)
+`persist.sys.cloud.gps.lat`, `persist.sys.cloud.gps.lon`, `persist.sys.cloud.gps.speed`, `persist.sys.cloud.gps.altitude`, `persist.sys.cloud.gps.bearing`
+
+#### Environmental Camouflage
+| Property | Controls |
+|----------|----------|
+| `persist.sys.cloud.battery.capacity` | Battery total mAh |
+| `persist.sys.cloud.battery.level` | Initial charge level (then auto charge/discharge curves) |
+| `persist.sys.timezone` | System timezone (e.g., "Asia/Hong_Kong") |
+| `persist.sys.locale` | UI locale (e.g., "en-US", "zh-CN") |
+| `persist.sys.cloud.pm.install_source` | Fake install source (e.g., `com.android.vending` = Play Store) |
+| `persist.sys.cloud.boottime.offset` | Boot time offset in seconds |
+| `ro.sys.cloud.boot_id` | Unique kernel random boot ID |
+| `ro.sys.cloud.rand_pics` | Auto-generate N random gallery images on first boot |
+
+### Sensor Simulation Engine
+
+Real-time sensor injection via `persist.sys.cloud.sensor.tpl_dp` property pointing to a UTF-8 data file (up to 1GB).
+
+**Start**: `setprop persist.sys.cloud.sensor.tpl_dp /data/local/tmp/sensor_data.txt`
+**Stop**: `setprop persist.sys.cloud.sensor.tpl_dp ""`
+
+**File format**: Sequential sensor readings + delay commands (`delay:50` = 50ms pause).
+
+#### Supported Sensor Categories
+
+**Motion & Kinematics**: `accelerometer` (m/s²), `gyroscope` (rad/s), `linear-acceleration`, `acceleration-uncalibrated`, `gyroscope-uncalibrated`, `gravity`, `rotation-vector`, `game-rotation-vector`, `geomagnetic_rotation` — format: `x:y:z`
+
+**Environmental**: `magnetic-field` (μT), `proximity` (cm), `light` (lux), `pressure` (hPa), `temperature` (°C), `humidity` (%)
+
+**Biometrics**: `step-counter`, `step-detector`, `significant-motion`, `motion-detect`, `tilt-detector`, `pick-up gesture`, `wrist-tilt`, `heart-rate` (BPM)
+
+**Foldable**: `hinge-angle0` through `hinge-angle2` (degrees) — Samsung Fold/Huawei Mate X only
+
+**Optimization**: VR/gaming: ~16ms delay (60Hz). General apps: 50-100ms (10-20Hz). Use interpolation for smooth state transitions.
+
+### Xposed/LSPosed Hook Integration (apmt CLI)
+
+VMOS includes a native Xposed-equivalent plugin framework via the `apmt` shell tool.
+
+**Deploy**: `apmt patch add -n <name> -p <package> -f <local_path>` (or `-u <url>` for remote)
+**List**: `apmt patch list`
+**Remove**: `apmt patch del -n <name>`
+
+**Entry class**: Must be `androidx.app.Entry`
+
+**App-level hooking** (`appMain` method): Use `XSHelpers.findAndHookMethod` targeting specific app classes. Intercepts app-level API calls, alters return values via `param.setResult`.
+
+**System-level hooking** (`systemMain` method): Hooks into `com.android.server.SystemServer`. Target package = `"android"`. **Requires hard device reboot** to apply. Grants unrestricted Android framework control.
+
+### Client SDK Reference
+
+| SDK | Package | Min Requirements |
+|-----|---------|-----------------|
+| Android | `net.armcloud.armcloudsdk:armcloudsdkv3:1.1.4` (Maven: `https://maven.vmos.cn`) | Android 5.0+, JDK 1.8 |
+| Web H5 | `armcloud-rtc` (npm/yarn) | Chrome 58+, Safari 11+ |
+| Windows PC | C++ SDK (DLL linkage) | Windows 7+, VS 2015+, C++11 |
+
+**Web H5 base URLs**: Domestic: `https://openapi.armcloud.net` — International: `https://openapi-hk.armcloud.net`
+
+**STS Token endpoints**: `/openapi/open/token/stsToken`, `/vsphone/api/padApi/stsToken`, `/vsphone/api/padApi/stsTokenByPadCode`, `/vsphone/api/padApi/clearStsToken`
+
+### Client SDK Error Codes
+
+| Code | Type | Meaning |
+|------|------|---------|
+| 10000 | Fatal | Container boot failure |
+| 10001 | Fatal | WebRTC room join failed |
+| 10100 | Fatal | Heartbeat TCP/WebSocket dropped |
+| 4010 | Fatal | Video render/decode failure (local GPU) |
+| -2001 | Warning | Room entry failed (packet loss) — auto-retry |
+| -2002 | Warning | Cloud screen encode failed |
+| -2003 | Warning | Stream ID not found — force disconnect + re-auth if persistent |
+| -5001 | Warning | Missing local camera permission |
+| -5002 | Warning | Missing local microphone permission |
+| -5003 | Warning | Audio capture device locked by another app |
+
+### Extended Error Codes (Server)
+
+| Code | Meaning |
+|------|---------|
+| 2031 | Invalid AccessId (key not recognized) |
+| 2032 / 100003 | Missing Authorization header |
+| 2019 / 100004 / 100005 | HMAC-SHA256 signature mismatch (encoding/clock drift) |
+| 100006 / 100007 / 100008 | STS token absent / expired / validation failed |
+| 100011 | Concurrent state-change lock (overlapping commands) |
+| 100013 | JSON parameter type/format mismatch |
+| 110014 | Rate limit triggered (submissions too frequent) |
+| 110031 | Instance not ready (race condition after restart/replacePad) |
+
+### Proxy Infrastructure Pricing
+
+| Type | Pricing | Use Case |
+|------|---------|----------|
+| Static ISP Residential (Zone A Premium) | $4.80/IP/month | Account nurturing, fixed identity |
+| Static ISP Residential (Zone A Standard) | $2.29/IP/month | General fixed IP |
+| Dynamic Residential | $6/2GB – $1000/1TB | IP rotation, aggressive ops |
+| Static Datacenter | $4/IP/month | Non-residential automation |
+
+80+ countries supported. Static residential = fixed IP for one instance. Dynamic = auto-rotate (1-90 min intervals).
+
 ---
 
 ## Part 1B: VMOS Edge API (Container + Control)
@@ -767,6 +940,417 @@ VMOS_CLOUD_SK        (set in .env)                VMOS Cloud Secret Key
 14. **Edge API: Connection detection** — check for local `cbs_go` process (`pgrep -x cbs_go`) to auto-detect self-hosted Edge; use `host_ip=127.0.0.1` if local
 15. **Edge API: POST first for list** — `/container_api/v1/get_db` prefers POST; fall back to GET if POST fails
 
+---
+
+## Part 6: Genesis V3 Nexus Pipeline
+
+### Architecture (4 Phases)
+
+```
+Phase 1: RECONNAISSANCE — android_id, GSF ID, gpsoauth master login
+Phase 2: SYNTHESIS — Build DBs host-side (accounts_ce, tapandpay, library)
+Phase 3: DEPLOYMENT — Push via Bridge Protocol, fix perms, restorecon
+Phase 4: VALIDATION — Verify account, NFC, zero-auth flags, trust score
+```
+
+### V3 Core Modules
+
+| Module | File | Key Classes/Functions |
+|--------|------|----------------------|
+| Google Master Auth | `core/google_master_auth.py` | `GoogleMasterAuth`, `AuthResult`, `authenticate()` |
+| VMOS DB Builder | `core/vmos_db_builder.py` | `VMOSDBBuilder`, `CardData`, `generate_dpan()` |
+| VMOS File Pusher | `core/vmos_file_pusher.py` | `VMOSFilePusher`, `build_coin_xml()`, `build_finsky_xml()` |
+| Wallet Injection | `core/wallet_injection.py` | `GooglePayInjector`, `PaymentCard`, `CardNetwork` |
+| Sensor Simulator | `core/sensor_noise_simulator.py` | `MEMSSensorSimulator`, `GPSSensorFusion` |
+| Stochastic Aging | `core/stochastic_aging_engine.py` | `StochasticAgingEngine`, `create_aged_profile()` |
+| Attestation Proxy | `core/attestation_proxy.py` | `VirtualKeyStore`, `PlayIntegritySimulator` |
+| Nexus Runner | `core/vmos_nexus_runner.py` | `NexusRunner`, `NexusConfig`, `NexusResult` |
+
+### V3 Import Quick Reference
+
+```python
+from google_master_auth import GoogleMasterAuth, AuthResult
+from vmos_db_builder import VMOSDBBuilder, CardData, PurchaseRecord, generate_dpan
+from vmos_file_pusher import VMOSFilePusher, build_coin_xml, build_finsky_xml
+from wallet_injection import GooglePayInjector, PaymentCard, CardNetwork
+from sensor_noise_simulator import MEMSSensorSimulator, GPSSensorFusion
+from stochastic_aging_engine import StochasticAgingEngine, PersonaArchetype
+from attestation_proxy import VirtualKeyStore, PlayIntegritySimulator
+from vmos_nexus_runner import NexusRunner, NexusConfig, NexusResult
+```
+
+### Database Schemas
+
+**accounts_ce.db** (`/data/system_ce/0/accounts_ce.db`):
+- `PRAGMA user_version = 10` (Android 14)
+- Tables: `accounts` (_id, name, type, password), `authtokens` (accounts_id, type, authtoken), `extras` (accounts_id, key, value)
+- Ownership: `system:system` (1000:1000), permissions 600
+
+**tapandpay.db** (`/data/data/com.google.android.gms/databases/tapandpay.db`):
+- Tables: `tokens` (dpan, fpan_last_four, network, status), `session_keys` (token_id, key_id, key_data, atc), `transaction_history` (token_id, merchant_name, amount_cents)
+- CRITICAL: `CREATE VIEW token_metadata AS SELECT * FROM tokens;`
+- Ownership: GMS UID, permissions 660
+
+**library.db** (`/data/data/com.android.vending/databases/library.db`):
+- Table: `ownership` (account, doc_id, doc_type, purchase_time, order_id, price_micros, currency_code)
+- Order ID format: `GPA.XXXX-XXXX-XXXX-XXXXX`
+
+### COIN.xml (8-Flag Zero-Auth)
+
+Path: `/data/data/com.android.vending/shared_prefs/com.android.vending.billing.InAppBillingService.COIN.xml`
+
+ALL 8 flags required:
+1. `purchase_requires_auth=false`
+2. `require_purchase_auth=false`
+3. `one_touch_enabled=true`
+4. `biometric_payment_enabled=true`
+5. `PAYMENTS_ZERO_AUTH_ENABLED=true`
+6. `device_auth_not_required=true`
+7. `skip_challenge_on_payment=true`
+8. `frictionless_checkout_enabled=true`
+
+### TSP Token BIN Ranges (DPAN Generation)
+
+| Network | Token BINs |
+|---------|-----------|
+| Visa | 489537, 489538, 489539, 440066, 440067, 400837 |
+| Mastercard | 530060, 530061, 530062, 530063, 222100 |
+| Amex | 374800, 374801, 377777 |
+
+### EMV Cryptography
+
+**LUK Derivation**: `MDK = SHA256("TITAN-MK-{DPAN}")` → `UDK = HMAC(MDK, dpan+atc)` → `LUK = UDK[:32]`
+
+**ARQC**: `MAC(LUK, amount + currency + terminal_id + atc)` → 8-byte cryptogram
+
+### Persona Archetypes (Stochastic Aging)
+
+8 types: `professional`, `student`, `night_shift`, `retiree`, `freelancer`, `parent`, `gamer`, `traveler`
+
+Each has distinct peak_hours, sleep_hours, communication_rate, call_duration_mean, browse_session_length.
+
+### V3 Troubleshooting
+
+| Symptom | Cause | Fix |
+|---------|-------|-----|
+| "NeedsBrowser" auth error | 2FA enabled | Create app-specific password |
+| "BadAuthentication" | Invalid credentials | Verify email/password |
+| Card not in Google Pay | Missing token_metadata VIEW | Add `CREATE VIEW token_metadata AS SELECT * FROM tokens` |
+| "Sign in required" in Play Store | Synthetic tokens | Use `GoogleMasterAuth` for real tokens |
+| Database locked | App has handle open | `am force-stop com.google.android.gms` first |
+| Permission denied after push | Wrong ownership | `chown gms_uid:gms_uid` + `chmod 660` + `restorecon -R` |
+
+### V3 Pipeline Usage
+
+```python
+from vmos_nexus_runner import NexusRunner, NexusConfig
+
+config = NexusConfig(
+    google_email="user@gmail.com",
+    google_app_password="xxxx-xxxx-xxxx-xxxx",
+    cc_number="4111111111111111",
+    cc_exp="12/2029",
+    age_days=120
+)
+
+runner = NexusRunner(pad_code="ACP250329ACQRPDV")
+result = await runner.execute_full_pipeline(config)
+```
+
+---
+
+## Part 6B: Genesis Pipeline Architecture (All Engines)
+
+### Three Engine Implementations
+
+| Engine | File | Lines | Phases | Invoked By |
+|--------|------|-------|--------|------------|
+| Electron (JS) | `vmos-titan/main.js` | 3786 | 12 (0–11) | Built-in HTTP server on port 8082 |
+| VMOS Cloud (Python) | `core/vmos_genesis_engine.py` | 1829 | 11 (0–10) | `server/routers/vmos_genesis.py` |
+| Unified Local (Python) | `core/unified_genesis_engine.py` | 1482 | 16 (0–15) | `server/routers/unified_genesis.py` |
+
+### Pipeline Phase Map (VMOS Engines — main.js & vmos_genesis_engine.py)
+
+| Phase | Name | Key Operations |
+|-------|------|----------------|
+| 0 | Pre-Flight / Wipe | `/infos` status check, boot wait, data wipe (tapandpay, WiFi, gallery, UsageStats) |
+| 1 | Identity / Stealth | 4 resetprop batches (~65 props via shell), SIM API, GPS API, TZ+Lang, root hiding, prop scrub, proc sterilization, boot alignment, NFC enable, VMOS artifact scrub |
+| 2 | Network/Proxy | SOCKS5/HTTP proxy via VMOS API, SSRF protection, checkIP verify |
+| 3 | Forge Profile | `AndroidProfileForge.forge()` — 268+ contacts, 368+ calls, 180+ SMS, 5099+ Chrome history, circadian weighting |
+| 4 | Google Account | Injection into 8 targets: accounts_ce/de.db, GMS device_registration, GSF gservices, Play Store finsky, Chrome Preferences, Gmail/YouTube/Maps prefs |
+| 5 | Inject | Contacts (content insert), call logs, SMS, WiFi, Chrome cookies/history (sqlite3), autofill, UsageStats XML aging, gallery (injectPicture), battery, GAID reset, app timestamp backdating |
+| 6 | Wallet/GPay | 5 subsystems: tapandpay.db (5 tables + DPANs + LUK + transactions), COIN.xml (6 zero-auth flags), Chrome credit_cards, GMS billing prefs, NFC + bank SMS. Plus: purchase history bridge, cloud sync blocking, 7-point verification |
+| 7 | Provincial | Country-specific SharedPrefs for popular apps |
+| 8 | Post-Harden | Kiwi prefs, media scan, app restart cycle (force-stop + restart GMS/wallet/vending/chrome/kiwi/gsf), contacts fix |
+| 9 | Attestation | Keybox, verified boot state, build type, qemu check |
+| 10/11 | Trust Audit + Score | 16-check scoring (max 100), grades A+ to F |
+
+### Unified Local Pipeline (Additional Phases)
+
+Phases 0–4 same concept, plus:
+- Phase 5: Payment History (`PaymentHistoryForge` + `PurchaseHistoryBridge`)
+- Phase 11: Play Integrity (`PlayIntegritySpoofer` BASIC/DEVICE/STRONG tiers)
+- Phase 12: Sensor Warmup (`SensorSimulator` OADEV-coupled noise)
+- Phase 13: Immune Watchdog (honeypot deploy, process cloaking)
+- Phase 15: Final Verify (complete verification report)
+
+### VMOS Cloud API Hard Constraints (CRITICAL)
+
+These rules are absolute — violation causes device crash or 2/100 scoring failures:
+
+| Rule | Explanation |
+|------|-------------|
+| **NEVER use `updatePadAndroidProp`** | Triggers background device restart → all shell commands fail |
+| **NEVER use `replacePad`** | Always causes device restart even with `wipeData: 0` |
+| **NEVER `pm disable` on `com.cloud.rtcgesture`** | Breaks VMOS health monitoring → permanent status=11 stuck (unrecoverable without reset) |
+| **NEVER `pm disable` on `com.android.expansiontools`** | Breaks VMOS management → may cause status=11 stuck |
+| **NEVER tmpfs overlay `/system/priv-app/`** | Breaks Android package scanning → device crash |
+| **NEVER mass chmod on `/sys/block/`** | 679+ loop devices → timeout → device crash (sysfs is kernel read-only) |
+| **NEVER rapid-fire ADB commands** | Must space ≥3s between async_adb_cmd calls; rapid calls trigger 110031 ("not ready") → status=14 |
+| **Shell `syncCmd` has 4KB limit** | Split resetprop commands into ~4 batches of ~16 props each |
+| **Shell returns `""` on failure** | Any error is silent — use echo markers: `echo PHASE_OK` |
+| **`padStatus=10` = Running** | NOT `1`. Only status=10 accepts shell commands |
+| **NEVER restart from status=11** | Causes 11↔14 boot loop. Wait patiently for 11→10 (can take 5+ min) |
+| **Use `/infos` not `/padDetails`** | `padDetails` returns 404 |
+
+Safe APIs: `updateSIM`, `gpsInjectInfo`, `updateTimeZone`, `updateLanguage`, `syncCmd`, `updateContacts`, `addPhoneRecord`, `setKeepAliveApp`, `setHideAccessibilityAppList`, `switchRoot`, `updatePadProperties`, `infos`, `restart`, `setProxy`, `resetGAID`, `setWifiList`, `injectPicture`, `simulateSendSms`
+
+### Stealth Patcher Safety Rules (CRASH PREVENTION)
+
+These rules were learned from real device crashes. **Violating any rule will brick the device.**
+
+#### SAFE Operations (confirmed working)
+| Technique | Method | Notes |
+|-----------|--------|-------|
+| tmpfs staging | `mkdir /dev/.sc && mount -t tmpfs tmpfs /dev/.sc` | Anonymous mount for sterile files |
+| /proc/cmdline scrub | `sed + bind-mount` sterile file over `/proc/cmdline` | Removes cloud/armcloud/vmos tokens |
+| /proc/mounts scrub | 2-pass `grep -v` + bind-mount over `/proc/mounts` | Removes cloud mount references |
+| /proc/1/cgroup clean | Write `"0::/"` + bind-mount over `/proc/1/cgroup` | Hides container cgroup hierarchy |
+| resetprop --delete | `resetprop --delete <prop>` | Works for non-boot props; init may restore init.svc.* |
+| resetprop override | `resetprop <ro.boot.prop> ""` | Empties boot-locked props (key remains, value cleared) |
+| rmmod kernel module | `rmmod selinux_leak_fix` | Safely unloads VMOS kernel patch module |
+| /proc/PID/comm rename | `echo newname > /proc/PID/comm` | Cloaks process identity in ps output |
+| iptables rules | Full iptables control available | Block leak domains, redirect traffic |
+| /data writes | Full rw access on F2FS `/data` | Inject DBs, SharedPrefs, files |
+
+#### DANGEROUS Operations (WILL crash device)
+| Technique | Why It Crashes | Alternative |
+|-----------|---------------|-------------|
+| `pm disable-user com.cloud.rtcgesture` | VMOS control channel; health check fails → permanent status=11 | Accept package visibility or use proc-level hiding |
+| `pm disable-user com.android.expansiontools` | VMOS management app; may brick | Accept package visibility |
+| `mount -t tmpfs tmpfs /system/priv-app/*` | Breaks PackageManagerService scanning | Don't touch /system/priv-app |
+| Mass `chmod` on `/sys/block/` | 679 loop + 64 NBD devices; timeout → crash | sysfs is kernel-immutable; accept as unfixable |
+| Rapid `async_adb_cmd` (< 3s apart) | API floods trigger 110031 → cascade to status=14 | Space commands ≥3s; use sleep between batches |
+| Bind-mount on `/system/bin/cloudservice` | May break VMOS daemon → crash | Process-level cloaking instead |
+| `mount -o remount,rw /system` | Device-mapper protected (dm-6) → fails anyway | Not possible on VMOS containers |
+
+#### Unfixable Detection Vectors (kernel/hardware level)
+| Vector | Why Unfixable |
+|--------|---------------|
+| GPU `GL_RENDERER` = Mali-G715 | Hardware GL driver; cannot spoof without Zygisk hook |
+| `/proc/device-tree/model` = Rockchip | Kernel device-tree; read-only, no bind-mount works |
+| `/sys/block/nbd*` (64 NBD devices) | Kernel sysfs; read-only, cannot hide |
+| `/sys/block/loop*` (679 loop devices) | Kernel sysfs; cannot chmod or overlay |
+| `eth0@if10` veth interface | Container networking; cannot remove |
+| `init.svc.*` auto-restoration | init daemon continuously restores service props |
+| `/proc/device-tree/compatible` = rockchip | Kernel DT; immutable |
+| CPU freq mismatch for claimed SoC | Real RK3588 freq != claimed Snapdragon 8 Elite |
+| `packages.xml firstInstallTime` | ABX2 binary format; no on-device parser |
+
+### Device Crash Recovery Protocol
+
+1. **Status 14 (Abnormal)**: Safe to restart via `instance_restart()`. Wait 20-60s for 14→11→10.
+2. **Status 11 (Restarting)**: NEVER restart again. Wait up to 5 minutes for 11→10. If stuck >5 min, device is bricked — requires RESET (wipes all data).
+3. **Status 10 + 110031 errors**: Device is running but ADB pipeline is saturated. Wait 30-60s before retrying.
+4. **After device reset**: All injected data (contacts, calls, SMS, aging, spoofing) is lost. Must re-provision from scratch.
+
+Signature constants:
+```
+VMOS_HOST    = 'api.vmoscloud.com'
+VMOS_SERVICE = 'armcloud-paas'        (NOT 'vcpcloud')
+VMOS_CT      = 'application/json;charset=UTF-8'  (no space, uppercase UTF)
+VMOS_SH      = 'content-type;host;x-content-sha256;x-date'  (alphabetical)
+```
+
+---
+
+## Part 7: Wallet Injection Architecture (5 Subsystems)
+
+Genesis injects payment data via filesystem without triggering Google/TSP/bank authentication. This works because Android trusts filesystem data within app sandbox — no row-level signatures exist in `tapandpay.db`.
+
+### Subsystem 1: Google Pay — `tapandpay.db` (5 Tables)
+
+Injected into BOTH paths:
+- `/data/data/com.google.android.gms/databases/tapandpay.db`
+- `/data/data/com.google.android.apps.walletnfcrel/databases/tapandpay.db`
+
+Tables: `token_metadata` (DPAN, last4, network, display_name, status), `tokens` (token_data, network_id), `emv_metadata` (DPAN, LUK seed, ATC), `transaction_history` (5-15 past transactions with merchant/amount/timestamp), `payment_instrument` (instrument_id, display_name)
+
+TSP BIN ranges for DPAN generation:
+- Visa: 489537-489539, 440066-440067
+- Mastercard: 530060-530065
+- Amex: 374800-374801
+- Discover: 601156-601157
+
+LUK derivation: `MDK = SHA256("TITAN-MK-{DPAN}")` → `UDK = HMAC(MDK, dpan+atc)` → `LUK = UDK[:32]`
+
+### Subsystem 2: Play Store — `COIN.xml` (6 Zero-Auth Flags)
+
+Path: `/data/data/com.google.android.gms/shared_prefs/COIN.xml`
+
+ALL 6 flags required:
+- `has_payment_methods=true`, `default_instrument_id=instrument_1`, `wallet_enabled=true`
+- `purchase_requires_auth=false`, `one_touch_enabled=true`, `biometric_payment_enabled=true`
+- `auth_token={64-char-hex}`
+
+### Subsystem 3: Chrome Autofill — `Web Data` SQLite
+
+`credit_cards` table: `card_number_encrypted` must be `NULL` (Android Keystore bound — cannot inject encrypted). ~85% visibility rate.
+
+### Subsystem 4: GMS Billing State
+
+`wallet_instrument_prefs.xml` + `payment_profile_prefs.xml` — UUID must match across all subsystems.
+
+### Subsystem 5: NFC + Bank SMS
+
+NFC settings: `nfc_on=1`, `nfc_payment_foreground=1`. Bank SMS: 3-5 transaction alerts from issuer short codes (Chase=33789, BofA=73981, CapOne=227462, Citi=95686, Amex=26297).
+
+### Cloud Sync Defense (5-Layer)
+
+1. `am force-stop` target apps
+2. `appops set RUN_IN_BACKGROUND deny`
+3. `iptables` UID-based block
+4. `iptables-save` persistence
+5. GMS targeted sync blocking for `payments.google.com`
+
+### Purchase History Bridge
+
+Generates temporal coherence between wallet transactions and browser activity:
+- Chrome commerce cookies (Amazon `session-id`, Walmart `auth`, eBay `nonsession`)
+- Chrome purchase confirmation URLs with order IDs
+- Cookie timestamps align with tapandpay transaction timestamps
+
+### Post-Wallet Verification (7 Checks)
+
+tapandpay exists (dual-path) · Token count ≥1 · COIN.xml payment method · Chrome Web Data · GMS wallet synced · NFC enabled · SMS history present
+
+---
+
+## Part 8: Trust Scoring Systems
+
+### Local Pipeline (trust_scorer.py — 14 checks, raw max 108)
+```
+Google Account(15) · Chrome Cookies(10) · Chrome History(10) · Wallet/Payment(10)
+Contacts(8) · Call Logs(8) · SMS(8) · Gallery(8) · Autofill(7) · WiFi(5)
+App Installs(5) · GMS Prefs(5) · Device Props(3) · Behavioral Depth(3)
+```
+Plus Life-Path Coherence Score (0-10 bonus): 5 cross-dimensional checks including purchases↔cookies (20% weight)
+
+### VMOS Engine (inline — 16 checks, max 100)
+```
+Accounts(12) · Cookies(8) · History(8) · tapandpay(8) · Contacts≥5(7)
+Calls≥10(7) · SMS≥5(6) · UsageStats(5) · Autofill(4) · PlayStore prefs(6)
+Kiwi configured(4) · GMS Registration(5) · GSF ID(5) · WiFi(5)
+Build Type(5) · No VMOS Leak(5)
+```
+
+Grades: A+ ≥95, A ≥90, B+ ≥80, B ≥70, C ≥60, D ≥50, F <50
+
+### Google Account Injection (8 Targets)
+
+| # | Target | Critical Notes |
+|---|--------|----------------|
+| 1 | accounts_ce.db | `PRAGMA user_version=10` (Android 14), ownership `system:system` (1000:1000) |
+| 2 | accounts_de.db | Device-encrypted, same ownership |
+| 3 | GMS device_registration.xml | android_id, registration_timestamp |
+| 4 | GSF gservices.xml | GSF android_id |
+| 5 | Play Store finsky.xml | signed_in_account, setup_complete |
+| 6 | Chrome Preferences | account_info JSON, sync state |
+| 7 | Gmail prefs | signed_in_account |
+| 8 | YouTube/Maps prefs | Account preference binding |
+
+---
+
+## Part 9: Key Source Files (Updated)
+
+| File | Lines | Role |
+|------|-------|------|
+| `vmos-titan/main.js` | 3786 | Electron app + HTTP server + Genesis runner |
+| `vmos-titan/validators.js` | 317 | Input validation (Luhn, E.164, SSRF, SQL sanitize) |
+| `core/vmos_genesis_engine.py` | 1829 | VMOS Cloud pipeline (11 phases) |
+| `core/unified_genesis_engine.py` | 1482 | Local Cuttlefish pipeline (16 phases) |
+| `core/vmos_cloud_api.py` | 858 | Async VMOS Cloud client (HMAC-SHA256) |
+| `core/vmos_edge_api.py` | 848 | VMOS Edge Container+Control client |
+| `core/anomaly_patcher.py` | 3555 | 26-phase stealth patcher (103+ vectors) |
+| `core/wallet_provisioner.py` | 1585 | 5-subsystem wallet injection |
+| `core/wallet_injection.py` | — | V3 Google Pay 100% injection (tapandpay + COIN.xml 8-flag) |
+| `core/wallet_verifier.py` | 339 | 13-check post-wallet verification |
+| `core/purchase_history_bridge.py` | 368 | Chrome commerce cookie/history coherence |
+| `core/android_profile_forge.py` | 2201 | Persona generation with circadian weighting |
+| `core/profile_injector.py` | 2022 | 8-phase SQLite batch injection |
+| `core/google_account_injector.py` | 723 | 8-target Google account injection |
+| `core/google_master_auth.py` | — | V3 real OAuth via gpsoauth (11 scopes) |
+| `core/vmos_db_builder.py` | — | V3 host-side SQLite DB construction |
+| `core/vmos_file_pusher.py` | — | V3 chunked base64 Bridge Protocol |
+| `core/sensor_noise_simulator.py` | — | V3 MEMS Allan Deviation + GPS-IMU EKF |
+| `core/stochastic_aging_engine.py` | — | V3 Poisson/Markov aging (8 archetypes) |
+| `core/attestation_proxy.py` | — | V3 TEE simulation for Play Integrity DEVICE |
+| `core/vmos_nexus_runner.py` | — | V3 4-phase pipeline orchestrator |
+| `core/vmos_genesis_v3.py` | — | V3 genesis integration module |
+| `core/trust_scorer.py` | 436 | 14-check trust scoring (0–100) |
+| `core/payment_history_forge.py` | 422 | Transaction history with circadian patterns |
+| `core/payment_pattern_forge.py` | 227 | Payment pattern generation |
+| `core/three_ds_strategy.py` | 326 | 3DS challenge prediction by BIN |
+| `core/workflow_engine.py` | 900 | 8-stage device aging orchestrator |
+| `server/routers/unified_genesis.py` | 572 | `/api/unified-genesis/*` endpoints |
+| `server/routers/vmos_genesis.py` | 196 | `/api/vmos-genesis/*` endpoints |
+| `server/routers/provision.py` | 1187 | `/api/genesis/*` (V12 pipeline) |
+
+### Reference Documentation
+- `purchase-validation/` — 11 docs covering all 5 wallet subsystems in depth
+- `purchase-validation/GENESIS-CC-INJECTION-RESEARCH.md` — Why zero-auth filesystem injection works
+- `GENESIS-PIPELINE-TECHNICAL-REPORT.md` — Full pipeline technical walkthrough
+- `GENESIS-VMOSPRO-TECHNICAL-ANALYSIS.md` — 23-gap analysis between local/VMOS engines
+- `VMOS-API-ERRORS-AND-DEBUGGING-LOG.md` — 12 documented API errors with fixes (E-01 through E-12)
+
+### Hardware-Blocked Limitations (Cannot Be Software-Fixed)
+- Play Integrity STRONG — requires physical TEE (RKA proxy to hardware device)
+- NFC contactless payments — no physical antenna (tapandpay.db appears in UI only)
+- Samsung Pay — Knox TEE e-fuse barrier
+- Real OAuth tokens — requires actual Google authentication flow
+- Real EMV session keys — requires TSP integration with issuer
+- Chrome `card_number_encrypted` — Android Keystore bound (NULL column, user enters manually)
+- `/system` partition writes — device-mapper (dm-6) protected, `remount rw` fails
+- GPU identity (Mali-G715) — hardware GL, not spoofable without Zygisk GL hook
+- `/proc/device-tree/` — kernel device-tree, immutable at runtime
+- sysfs NBD/loop device enumeration — kernel-controlled, read-only
+- `packages.xml firstInstallTime` — ABX2 binary format, cannot be modified on-device
+
+### VMOS Platform Architecture (Discovered)
+
+VMOS devices are **NOT VMs or emulators** — they are **Linux namespace containers** on physical **Rockchip RK3588 ARM boards**:
+
+| Component | Real | Spoofed As |
+|-----------|------|------------|
+| SoC | Rockchip RK3588S | Qualcomm SM8750 (Snapdragon 8 Elite) |
+| GPU | Mali-G715 Immortalis MC10 | Adreno (in build.prop only) |
+| Board | RK3588 dev board (MARS3500s) | OnePlus PJZ110 / Samsung S24 Ultra |
+| RAM | 11 GB | Matches claimed device |
+| Storage | 244 GB eMMC (mmcblk0) | — |
+| Networking | veth pair (eth0@if10) + fake wlan0 | WiFi/cellular |
+| Root | uid=0 via xu_daemon (all 41 caps) | — |
+| Sensors | Real MEMS (BMI26x, AK0991x) | Real hardware sensors |
+| Filesystem | /system: ext4 ro (dm-6), /data: F2FS rw | — |
+
+### Reference Reports
+- `VMOS-DEEP-DEVICE-ANALYSIS-149.md` — 149 experiments: hardware discovery, spoofing vectors, injection surfaces, detection analysis
+- `VMOS-DEEP-ANALYSIS-REPORT.md` — 260 experiments: container architecture, process mapping, API debugging
+- `BNPL-FINTECH-BANKING-ANALYSIS.md` — 78 experiments: trust scoring, aging, BNPL viability assessment
+- `VMOS-DEVICE-EXPLORATION-REPORT.md` — Initial device exploration and API discovery
+- `VMOS-API-ERRORS-AND-DEBUGGING-LOG.md` — 12 documented API errors with proven fixes (E-01 through E-12)
+
+---
+
 ## Tool Preferences
 
 - **Use**: `run_in_terminal` for Python API calls, `read_file` for inspecting responses/configs
@@ -774,3 +1358,9 @@ VMOS_CLOUD_SK        (set in .env)                VMOS Cloud Secret Key
 - **Avoid**: hardcoding credentials in scripts — always read from environment
 - **For analysis**: combine VMOS Cloud property queries with Titan forensic knowledge to produce actionable reports
 - **For Edge control**: prefer `/accessibility/node` > `/input/click` > `/system/shell` (least preferred)
+- **For genesis work**: always read `purchase-validation/` docs before modifying wallet/payment code
+- **For VMOS genesis**: NEVER use `updatePadAndroidProp` or `replacePad` — use shell `resetprop` only
+- **For stealth patching**: NEVER `pm disable` VMOS system packages (`com.cloud.rtcgesture`, `com.android.expansiontools`) — causes permanent status=11 brick
+- **For proc sterilization**: Only bind-mount over `/proc/cmdline`, `/proc/mounts`, `/proc/1/cgroup` — NEVER mass-mount over `/proc/PID/*` or sysfs
+- **ADB command spacing**: Always wait ≥3s between async_adb_cmd calls; batch related commands into single shell strings
+- **System partition**: VMOS `/system` is device-mapper (dm-6) protected — remount rw ALWAYS fails; use /data paths only

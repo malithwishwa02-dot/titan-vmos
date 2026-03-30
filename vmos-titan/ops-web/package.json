@@ -1,0 +1,15 @@
+{
+  "name": "vmos-titan-ops-web",
+  "version": "2.0.0",
+  "description": "VMOS Titan Ops-Web — Localhost operations console for cloud device management",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js --verbose"
+  },
+  "dependencies": {},
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
+

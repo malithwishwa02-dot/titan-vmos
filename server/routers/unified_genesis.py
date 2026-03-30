@@ -150,28 +150,25 @@ async def unified_genesis_start(body: UnifiedGenesisRequest):
     Returns job_id for polling status via /status/{job_id}
     """
     global _engine
+    
 
-    if not _engine:
         _engine = UnifiedGenesisEngine(device_manager=dm)
 
     # Basic input validation for sensitive fields
     body_dict = body.model_dump()
-
-    # Sanitize credit card (basic format validation)
+    
+ (basic format validation)
     if body_dict.get("cc_number"):
         cc = body_dict["cc_number"].replace(" ", "").replace("-", "")
         if not cc.isdigit() or len(cc) < 13 or len(cc) > 19:
             raise HTTPException(400, "Invalid credit card number format. Must be 13-19 digits.")
         body_dict["cc_number"] = cc
+    
 
-    # Validate age_days range
     if body_dict.get("age_days"):
         body_dict["age_days"] = max(1, min(900, body_dict["age_days"]))
 
     # ── Cloud mode: pad_code provided → VMOS Cloud API ──────────────────
-    # Input validation (CC format, age_days range) has already been applied
-    # above.  Device lookup is intentionally skipped: cloud devices are
-    # identified by pad_code via the VMOS OpenAPI, not the local DeviceManager.
     if body.pad_code:
         config = GenesisConfig.from_dict(body_dict)
         result = _engine.start(config)
@@ -190,16 +187,17 @@ async def unified_genesis_start(body: UnifiedGenesisRequest):
 
     if not dev:
         raise HTTPException(404, f"Device not found: {device_id}")
-
+    
     # Build config from validated request
     config = GenesisConfig.from_dict({
         "device_id": device_id,
         "adb_target": dev.adb_target,
         **body_dict
     })
-
+    
     # Start genesis
     result = _engine.start(config)
+    
 
     return {
         "status": "started",

@@ -175,7 +175,11 @@ class VMOSCloudClient:
         })
 
     async def instance_details(self, **kwargs) -> dict:
-        """Query instance details (padCodes, padIps, vmStatus, etc.)."""
+        """Query instance details (padCodes, padIps, vmStatus, etc.).
+
+        NOTE: The /padDetails endpoint returns 404. Use instance_list() with
+        specific padCodes filter, or query_instance_properties() instead.
+        """
         return await self._post("/vcpcloud/api/padApi/padDetails", kwargs)
 
     async def instance_restart(self, pad_codes: list[str]) -> dict:
@@ -336,11 +340,23 @@ class VMOSCloudClient:
             "padCodes": pad_codes, "scriptContent": command,
         })
 
-    async def switch_root(self, pad_codes: list[str], enable: bool = True) -> dict:
-        """Switch root permissions on instances."""
-        return await self._post("/vcpcloud/api/padApi/switchRoot", {
+    async def switch_root(self, pad_codes: list[str], enable: bool = True,
+                           root_type: int = 1, package_name: str = "") -> dict:
+        """Switch root permissions on instances.
+
+        Args:
+            pad_codes: List of instance pad codes.
+            enable: True to enable root, False to disable.
+            root_type: 1 for per-app root (required), 0 for global (broken on API).
+            package_name: Target package for per-app root (required when root_type=1).
+        """
+        body: dict[str, Any] = {
             "padCodes": pad_codes, "rootStatus": 1 if enable else 0,
-        })
+            "rootType": root_type,
+        }
+        if package_name:
+            body["packageName"] = package_name
+        return await self._post("/vcpcloud/api/padApi/switchRoot", body)
 
     async def screenshot(self, pad_codes: list[str]) -> dict:
         """Take local screenshot of instances."""
@@ -377,14 +393,22 @@ class VMOSCloudClient:
         })
 
     async def simulate_click_humanized(self, pad_code: str, x: int, y: int) -> dict:
-        """Generate humanized click trajectory at coordinates."""
+        """Generate humanized click trajectory at coordinates.
+
+        WARNING: This endpoint returns 404 — it does not exist on the VMOS Cloud API.
+        Use simulate_touch() instead with humanized position generation.
+        """
         return await self._post("/vcpcloud/api/openApi/simulateClick", {
             "padCode": pad_code, "x": x, "y": y,
         })
 
     async def simulate_swipe_humanized(self, pad_code: str,
                                        direction: str | None = None, **kwargs) -> dict:
-        """Generate humanized swipe trajectory."""
+        """Generate humanized swipe trajectory.
+
+        WARNING: This endpoint likely returns 404 — it may not exist on the VMOS Cloud API.
+        Use simulate_touch() instead with humanized position sequences.
+        """
         body: dict[str, Any] = {"padCode": pad_code}
         if direction:
             body["direction"] = direction
@@ -413,16 +437,16 @@ class VMOSCloudClient:
         """Reset advertising ID."""
         return await self._post("/vcpcloud/api/padApi/resetGAID", {"padCodes": pad_codes})
 
-    async def inject_audio(self, pad_code: str, audio_url: str) -> dict:
+    async def inject_audio(self, pad_codes: list[str], audio_url: str) -> dict:
         """Inject audio file to instance microphone."""
         return await self._post("/vcpcloud/api/padApi/injectAudioToMic", {
-            "padCode": pad_code, "audioUrl": audio_url,
+            "padCodes": pad_codes, "audioUrl": audio_url,
         })
 
-    async def unmanned_live(self, pad_code: str, video_url: str) -> dict:
+    async def unmanned_live(self, pad_codes: list[str], video_url: str) -> dict:
         """Instance video injection (unmanned live streaming)."""
         return await self._post("/vcpcloud/api/padApi/unmannedLive", {
-            "padCode": pad_code, "videoUrl": video_url,
+            "padCodes": pad_codes, "videoUrl": video_url,
         })
 
     async def upload_user_image(self, **kwargs) -> dict:
@@ -483,6 +507,29 @@ class VMOSCloudClient:
         """Batch get device model information."""
         return await self._post("/vcpcloud/api/padApi/modelInfo", {"modelNames": model_names})
 
+    async def update_android_prop(self, pad_code: str, props: dict[str, str]) -> dict:
+        """Update Android system properties on an instance.
+
+        Confirmed working format: padCode (singular) + props (dict).
+        WARNING: This triggers a device restart (status 14 → 10, ~20 seconds).
+
+        Args:
+            pad_code: Single instance pad code (NOT an array).
+            props: Dict of property key→value pairs, e.g.
+                   {"ro.product.model": "SM-S938U", "ro.product.brand": "samsung"}
+        """
+        return await self._post("/vcpcloud/api/padApi/updatePadAndroidProp", {
+            "padCode": pad_code, "props": props,
+        })
+
+    async def select_brand_list(self) -> dict:
+        """Get all available device brand/model presets (24,000+ entries).
+
+        Returns a list of dicts with: id, brand, displayBrand, deviceDisplayName,
+        model, fingerprint, status.
+        """
+        return await self._post("/vcpcloud/api/vcBrand/selectBrandList", {})
+
     async def set_bandwidth(self, pad_codes: list[str], up: int = 0, down: int = 0) -> dict:
         """Set instance bandwidth. 0=unlimited, -1=block internet."""
         return await self._post("/vcpcloud/api/padApi/setSpeed", {
@@ -515,10 +562,15 @@ class VMOSCloudClient:
         """Clear all processes and return to desktop."""
         return await self._post("/vcpcloud/api/padApi/cleanAppHome", {"padCodes": pad_codes})
 
-    async def inject_picture(self, pad_code: str, image_url: str) -> dict:
-        """Inject picture into device camera roll."""
+    async def inject_picture(self, pad_codes: list[str], inject_url: str) -> dict:
+        """Inject picture into device camera/gallery.
+
+        Args:
+            pad_codes: List of instance pad codes.
+            inject_url: Public URL of the image to inject (parameter name: injectUrl).
+        """
         return await self._post("/vcpcloud/api/padApi/injectPicture", {
-            "padCode": pad_code, "imageUrl": image_url,
+            "padCodes": pad_codes, "injectUrl": inject_url,
         })
 
     # -----------------------------------------------------------------------
