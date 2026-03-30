@@ -135,9 +135,9 @@ chmod 644 "${STAGING}/DEBIAN/conffiles"
 # ═══════════════════════════════════════════════════════════════════════
 echo "[2/10] Copying core application..."
 
-# Python core modules
+# Python vmos_titan package (core + api)
 rsync -a --exclude='__pycache__' --exclude='*.pyc' --exclude='_deprecated' \
-    "${SRC_DIR}/core/" "${STAGING}${INSTALL_PREFIX}/core/"
+    "${SRC_DIR}/vmos-titan/vmos_titan/" "${STAGING}${INSTALL_PREFIX}/vmos_titan/"
 
 # Wallet module
 if [[ -d "${SRC_DIR}/wallet" ]]; then
@@ -145,13 +145,13 @@ if [[ -d "${SRC_DIR}/wallet" ]]; then
         "${SRC_DIR}/wallet/" "${STAGING}${INSTALL_PREFIX}/wallet/"
 fi
 
-# FastAPI server
+# FastAPI server (kept for backward compat - points to vmos_titan/api)
 rsync -a --exclude='__pycache__' --exclude='*.pyc' --exclude='_deprecated' \
-    "${SRC_DIR}/server/" "${STAGING}${INSTALL_PREFIX}/server/"
+    "${SRC_DIR}/vmos-titan/vmos_titan/api/" "${STAGING}${INSTALL_PREFIX}/server/"
 
 # Web console
 rsync -a --exclude='*.bak' --exclude='*.bak2' --exclude='node_modules' \
-    "${SRC_DIR}/console/" "${STAGING}${INSTALL_PREFIX}/console/"
+    "${SRC_DIR}/vmos-titan/console/" "${STAGING}${INSTALL_PREFIX}/console/"
 
 # Build scripts
 rsync -a "${SRC_DIR}/build/" "${STAGING}${INSTALL_PREFIX}/build/"
@@ -468,8 +468,8 @@ echo "  Mode:     $(if [[ $CODE_ONLY -eq 1 ]]; then echo 'CODE-ONLY'; else echo 
 echo "  Built in: ${BUILD_SECS}s"
 echo ""
 echo "  Contents:"
-echo "    core/       — 60+ Python modules (patcher, forge, injector, agent)"
-echo "    server/     — FastAPI + 18 routers + middleware"
+echo "    vmos_titan/ — Unified Python package (core + api modules)"
+echo "    server/     — FastAPI + 18 routers + middleware (symlinked from vmos_titan/api)"
 echo "    console/    — Web console SPA"
 echo "    wallet/     — Payment provisioning bridge"
 if [[ $CODE_ONLY -eq 0 ]]; then

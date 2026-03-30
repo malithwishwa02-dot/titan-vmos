@@ -20,7 +20,10 @@ dependencies = [
     "python-multipart==0.0.22",
     "httpx==0.28.1",
     "pydantic==2.10.4",
-    "gpsoauth>=1.0.0",
+    "gpsoauth>=2.0.0",
+    "python-dotenv>=1.0.0",
+    "requests>=2.31.0",
+    "pycryptodome>=3.19.0",
 ]
 
 [project.optional-dependencies]
@@ -37,7 +40,8 @@ requires = ["setuptools>=69.0"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
-include = ["core*", "server*"]
+include = ["vmos_titan*"]
+where = ["vmos-titan"]
 
 # ── pytest ────────────────────────────────────────────────────────────
 [tool.pytest.ini_options]
@@ -53,12 +57,12 @@ filterwarnings = ["ignore::DeprecationWarning"]
 
 # ── coverage ──────────────────────────────────────────────────────────
 [tool.coverage.run]
-source = ["core", "server"]
+source = ["vmos_titan"]
 omit = [
     "tests/*",
     "scripts/*",
-    "core/_deprecated/*",
-    "server/routers/_deprecated/*",
+    "vmos-titan/vmos_titan/core/_deprecated/*",
+    "vmos-titan/vmos_titan/api/routers/_deprecated/*",
     "*/__pycache__/*",
 ]
 
@@ -80,8 +84,8 @@ target-version = "py310"
 exclude = [
     "venv",
     "node_modules",
-    "desktop/dist",
-    "core/_deprecated",
+    "vmos-titan/desktop/dist",
+    "vmos-titan/vmos_titan/core/_deprecated",
     ".git",
     "__pycache__",
 ]
@@ -105,7 +109,7 @@ ignore = [
 ]
 
 [tool.ruff.lint.isort]
-known-first-party = ["core", "server"]
+known-first-party = ["vmos_titan"]
 
 # ── mypy ──────────────────────────────────────────────────────────────
 [tool.mypy]
@@ -118,11 +122,11 @@ disallow_untyped_defs = false  # gradual — enable per-module below
 
 [[tool.mypy.overrides]]
 module = [
-    "core.exceptions",
-    "core.models",
-    "core.adb_utils",
-    "core.job_manager",
-    "core.trust_scorer",
+    "vmos_titan.core.exceptions",
+    "vmos_titan.core.models",
+    "vmos_titan.core.adb_utils",
+    "vmos_titan.core.job_manager",
+    "vmos_titan.core.trust_scorer",
 ]
 disallow_untyped_defs = true
 

@@ -376,7 +376,7 @@ class AgingReporter:
             profile = self._load_full_profile(device_id)
             if not profile:
                 return {"score": 0, "grade": "N/A", "error": "no profile"}
-            from core.trust_scorer import compute_lifepath_score
+            from vmos_titan.core.trust_scorer import compute_lifepath_score
             return compute_lifepath_score(profile)
         except Exception as e:
             return {"score": 0, "grade": "N/A", "error": str(e)}
@@ -384,7 +384,7 @@ class AgingReporter:
     async def _get_play_integrity(self, adb_target: str) -> Dict:
         """Run Play Integrity audit on device."""
         def _audit():
-            from core.play_integrity_spoofer import PlayIntegritySpoofer
+            from vmos_titan.core.play_integrity_spoofer import PlayIntegritySpoofer
             spoofer = PlayIntegritySpoofer(adb_target=adb_target)
             return spoofer.audit()
         try:
@@ -395,7 +395,7 @@ class AgingReporter:
     async def _get_immune_scan(self, adb_target: str) -> Dict:
         """Run immune watchdog full scan."""
         def _scan():
-            from core.immune_watchdog import ImmuneWatchdog
+            from vmos_titan.core.immune_watchdog import ImmuneWatchdog
             wd = ImmuneWatchdog(adb_target=adb_target)
             return wd.run_full_scan()
         try:

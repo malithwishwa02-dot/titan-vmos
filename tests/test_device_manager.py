@@ -1,6 +1,6 @@
 import pytest
 
-from core.device_manager import DeviceManager
+from vmos_titan.core.device_manager import DeviceManager
 
 
 def test_instance_adb_port_default_free(monkeypatch):

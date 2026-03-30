@@ -7,7 +7,7 @@ import logging
 import time
 from enum import Enum
 from typing import Callable, Optional, Any
-import core.auto_env  # Auto-load .env for VASTAI_CODING_* variables
+import vmos_titan.core.auto_env  # Auto-load .env for VASTAI_CODING_* variables
 
 logger = logging.getLogger("titan.circuit-breaker")
 

@@ -23,7 +23,7 @@ Usage via API:
     GET /api/training/scenarios/status/{batch_id}
 """
 
-import core.auto_env  # Auto-load .env for VASTAI_CODING_* variables
+import vmos_titan.core.auto_env  # Auto-load .env for VASTAI_CODING_* variables
 
 import json
 import logging

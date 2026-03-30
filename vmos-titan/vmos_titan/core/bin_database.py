@@ -19,7 +19,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-import core.auto_env  # Auto-load .env for VASTAI_CODING_* variables
+import vmos_titan.core.auto_env  # Auto-load .env for VASTAI_CODING_* variables
 
 logger = logging.getLogger("titan.bin-database")
 

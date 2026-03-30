@@ -333,7 +333,7 @@ class TestAuthMiddleware(unittest.TestCase):
         import inspect
         from pathlib import Path
         
-        auth_file = Path(__file__).parent.parent / "server" / "middleware" / "auth.py"
+        auth_file = Path(__file__).parent.parent / "vmos-titan" / "vmos_titan" / "api" / "middleware" / "auth.py"
         content = auth_file.read_text()
         
         # Verify bypass code is removed
@@ -350,7 +350,7 @@ class TestADBParameterization(unittest.TestCase):
         import inspect
         from pathlib import Path
         
-        devices_file = Path(__file__).parent.parent / "server" / "routers" / "devices.py"
+        devices_file = Path(__file__).parent.parent / "vmos-titan" / "vmos_titan" / "api" / "routers" / "devices.py"
         content = devices_file.read_text()
         
         # Verify parameterized calls are used

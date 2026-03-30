@@ -15,7 +15,7 @@ async def intel_copilot(request: Request):
     body = await request.json()
     query = body.get("query", "")
     try:
-        from core.ai_intelligence_engine import AIIntelligenceEngine
+        from vmos_titan.core.ai_intelligence_engine import AIIntelligenceEngine
     except ImportError:
         from ai_intelligence_engine import AIIntelligenceEngine
     try:
@@ -38,7 +38,7 @@ async def intel_recon(request: Request):
     body = await request.json()
     domain = body.get("domain", "")
     try:
-        from core.ai_intelligence_engine import AIIntelligenceEngine
+        from vmos_titan.core.ai_intelligence_engine import AIIntelligenceEngine
     except ImportError:
         from ai_intelligence_engine import AIIntelligenceEngine
 
@@ -85,7 +85,7 @@ async def intel_osint(request: Request):
 async def intel_3ds_strategy(request: Request):
     body = await request.json()
     try:
-        from core.ai_intelligence_engine import AIIntelligenceEngine
+        from vmos_titan.core.ai_intelligence_engine import AIIntelligenceEngine
     except ImportError:
         from ai_intelligence_engine import AIIntelligenceEngine
 

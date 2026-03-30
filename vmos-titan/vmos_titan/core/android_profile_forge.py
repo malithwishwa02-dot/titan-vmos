@@ -988,7 +988,7 @@ class AndroidProfileForge:
 
         # Resolve GPS center from location
         try:
-            from core.device_presets import LOCATIONS
+            from vmos_titan.core.device_presets import LOCATIONS
             loc = LOCATIONS.get(location, LOCATIONS.get("nyc", {}))
             center_lat = loc.get("lat", 40.7580)
             center_lon = loc.get("lon", -73.9855)

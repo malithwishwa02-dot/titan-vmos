@@ -27,7 +27,7 @@ router = APIRouter(prefix="/api/viewer", tags=["viewer"])
 
 def _get_device_manager():
     from device_manager import DeviceManager
-    from server.deps import get_device_manager
+    from vmos_titan.api.deps import get_device_manager
     return get_device_manager()
 
 
