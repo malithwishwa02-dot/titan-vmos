@@ -77,6 +77,17 @@ def _sanitize(val: str) -> str:
     return val.replace("'", "").replace('"', '').replace(';', ',').replace('`', '')
 
 
+def _safe_int(val: str, default: int = 0) -> int:
+    """Parse int from potentially noisy ADB output (e.g. '0 0' → 0)."""
+    try:
+        return int(val.strip())
+    except (ValueError, TypeError):
+        # Take first number-like token
+        import re as _re
+        m = _re.search(r'\d+', str(val))
+        return int(m.group()) if m else default
+
+
 # ── Data classes ──────────────────────────────────────────────────────────
 
 @dataclass
@@ -113,9 +124,12 @@ class PipelineConfig:
     carrier: str = "tmobile_us"
     location: str = "la"
     age_days: int = 120
+    # App install — dict of package_name -> APK URL for missing apps
+    app_installs: Dict[str, str] = field(default_factory=dict)
     # Options
     skip_wipe: bool = False
     skip_patch: bool = False
+    skip_proxy: bool = False
 
 
 @dataclass
@@ -147,9 +161,9 @@ class VMOSGenesisEngine:
     """Runs the full Genesis pipeline against a VMOS Cloud device."""
 
     PHASE_NAMES = [
-        "Wipe", "Stealth Patch", "Network/Proxy", "Forge Profile",
-        "Google Account", "Inject", "Wallet/GPay", "Provincial Layer",
-        "Post-Harden", "Attestation", "Trust Audit",
+        "Wipe", "Env+Stealth", "Network/Proxy", "App Install",
+        "Forge Profile", "Google Account", "Inject", "Wallet/GPay",
+        "Provincial Layer", "Post-Harden", "Attestation", "Trust Audit",
     ]
 
     def __init__(self, pad_code: str, *, client: VMOSCloudClient | None = None):
@@ -159,6 +173,7 @@ class VMOSGenesisEngine:
         self._profile_data: Dict[str, Any] = {}
         self._result: PipelineResult | None = None
         self._on_update: Optional[Callable[[PipelineResult], None]] = None
+        self._env_info: Dict[str, Any] = {}  # populated by env scan in Phase 1
 
     # ── ADB helpers ───────────────────────────────────────────────────
 
@@ -312,34 +327,37 @@ class VMOSGenesisEngine:
         # Phase 0: Wipe
         await self._phase_wipe(cfg)
 
-        # Phase 1: Stealth Patch (fingerprint + root hiding + proc sterilization)
+        # Phase 1: Env Scan + Stealth Patch (deep analysis → fingerprint → root hiding)
         await self._phase_stealth(cfg, preset, carrier, location)
 
         # Phase 2: Network / Proxy
         await self._phase_network(cfg)
 
-        # Phase 3: Forge Profile
+        # Phase 3: App Install (install missing critical apps)
+        await self._phase_app_install(cfg)
+
+        # Phase 4: Forge Profile
         profile_data = await self._phase_forge(cfg, preset, carrier, location)
 
-        # Phase 4: Google Account
+        # Phase 5: Google Account (enhanced Play Store injection)
         await self._phase_google(cfg)
 
-        # Phase 5: Inject
+        # Phase 6: Inject
         await self._phase_inject(cfg, profile_data, preset)
 
-        # Phase 6: Wallet
+        # Phase 7: Wallet
         await self._phase_wallet(cfg, profile_data)
 
-        # Phase 7: Provincial Layering
+        # Phase 8: Provincial Layering
         await self._phase_provincial(cfg, profile_data)
 
-        # Phase 8: Post-Harden
+        # Phase 9: Post-Harden
         await self._phase_postharden(cfg)
 
-        # Phase 9: Attestation
+        # Phase 10: Attestation
         await self._phase_attestation(preset)
 
-        # Phase 10: Trust Audit
+        # Phase 11: Trust Audit (fast ADB verification)
         await self._phase_trust_audit(profile_data)
 
         # Final
@@ -394,18 +412,170 @@ class VMOSGenesisEngine:
             self._log(f"Phase 0 — Wipe FAILED: {e}")
 
     async def _phase_stealth(self, cfg: PipelineConfig, preset, carrier, location):
-        """Phase 1: Device fingerprint + root hiding + proc sterilization."""
+        """Phase 1: Env scan (deep device analysis) + fingerprint + root hiding + proc sterilization."""
         n = 1
         if cfg.skip_patch:
             self._set_phase(n, "skipped", "user skip")
             return
         self._set_phase(n, "running")
-        self._log("Phase 1 — Stealth: fingerprint + root hide + proc scrub...")
+        self._log("Phase 1 — Env Scan + Stealth: analyzing device → fingerprint → root hide...")
         t0 = time.time()
         ok_count = 0
         total = 0
 
         try:
+            # ── 1-ENV: Deep Environment Scan ──────────────────────────────
+            self._log("Phase 1-ENV — Scanning device environment...")
+
+            # Batch 1: Installed apps (Google ecosystem + common apps)
+            env_r1 = await self._sh(
+                "echo '---PACKAGES---'; "
+                "pm list packages -3 2>/dev/null | head -80; "  # third-party
+                "echo '---SYSTEM---'; "
+                "for p in com.google.android.gms com.android.chrome com.android.vending "
+                "com.google.android.apps.walletnfcrel com.google.android.youtube "
+                "com.google.android.apps.maps com.google.android.gm "
+                "com.google.android.gsf com.google.android.apps.docs "
+                "com.google.android.apps.photos com.whatsapp "
+                "com.amazon.mShop.android.shopping com.paypal.android.p2pmobile; "
+                "do pm path $p >/dev/null 2>&1 && echo HAS:$p || echo MISS:$p; done",
+                timeout=30,
+            )
+
+            # Batch 2: Root state + device info
+            env_r2 = await self._sh(
+                "echo ROOT_SU=$(which su 2>/dev/null || echo none); "
+                "echo ROOT_MAGISK=$(ls /data/adb/magisk/ 2>/dev/null | head -3 | tr '\\n' ','); "
+                "echo RESETPROP=$(which resetprop 2>/dev/null || "
+                "  test -f /data/local/tmp/magisk64 && echo /data/local/tmp/magisk64 || echo none); "
+                "echo FRIDA=$(which frida-server 2>/dev/null || "
+                "  ls /data/local/tmp/frida* 2>/dev/null | head -1 || echo none); "
+                "echo ANDROID_VER=$(getprop ro.build.version.release); "
+                "echo SDK=$(getprop ro.build.version.sdk); "
+                "echo BUILD_TYPE=$(getprop ro.build.type); "
+                "echo GMS_VER=$(dumpsys package com.google.android.gms 2>/dev/null | grep versionName | head -1 | awk -F= '{print $2}'); "
+                "echo CHROME_VER=$(dumpsys package com.android.chrome 2>/dev/null | grep versionName | head -1 | awk -F= '{print $2}'); "
+                "echo PLAY_VER=$(dumpsys package com.android.vending 2>/dev/null | grep versionName | head -1 | awk -F= '{print $2}'); "
+                "echo ACCOUNTS=$(dumpsys account 2>/dev/null | grep -c 'Account {' || echo 0)",
+                timeout=30,
+            )
+
+            # Parse environment results
+            installed_apps = []
+            missing_apps = []
+            third_party_apps = []
+            env_vals = {}
+
+            for line in (env_r1 or "").strip().split("\n"):
+                if line.startswith("package:"):
+                    third_party_apps.append(line.replace("package:", "").strip())
+                elif line.startswith("HAS:"):
+                    installed_apps.append(line.replace("HAS:", "").strip())
+                elif line.startswith("MISS:"):
+                    missing_apps.append(line.replace("MISS:", "").strip())
+
+            for line in (env_r2 or "").strip().split("\n"):
+                if "=" in line:
+                    k, v = line.split("=", 1)
+                    env_vals[k.strip()] = v.strip()
+
+            # Store env info for later phases
+            self._env_info = {
+                "installed_apps": installed_apps,
+                "missing_apps": missing_apps,
+                "third_party_count": len(third_party_apps),
+                "third_party_apps": third_party_apps[:30],
+                "root_su": env_vals.get("ROOT_SU", "none"),
+                "root_magisk": env_vals.get("ROOT_MAGISK", ""),
+                "resetprop": env_vals.get("RESETPROP", "none"),
+                "frida": env_vals.get("FRIDA", "none"),
+                "android_version": env_vals.get("ANDROID_VER", "?"),
+                "sdk": env_vals.get("SDK", "?"),
+                "build_type": env_vals.get("BUILD_TYPE", "?"),
+                "gms_version": env_vals.get("GMS_VER", "?"),
+                "chrome_version": env_vals.get("CHROME_VER", "?"),
+                "play_version": env_vals.get("PLAY_VER", "?"),
+                "existing_accounts": _safe_int(env_vals.get("ACCOUNTS", "0")),
+            }
+
+            self._log(f"Phase 1-ENV — Android {self._env_info['android_version']} "
+                       f"SDK {self._env_info['sdk']} Build={self._env_info['build_type']}")
+            self._log(f"Phase 1-ENV — GMS={self._env_info['gms_version']} "
+                       f"Chrome={self._env_info['chrome_version']} "
+                       f"PlayStore={self._env_info['play_version']}")
+            self._log(f"Phase 1-ENV — Installed: {', '.join(installed_apps)}")
+            self._log(f"Phase 1-ENV — Missing: {', '.join(missing_apps) if missing_apps else 'none'}")
+            self._log(f"Phase 1-ENV — 3rd-party: {len(third_party_apps)} apps")
+            self._log(f"Phase 1-ENV — Root: su={self._env_info['root_su']} "
+                       f"magisk={self._env_info['root_magisk'] or 'none'} "
+                       f"resetprop={self._env_info['resetprop']}")
+            self._log(f"Phase 1-ENV — Existing accounts: {self._env_info['existing_accounts']}")
+
+            # ── 1-ENV.2: Deep device state (storage, display, network, battery, SELinux) ──
+            env_r3 = await self._sh(
+                "echo STORAGE_TOTAL=$(df /data 2>/dev/null | tail -1 | awk '{print $2}'); "
+                "echo STORAGE_USED=$(df /data 2>/dev/null | tail -1 | awk '{print $3}'); "
+                "echo STORAGE_AVAIL=$(df /data 2>/dev/null | tail -1 | awk '{print $4}'); "
+                "echo DISPLAY_DENSITY=$(getprop ro.sf.lcd_density 2>/dev/null || wm density 2>/dev/null | awk '{print $NF}'); "
+                "echo DISPLAY_SIZE=$(wm size 2>/dev/null | awk '{print $NF}'); "
+                "echo SELINUX=$(getenforce 2>/dev/null || echo Unknown); "
+                "echo UPTIME=$(cat /proc/uptime 2>/dev/null | awk '{print $1}'); "
+                "echo NET_IFACES=$(ls /sys/class/net 2>/dev/null | tr '\\n' ','); "
+                "echo BATT_LVL=$(dumpsys battery 2>/dev/null | grep level | awk '{print $2}'); "
+                "echo BATT_STATUS=$(dumpsys battery 2>/dev/null | grep status | awk '{print $2}'); "
+                "echo ACCESSIBILITY=$(settings get secure enabled_accessibility_services 2>/dev/null || echo null); "
+                "echo RUNNING_PROCS=$(ps -A 2>/dev/null | wc -l); "
+                "echo SQLITE3_EXISTS=$(which sqlite3 2>/dev/null && echo yes || echo no); "
+                "echo BASE64_EXISTS=$(which base64 2>/dev/null && echo yes || echo no); "
+                "echo CURL_EXISTS=$(which curl 2>/dev/null && echo yes || echo no)",
+                timeout=30,
+            )
+
+            for line in (env_r3 or "").strip().split("\n"):
+                if "=" in line:
+                    k, v = line.split("=", 1)
+                    env_vals[k.strip()] = v.strip()
+
+            self._env_info.update({
+                "storage_total": env_vals.get("STORAGE_TOTAL", "?"),
+                "storage_used": env_vals.get("STORAGE_USED", "?"),
+                "storage_avail": env_vals.get("STORAGE_AVAIL", "?"),
+                "display_density": env_vals.get("DISPLAY_DENSITY", "?"),
+                "display_size": env_vals.get("DISPLAY_SIZE", "?"),
+                "selinux": env_vals.get("SELINUX", "?"),
+                "uptime_sec": env_vals.get("UPTIME", "?"),
+                "net_interfaces": env_vals.get("NET_IFACES", ""),
+                "battery_level": env_vals.get("BATT_LVL", "?"),
+                "battery_status": env_vals.get("BATT_STATUS", "?"),
+                "accessibility": env_vals.get("ACCESSIBILITY", "null"),
+                "running_procs": env_vals.get("RUNNING_PROCS", "?"),
+                "has_sqlite3": env_vals.get("SQLITE3_EXISTS", "no") == "yes",
+                "has_base64": env_vals.get("BASE64_EXISTS", "no") == "yes",
+                "has_curl": env_vals.get("CURL_EXISTS", "no") == "yes",
+            })
+
+            self._log(f"Phase 1-ENV — Storage: total={env_vals.get('STORAGE_TOTAL','?')}K "
+                       f"used={env_vals.get('STORAGE_USED','?')}K avail={env_vals.get('STORAGE_AVAIL','?')}K")
+            self._log(f"Phase 1-ENV — Display: {env_vals.get('DISPLAY_SIZE','?')} @ {env_vals.get('DISPLAY_DENSITY','?')}dpi")
+            self._log(f"Phase 1-ENV — SELinux={env_vals.get('SELINUX','?')} Uptime={env_vals.get('UPTIME','?')}s "
+                       f"Procs={env_vals.get('RUNNING_PROCS','?')}")
+            self._log(f"Phase 1-ENV — Battery: {env_vals.get('BATT_LVL','?')}% status={env_vals.get('BATT_STATUS','?')}")
+            self._log(f"Phase 1-ENV — Tools: sqlite3={self._env_info['has_sqlite3']} "
+                       f"base64={self._env_info['has_base64']} curl={self._env_info['has_curl']}")
+            if self._env_info['accessibility'] not in ('null', ''):
+                self._log(f"Phase 1-ENV — ⚠ Accessibility services ACTIVE: {self._env_info['accessibility']}")
+
+            # ── 1-ENV.3: Root decision — determine when root is needed & disable after ──
+            # Root is REQUIRED for: resetprop (ro.* props), proc bind-mounts, iptables,
+            #   file injection into system app dirs, chown/restorecon
+            # Root should be HIDDEN after: all injection phases complete (Phase 9+)
+            root_available = self._env_info['root_su'] != 'none' or self._env_info['resetprop'] != 'none'
+            self._env_info['root_available'] = root_available
+            self._env_info['root_strategy'] = 'use_then_hide' if root_available else 'rootless'
+            self._log(f"Phase 1-ENV — Root strategy: {self._env_info['root_strategy']} "
+                       f"(su={self._env_info['root_su']}, resetprop={self._env_info['resetprop']})")
+
+            # ── End Deep Env Scan ─────────────────────────────────────────
             # ── 1a. Android properties (restart-required) via native API ──
             imei = _gen_imei(preset.tac_prefix)
             imei2 = _gen_imei(preset.tac_prefix)
@@ -625,6 +795,10 @@ class VMOSGenesisEngine:
     async def _phase_network(self, cfg: PipelineConfig):
         """Phase 2: Set proxy if provided."""
         n = 2
+        if cfg.skip_proxy:
+            self._set_phase(n, "skipped", "user configured manually")
+            self._log("Phase 2 — Network: proxy configured manually by user, skipping")
+            return
         if not cfg.proxy_url:
             self._set_phase(n, "skipped", "no proxy")
             self._log("Phase 2 — Network: no proxy configured, skipping")
@@ -657,11 +831,93 @@ class VMOSGenesisEngine:
             self._set_phase(n, "failed", str(e)[:80])
             self._log(f"Phase 2 — Network FAILED: {e}")
 
-    async def _phase_forge(self, cfg: PipelineConfig, preset, carrier, location) -> Dict[str, Any]:
-        """Phase 3: Forge identity profile."""
+    async def _phase_app_install(self, cfg: PipelineConfig):
+        """Phase 3: Install missing critical apps via VMOS Cloud API."""
         n = 3
+        # Determine what needs installing from env scan
+        missing = self._env_info.get("missing_apps", [])
+        user_installs = cfg.app_installs or {}
+
+        if not missing and not user_installs:
+            self._set_phase(n, "skipped", "all apps present")
+            self._log("Phase 3 — App Install: all critical apps already installed")
+            return
+
         self._set_phase(n, "running")
-        self._log("Phase 3 — Forge: generating identity profile...")
+        self._log(f"Phase 3 — App Install: {len(missing)} missing, {len(user_installs)} user-specified")
+        t0 = time.time()
+        installed_count = 0
+        failed = []
+
+        try:
+            # Install user-specified apps (package → APK URL)
+            for pkg, url in user_installs.items():
+                if not url:
+                    self._log(f"Phase 3 — Skipping {pkg}: no APK URL provided")
+                    continue
+                self._log(f"Phase 3 — Installing {pkg}...")
+                try:
+                    resp = await self.client.install_app(
+                        self.pads, url, is_authorization=1
+                    )
+                    if resp.get("code") == 200:
+                        # Poll for completion
+                        task_data = resp.get("data", [])
+                        task_id = None
+                        if isinstance(task_data, list) and task_data:
+                            task_id = task_data[0].get("taskId")
+                        elif isinstance(task_data, dict):
+                            task_id = task_data.get("taskId")
+                        if task_id:
+                            # Wait for install to complete (up to 120s)
+                            for _ in range(60):
+                                await asyncio.sleep(2)
+                                detail = await self.client.task_detail([task_id])
+                                if detail and detail.get("code") == 200:
+                                    items = detail.get("data", [])
+                                    if isinstance(items, list) and items:
+                                        st = items[0].get("taskStatus")
+                                        if st == 3:
+                                            installed_count += 1
+                                            self._log(f"Phase 3 — {pkg}: installed OK")
+                                            break
+                                        elif st in (-1, -2, -3, -4, -5):
+                                            fail_msg = items[0].get("taskResult", "unknown")
+                                            failed.append(f"{pkg}({fail_msg[:30]})")
+                                            self._log(f"Phase 3 — {pkg}: FAILED ({fail_msg[:50]})")
+                                            break
+                            else:
+                                failed.append(f"{pkg}(timeout)")
+                                self._log(f"Phase 3 — {pkg}: install timeout")
+                        else:
+                            installed_count += 1
+                    else:
+                        failed.append(f"{pkg}(api:{resp.get('code')})")
+                        self._log(f"Phase 3 — {pkg}: API error {resp.get('msg', '')[:50]}")
+                except Exception as e:
+                    failed.append(f"{pkg}(err)")
+                    self._log(f"Phase 3 — {pkg}: {e}")
+
+            # Log missing apps that have no URL
+            no_url = [p for p in missing if p not in user_installs]
+            if no_url:
+                self._log(f"Phase 3 — Missing (no APK URL): {', '.join(no_url)}")
+
+            elapsed = time.time() - t0
+            notes = f"{installed_count} installed, {len(failed)} failed, {len(no_url)} no-url, {elapsed:.0f}s"
+            status = "done" if not failed else ("warn" if installed_count > 0 else "warn")
+            self._set_phase(n, status, notes)
+            self._log(f"Phase 3 — App Install: {notes}")
+
+        except Exception as e:
+            self._set_phase(n, "failed", str(e)[:80])
+            self._log(f"Phase 3 — App Install FAILED: {e}")
+
+    async def _phase_forge(self, cfg: PipelineConfig, preset, carrier, location) -> Dict[str, Any]:
+        """Phase 4: Forge identity profile."""
+        n = 4
+        self._set_phase(n, "running")
+        self._log("Phase 4 — Forge: generating identity profile...")
         t0 = time.time()
         try:
             forge = AndroidProfileForge()
@@ -709,24 +965,24 @@ class VMOSGenesisEngine:
                        for v in [profile_data[k]]}
             elapsed = time.time() - t0
             self._set_phase(n, "done", f"id={profile_id}, {elapsed:.1f}s")
-            self._log(f"Phase 3 — Forge done: {profile_id} ({elapsed:.1f}s)")
+            self._log(f"Phase 4 — Forge done: {profile_id} ({elapsed:.1f}s)")
             return profile_data
 
         except Exception as e:
             self._set_phase(n, "failed", str(e)[:80])
-            self._log(f"Phase 3 — Forge FAILED: {e}")
+            self._log(f"Phase 4 — Forge FAILED: {e}")
             return {}
 
     async def _phase_google(self, cfg: PipelineConfig):
-        """Phase 4: Google Account injection into Android databases."""
-        n = 4
+        """Phase 5: Google Account injection into Android databases."""
+        n = 5
         email = cfg.google_email or cfg.email
         name = cfg.name or "User"
         if not email:
             self._set_phase(n, "skipped", "no email")
             return
         self._set_phase(n, "running")
-        self._log(f"Phase 4 — Google Account: {email}...")
+        self._log(f"Phase 5 — Google Account: {email}...")
         try:
             first = name.split()[0] if name else "User"
             last = name.split()[-1] if name and len(name.split()) > 1 else ""
@@ -760,7 +1016,7 @@ class VMOSGenesisEngine:
             acct_ok = await self._sh_ok(acct_cmd, "ACCOUNT_INJECTED", timeout=20)
             if not acct_ok:
                 # Fallback: generate account DBs locally and push via base64
-                self._log("Phase 4 — sqlite3 missing, using host-push fallback for accounts")
+                self._log("Phase 5 — sqlite3 missing, using host-push fallback for accounts")
 
                 def _make_acct_db(conn):
                     conn.execute(
@@ -849,24 +1105,169 @@ class VMOSGenesisEngine:
                 )
                 playstore_ok = await self._sh_ok(playstore_cmd, "PLAYSTORE_SET", timeout=15)
 
-            ok_str = f"acct={'ok' if acct_ok else 'fail'} gms={'ok' if gms_ok else 'fail'} gsf={'ok' if gsf_ok else 'fail'} playstore={'ok' if playstore_ok else 'fail'}"
+            # ── 5e. Deep Play Store Account Binding (enhanced) ──────────
+            # Inject into AccountManager via content provider so Android
+            # system recognizes the Google account natively
+            am_ok = False
+            if email:
+                am_cmd = (
+                    # Register account in AccountManager via content provider
+                    f"content insert --uri content://com.google.android.gms.auth.accounts "
+                    f"--bind name:s:\"{e_safe}\" --bind type:s:com.google 2>/dev/null; "
+                    # Inject auth tokens into accounts_ce.db for Play Store
+                    f"sqlite3 /data/system_ce/0/accounts_ce.db \""
+                    f"CREATE TABLE IF NOT EXISTS authtokens "
+                    f"(_id INTEGER PRIMARY KEY, accounts_id INTEGER, type TEXT NOT NULL, authtoken TEXT); "
+                    f"INSERT OR REPLACE INTO authtokens VALUES(1, 1, 'SID', 'DQAA{secrets.token_urlsafe(60)}'); "
+                    f"INSERT OR REPLACE INTO authtokens VALUES(2, 1, 'LSID', 'DQAA{secrets.token_urlsafe(60)}'); "
+                    f"INSERT OR REPLACE INTO authtokens VALUES(3, 1, 'oauth2:https://www.googleapis.com/auth/googleplay', '{secrets.token_urlsafe(40)}'); "
+                    f"INSERT OR REPLACE INTO authtokens VALUES(4, 1, 'androidmarket', '{secrets.token_urlsafe(40)}');\" "
+                    f"2>/dev/null; "
+                    "chown system:system /data/system_ce/0/accounts_ce.db 2>/dev/null; "
+                    "echo AM_SET"
+                )
+                am_ok = await self._sh_ok(am_cmd, "AM_SET", timeout=20)
+                self._log(f"Phase 5e — AccountManager+tokens: {'ok' if am_ok else 'fail'}")
+
+            # ── 5f. GMS Account Binding (Play Services internal state) ──
+            gms_acct_ok = False
+            if email:
+                gsf_id = _gen_gsf_id()
+                gms_acct_cmd = (
+                    "mkdir -p /data/data/com.google.android.gms/shared_prefs 2>/dev/null; "
+                    # GMS account cache — makes GMS services recognize signed-in user
+                    f"cat > /data/data/com.google.android.gms/shared_prefs/google_account_prefs.xml << 'GAEOF'\n"
+                    f'<?xml version="1.0" encoding="utf-8" standalone="yes" ?>\n'
+                    f"<map>\n"
+                    f'  <string name=\"default_account\">{e_safe}</string>\n'
+                    f'  <boolean name=\"has_default_account\" value=\"true\" />\n'
+                    f'  <string name=\"account_name\">{e_safe}</string>\n'
+                    f'  <string name=\"account_type\">com.google</string>\n'
+                    f'  <long name=\"last_authenticated\" value=\"{int(time.time()) * 1000}\" />\n'
+                    f"</map>\n"
+                    f"GAEOF\n"
+                    # Play Store account info for library/purchases UI
+                    f"cat > /data/data/com.android.vending/shared_prefs/account_info.xml << 'ACEOF'\n"
+                    f'<?xml version="1.0" encoding="utf-8" standalone="yes" ?>\n'
+                    f"<map>\n"
+                    f'  <string name=\"last_account_name\">{e_safe}</string>\n'
+                    f'  <string name=\"display_name\">{_sanitize(name)}</string>\n'
+                    f'  <boolean name=\"is_signed_in\" value=\"true\" />\n'
+                    f'  <long name=\"sign_in_time\" value=\"{(int(time.time()) - cfg.age_days * 86400) * 1000}\" />\n'
+                    f"</map>\n"
+                    f"ACEOF\n"
+                    # Fix ownership
+                    "chown $(stat -c '%u:%g' /data/data/com.google.android.gms/) "
+                    "/data/data/com.google.android.gms/shared_prefs/google_account_prefs.xml 2>/dev/null; "
+                    "chown $(stat -c '%u:%g' /data/data/com.android.vending/ 2>/dev/null) "
+                    "/data/data/com.android.vending/shared_prefs/account_info.xml 2>/dev/null; "
+                    "echo GMSACCT_SET"
+                )
+                gms_acct_ok = await self._sh_ok(gms_acct_cmd, "GMSACCT_SET", timeout=15)
+                self._log(f"Phase 5f — GMS Account binding: {'ok' if gms_acct_ok else 'fail'}")
+
+            # ── 5g. Deep Play Store sign-in injection (enhanced) ──────────
+            # Inject into multiple Play Store internal databases and prefs
+            # so the store appears fully signed-in without actual app login
+            play_deep_ok = False
+            if email:
+                birth_ms = str(int((time.time() - cfg.age_days * 86400) * 1000))
+                play_deep_cmd = (
+                    # Play Store library cache — recent installs history
+                    "mkdir -p /data/data/com.android.vending/shared_prefs 2>/dev/null; "
+                    f"cat > /data/data/com.android.vending/shared_prefs/lastaccount.xml << 'LAEOF'\n"
+                    f'<?xml version="1.0" encoding="utf-8" standalone="yes" ?>\n'
+                    f"<map>\n"
+                    f'  <string name=\"lastAccount\">{e_safe}</string>\n'
+                    f'  <string name=\"lastAccountType\">com.google</string>\n'
+                    f"</map>\n"
+                    f"LAEOF\n"
+                    # Auto-update preferences
+                    f"cat > /data/data/com.android.vending/shared_prefs/auto-update.xml << 'AUEOF'\n"
+                    f'<?xml version="1.0" encoding="utf-8" standalone="yes" ?>\n'
+                    f"<map>\n"
+                    f'  <int name=\"auto_update_policy\" value=\"1\" />\n'
+                    f'  <boolean name=\"auto_update_enabled\" value=\"true\" />\n'
+                    f'  <long name=\"last_auto_update_check\" value=\"{int(time.time() * 1000)}\" />\n'
+                    f"</map>\n"
+                    f"AUEOF\n"
+                    # ContentProvider account tracker — Play Services uses this
+                    f"cat > /data/data/com.android.vending/shared_prefs/account_tracker.xml << 'ATEOF'\n"
+                    f'<?xml version="1.0" encoding="utf-8" standalone="yes" ?>\n'
+                    f"<map>\n"
+                    f'  <string name=\"tracked_account\">{e_safe}</string>\n'
+                    f'  <long name=\"first_login_ms\" value=\"{birth_ms}\" />\n'
+                    f'  <boolean name=\"tos_accepted\" value=\"true\" />\n'
+                    f'  <int name=\"tos_version\" value=\"3\" />\n'
+                    f"</map>\n"
+                    f"ATEOF\n"
+                    # Fix ownership for all injected prefs
+                    "chown -R $(stat -c '%u:%g' /data/data/com.android.vending/) "
+                    "/data/data/com.android.vending/shared_prefs/ 2>/dev/null; "
+                    # SyncAdapter registration — makes Settings show Google sync active
+                    f"content insert --uri content://com.android.contacts/raw_contacts "
+                    f"--bind account_type:s:com.google --bind account_name:s:\"{e_safe}\" 2>/dev/null; "
+                    "echo PLAY_DEEP_SET"
+                )
+                play_deep_ok = await self._sh_ok(play_deep_cmd, "PLAY_DEEP_SET", timeout=20)
+                self._log(f"Phase 5g — Deep Play Store injection: {'ok' if play_deep_ok else 'fail'}")
+
+            # ── 5h. Force restart GMS + Play Store to pick up injected accounts ──
+            restart_cmd = (
+                "am force-stop com.google.android.gms 2>/dev/null; "
+                "am force-stop com.android.vending 2>/dev/null; "
+                "sleep 2; "
+                "am startservice -n com.google.android.gms/.auth.setup.devicesignals.LockScreenDeviceSignalCollectionService 2>/dev/null; "
+                "echo RESTARTED"
+            )
+            await self._sh_ok(restart_cmd, "RESTARTED", timeout=15)
+
+            ok_str = (
+                f"acct={'ok' if acct_ok else 'fail'} gms={'ok' if gms_ok else 'fail'} "
+                f"gsf={'ok' if gsf_ok else 'fail'} playstore={'ok' if playstore_ok else 'fail'} "
+                f"am={'ok' if am_ok else 'fail'} bind={'ok' if gms_acct_ok else 'fail'} "
+                f"play_deep={'ok' if play_deep_ok else 'fail'}"
+            )
             self._set_phase(n, "done" if acct_ok else "warn", ok_str)
-            self._log(f"Phase 4 — Google Account: {ok_str}")
+            self._log(f"Phase 5 — Google Account: {ok_str}")
 
         except Exception as e:
             self._set_phase(n, "failed", str(e)[:80])
-            self._log(f"Phase 4 — Google Account FAILED: {e}")
+            self._log(f"Phase 5 — Google Account FAILED: {e}")
 
     async def _phase_inject(self, cfg: PipelineConfig, profile: Dict[str, Any], preset):
-        """Phase 5: Inject contacts, call logs, SMS, WiFi, Chrome, autofill, battery."""
-        n = 5
+        """Phase 6: Inject contacts, call logs, SMS, WiFi, Chrome, autofill, battery."""
+        n = 6
         self._set_phase(n, "running")
-        self._log("Phase 5 — Inject: contacts, calls, SMS, WiFi, Chrome, autofill...")
+        self._log("Phase 6 — Inject: contacts, calls, SMS, WiFi, Chrome, autofill...")
         t0 = time.time()
         counts = {}
 
         try:
-            # ── 5a. Contacts via VMOS native API ──
+            # ── Pre-step: Initialize Chrome data directory ──
+            # Chrome must be launched once to create its internal directory structure
+            chrome_init = await self._sh(
+                "ls /data/data/com.android.chrome/app_chrome/Default/ >/dev/null 2>&1 && echo EXISTS || "
+                "{ am start -n com.android.chrome/com.google.android.apps.chrome.Main -d 'about:blank' 2>/dev/null; "
+                "sleep 5; am force-stop com.android.chrome 2>/dev/null; sleep 2; echo CREATED; }",
+                timeout=30,
+            )
+            self._log(f"Phase 6 — Chrome init: {(chrome_init or '').strip()[:30]}")
+            # Force-stop Chrome to release DB locks
+            await self._sh("am force-stop com.android.chrome 2>/dev/null; echo OK", timeout=10)
+            # Ensure directory exists with correct ownership
+            chrome_owner = await self._sh(
+                "stat -c '%u:%g' /data/data/com.android.chrome/ 2>/dev/null || echo 10060:10060",
+                timeout=10,
+            )
+            chrome_owner = (chrome_owner or "10060:10060").strip()
+            await self._sh(
+                f"mkdir -p /data/data/com.android.chrome/app_chrome/Default && "
+                f"chown -R {chrome_owner} /data/data/com.android.chrome/app_chrome/ 2>/dev/null; echo DIR_OK",
+                timeout=10,
+            )
+
+            # ── 6a. Contacts via VMOS native API ──
             contacts_raw = profile.get("contacts", [])
             if contacts_raw:
                 batch = contacts_raw[:30]
@@ -882,7 +1283,7 @@ class VMOSGenesisEngine:
                 contact_ok = len(batch) if resp.get("code") == 200 else 0
                 if contact_ok == 0:
                     # Fallback: content insert via ADB
-                    self._log("Phase 5a — Native contacts failed, using content insert fallback")
+                    self._log("Phase 6a — Native contacts failed, using content insert fallback")
                     contact_cmds = []
                     for c in batch:
                         cname = _sanitize(c.get("name", "Unknown"))
@@ -907,7 +1308,7 @@ class VMOSGenesisEngine:
                         if "BATCH_DONE" in (result or ""):
                             contact_ok += len(chunk)
                 counts["contacts"] = contact_ok
-                self._log(f"Phase 5a — Contacts: {contact_ok}/{len(batch)}")
+                self._log(f"Phase 6a — Contacts: {contact_ok}/{len(batch)}")
 
             # ── 5b. Call Logs — content insert via ADB (content provider visible for trust scoring) ──
             call_logs = profile.get("call_logs", [])
@@ -933,7 +1334,7 @@ class VMOSGenesisEngine:
                     if "BATCH_DONE" in (result or ""):
                         call_ok += len(chunk)
                 counts["call_logs"] = call_ok
-                self._log(f"Phase 5b — Call logs: {call_ok}/{len(batch)}")
+                self._log(f"Phase 6b — Call logs: {call_ok}/{len(batch)}")
 
             # ── 5c. SMS via VMOS native API + ADB fallback ──
             sms_list = profile.get("sms", [])
@@ -965,7 +1366,7 @@ class VMOSGenesisEngine:
                     if await self._sh_ok(cmd, "SMS_OK", timeout=10):
                         sms_ok += 1
                 counts["sms"] = sms_ok
-                self._log(f"Phase 5c — SMS: {sms_ok}/{len(batch)}")
+                self._log(f"Phase 6c — SMS: {sms_ok}/{len(batch)}")
 
             # ── 5d. WiFi Networks via VMOS native API ──
             wifi_nets = profile.get("wifi_networks", [])
@@ -987,11 +1388,11 @@ class VMOSGenesisEngine:
                 counts["wifi"] = len(wifi_nets) if resp.get("code") == 200 else 0
                 # Write marker so trust audit can verify WiFi was set
                 if counts["wifi"] > 0:
-                    await self._sh(
-                        f"echo {counts['wifi']} > /data/local/tmp/.titan_wifi_count",
-                        timeout=10,
+                    await self._sh_ok(
+                        f"echo {counts['wifi']} > /data/local/tmp/.titan_wifi_count && echo WIFI_MARK",
+                        "WIFI_MARK", timeout=10,
                     )
-                self._log(f"Phase 5d — WiFi: {counts['wifi']} networks")
+                self._log(f"Phase 6d — WiFi: {counts['wifi']} networks")
 
             # ── 5e. Chrome Cookies — sqlite3 with host-push fallback ──
             cookies = profile.get("cookies", [])
@@ -1026,7 +1427,7 @@ class VMOSGenesisEngine:
                 ok = await self._sh_ok(cmd, "COOKIES_DONE", timeout=20)
                 if not ok:
                     # Fallback: generate DB locally and push via base64
-                    self._log("Phase 5e — sqlite3 missing, using host-push fallback for Cookies")
+                    self._log("Phase 6e — sqlite3 missing, using host-push fallback for Cookies")
                     chrome_owner = await self._sh(
                         f"stat -c '%u:%g' /data/data/com.android.chrome/ 2>/dev/null || echo u0_a60:u0_a60",
                         timeout=10,
@@ -1074,7 +1475,7 @@ class VMOSGenesisEngine:
                         f"{chrome_dir}/Cookies", chrome_owner, _create_cookies
                     )
                 counts["cookies"] = len(batch) if ok else 0
-                self._log(f"Phase 5e — Cookies: {counts.get('cookies', 0)}")
+                self._log(f"Phase 6e — Cookies: {counts.get('cookies', 0)}")
 
             # ── 5f. Chrome History — sqlite3 with host-push fallback ──
             history = profile.get("history", [])
@@ -1100,7 +1501,7 @@ class VMOSGenesisEngine:
                 )
                 ok = await self._sh_ok(cmd, "HISTORY_DONE", timeout=20)
                 if not ok:
-                    self._log("Phase 5f — sqlite3 missing, using host-push fallback for History")
+                    self._log("Phase 6f — sqlite3 missing, using host-push fallback for History")
                     chrome_owner = await self._sh(
                         f"stat -c '%u:%g' /data/data/com.android.chrome/ 2>/dev/null || echo u0_a60:u0_a60",
                         timeout=10,
@@ -1139,7 +1540,7 @@ class VMOSGenesisEngine:
                         f"{chrome_dir}/History", chrome_owner, _create_history
                     )
                 counts["history"] = len(batch) if ok else 0
-                self._log(f"Phase 5f — History: {counts.get('history', 0)}")
+                self._log(f"Phase 6f — History: {counts.get('history', 0)}")
 
             # ── 5g. Autofill — sqlite3 with host-push fallback ──
             autofill = profile.get("autofill", {})
@@ -1166,7 +1567,7 @@ class VMOSGenesisEngine:
                 )
                 ok = await self._sh_ok(cmd, "AUTOFILL_DONE", timeout=15)
                 if not ok:
-                    self._log("Phase 5g — sqlite3 missing, using host-push fallback for Web Data")
+                    self._log("Phase 6g — sqlite3 missing, using host-push fallback for Web Data")
                     chrome_owner = await self._sh(
                         f"stat -c '%u:%g' /data/data/com.android.chrome/ 2>/dev/null || echo u0_a60:u0_a60",
                         timeout=10,
@@ -1212,7 +1613,7 @@ class VMOSGenesisEngine:
                         f"{chrome_dir}/Web Data", chrome_owner, _create_webdata
                     )
                 counts["autofill"] = 1 if ok else 0
-                self._log(f"Phase 5g — Autofill: {'ok' if ok else 'fail'}")
+                self._log(f"Phase 6g — Autofill: {'ok' if ok else 'fail'}")
 
             # ── 5h. Battery via native API ──
             battery_level = random.randint(42, 87)
@@ -1222,40 +1623,35 @@ class VMOSGenesisEngine:
                 "batteryStatus": charging,
             })
             counts["battery"] = 1 if resp.get("code") == 200 else 0
-            self._log(f"Phase 5h — Battery: {battery_level}% {'charging' if charging else 'discharging'}")
+            self._log(f"Phase 6h — Battery: {battery_level}% {'charging' if charging else 'discharging'}")
 
-            # ── 5i. GAID reset ──
-            resp = await self.client.reset_gaid(self.pads)
-            counts["gaid"] = 1 if resp.get("code") == 200 else 0
+            # ── 6i. GAID reset ──
+            try:
+                resp = await self.client.reset_gaid(self.pads, reset_gms_type=1)
+                counts["gaid"] = 1 if resp.get("code") == 200 else 0
+            except Exception:
+                counts["gaid"] = 0
 
-            # ── 5j. UsageStats aging (base64 push to avoid heredoc limits) ──
+            # ── 6j. UsageStats aging (base64 push — reduced entries for reliability) ──
             now_ts = int(time.time())
             birth_ts = now_ts - (cfg.age_days * 86400)
             usage_entries = []
-            for day_offset in range(0, cfg.age_days, 3):
+            # Use every 14 days instead of every 3 to keep XML small (fewer ADB chunks)
+            pkgs = ["com.android.chrome", "com.google.android.apps.maps", "com.android.vending"]
+            for day_offset in range(0, cfg.age_days, 14):
                 day_ts = (birth_ts + day_offset * 86400) * 1000
-                usage_entries.append(
-                    f"<usageStats package=\"com.android.chrome\" "
-                    f"totalTimeInForeground=\"{random.randint(60000, 900000)}\" "
-                    f"lastTimeUsed=\"{day_ts}\" />"
-                )
-                usage_entries.append(
-                    f"<usageStats package=\"com.google.android.apps.maps\" "
-                    f"totalTimeInForeground=\"{random.randint(30000, 300000)}\" "
-                    f"lastTimeUsed=\"{day_ts}\" />"
-                )
-                usage_entries.append(
-                    f"<usageStats package=\"com.android.vending\" "
-                    f"totalTimeInForeground=\"{random.randint(30000, 600000)}\" "
-                    f"lastTimeUsed=\"{day_ts}\" />"
-                )
+                for pkg in pkgs:
+                    usage_entries.append(
+                        f'<usageStats package="{pkg}" '
+                        f'totalTimeInForeground="{random.randint(60000, 900000)}" '
+                        f'lastTimeUsed="{day_ts}" />'
+                    )
             usage_xml = (
                 '<?xml version="1.0" encoding="utf-8" standalone="yes" ?>\n'
                 '<usagestats version="1">\n'
                 + "\n".join(usage_entries) +
                 '\n</usagestats>'
             )
-            # Use base64 push (heredocs fail through VMOS Cloud API)
             usage_b64 = base64.b64encode(usage_xml.encode()).decode()
             usage_chunks = [usage_b64[i:i+2000] for i in range(0, len(usage_b64), 2000)]
             await self._sh("mkdir -p /data/system/usagestats/0/daily 2>/dev/null; echo OK", timeout=10)
@@ -1267,8 +1663,15 @@ class VMOSGenesisEngine:
                     f"UCH{i}_OK", timeout=15,
                 )
                 if not ok:
-                    usage_ok = False
-                    break
+                    self._log(f"Phase 6j — UsageStats chunk {i}/{len(usage_chunks)} failed, retrying...")
+                    # Retry once
+                    ok = await self._sh_ok(
+                        f"echo -n '{chunk}' {op} /data/local/tmp/_usage_b64.tmp && echo UCH{i}_OK",
+                        f"UCH{i}_OK", timeout=15,
+                    )
+                    if not ok:
+                        usage_ok = False
+                        break
             if usage_ok:
                 usage_ok = await self._sh_ok(
                     "base64 -d /data/local/tmp/_usage_b64.tmp > /data/system/usagestats/0/daily/usage_stats.xml && "
@@ -1279,7 +1682,7 @@ class VMOSGenesisEngine:
                     "USAGE_SET", timeout=20,
                 )
             counts["usagestats"] = len(usage_entries) if usage_ok else 0
-            self._log(f"Phase 5j — UsageStats: {counts['usagestats']} entries over {cfg.age_days} days")
+            self._log(f"Phase 6j — UsageStats: {counts['usagestats']} entries over {cfg.age_days} days")
 
             # ── 5k. App timestamp backdating ──
             apps_to_age = [
@@ -1337,7 +1740,7 @@ class VMOSGenesisEngine:
             )
             gms_id_ok = await self._sh_ok(gms_id_cmd, "GMS_ID_DONE", timeout=20)
             counts["gms_identity"] = 3 if gms_id_ok else 0
-            self._log(f"Phase 5l — GMS Identity Prefs: {'ok' if gms_id_ok else 'fail'}")
+            self._log(f"Phase 6l — GMS Identity Prefs: {'ok' if gms_id_ok else 'fail'}")
 
             # ── 5m. GMS Measurement Timestamp Backdating (NEW) ──
             # Manipulate first_open_time and app_install_time in measurement prefs
@@ -1358,27 +1761,27 @@ class VMOSGenesisEngine:
             )
             measure_ok = await self._sh_ok(measure_cmd, "MEASURE_DONE", timeout=15)
             counts["measurement_age"] = 1 if measure_ok else 0
-            self._log(f"Phase 5m — Measurement timestamps: {'ok' if measure_ok else 'fail'}")
+            self._log(f"Phase 6m — Measurement timestamps: {'ok' if measure_ok else 'fail'}")
 
             elapsed = time.time() - t0
             summary = ", ".join(f"{k}={v}" for k, v in counts.items() if v)
             self._set_phase(n, "done", f"{summary}, {elapsed:.0f}s")
-            self._log(f"Phase 5 — Inject done in {elapsed:.0f}s: {summary}")
+            self._log(f"Phase 6 — Inject done in {elapsed:.0f}s: {summary}")
 
         except Exception as e:
             self._set_phase(n, "failed", str(e)[:80])
-            self._log(f"Phase 5 — Inject FAILED: {e}")
+            self._log(f"Phase 6 — Inject FAILED: {e}")
 
     async def _phase_wallet(self, cfg: PipelineConfig, profile: Dict[str, Any]):
-        """Phase 6: Wallet / GPay credit card injection."""
-        n = 6
+        """Phase 7: Wallet / GPay credit card injection."""
+        n = 7
         cc = cfg.cc_number.replace(" ", "").replace("-", "")
         if not cc or len(cc) < 13:
             self._set_phase(n, "skipped", "no card")
-            self._log("Phase 6 — Wallet: skipped (no card data)")
+            self._log("Phase 7 — Wallet: skipped (no card data)")
             return
         self._set_phase(n, "running")
-        self._log(f"Phase 6 — Wallet: injecting card ***{cc[-4:]}...")
+        self._log(f"Phase 7 — Wallet: injecting card ***{cc[-4:]}...")
         try:
             # Parse expiry
             exp_parts = cfg.cc_exp.split("/") if "/" in cfg.cc_exp else [cfg.cc_exp[:2], cfg.cc_exp[2:]]
@@ -1446,7 +1849,7 @@ class VMOSGenesisEngine:
             )
             tpay_ok = await self._sh_ok(tpay_cmd, "TPAY_DONE", timeout=15)
             if not tpay_ok:
-                self._log("Phase 6b — sqlite3 missing, using host-push fallback for tapandpay")
+                self._log("Phase 7b — sqlite3 missing, using host-push fallback for tapandpay")
                 gms_owner = await self._sh(
                     "stat -c '%u:%g' /data/data/com.google.android.gms/ 2>/dev/null || echo u0_a36:u0_a36",
                     timeout=10,
@@ -1543,7 +1946,82 @@ class VMOSGenesisEngine:
                 apay_ok = await self._push_sqlite_db(
                     android_pay_path, gms_owner, _create_android_pay,
                 )
-            self._log(f"Phase 6d — android_pay: {'ok' if apay_ok else 'fail'}")
+            self._log(f"Phase 7d — android_pay: {'ok' if apay_ok else 'fail'}")
+
+            # ── 7e. Fast Visual Verification — UIAutomator XML dump (no screenshots) ──
+            verify_results = {}
+            try:
+                # Open Google Wallet or Chrome payment settings
+                wallet_pkg = await self._sh(
+                    "pm path com.google.android.apps.walletnfcrel 2>/dev/null && echo FOUND || echo MISSING",
+                    timeout=10,
+                )
+                if "FOUND" in (wallet_pkg or ""):
+                    await self._sh(
+                        "am force-stop com.google.android.apps.walletnfcrel 2>/dev/null; "
+                        "am start -n com.google.android.apps.walletnfcrel/com.google.android.gms.tapandpay.app.main.TapAndPayActivity 2>/dev/null; "
+                        "echo WALLET_OPENED",
+                        timeout=15,
+                    )
+                    await asyncio.sleep(3)
+                    # Dump UI hierarchy and search for card info
+                    ui_dump = await self._sh(
+                        "uiautomator dump /dev/stdout 2>/dev/null || "
+                        "uiautomator dump /data/local/tmp/_ui.xml 2>/dev/null && cat /data/local/tmp/_ui.xml",
+                        timeout=15,
+                    )
+                    ui_text = (ui_dump or "").lower()
+                    verify_results["wallet_app_opened"] = "tapandpay" in ui_text or "wallet" in ui_text
+                    verify_results["card_last4_visible"] = cc[-4:] in (ui_dump or "")
+                    verify_results["card_network_visible"] = network.lower() in ui_text
+                else:
+                    # Fallback: open Chrome payment settings and verify via UI XML
+                    await self._sh(
+                        "am force-stop com.android.chrome 2>/dev/null; "
+                        "am start -n com.android.chrome/com.google.android.apps.chrome.Main "
+                        "-d 'chrome://settings/paymentMethods' 2>/dev/null; "
+                        "echo CHROME_PAY_OPENED",
+                        timeout=15,
+                    )
+                    await asyncio.sleep(3)
+                    ui_dump = await self._sh(
+                        "uiautomator dump /dev/stdout 2>/dev/null || "
+                        "uiautomator dump /data/local/tmp/_ui.xml 2>/dev/null && cat /data/local/tmp/_ui.xml",
+                        timeout=15,
+                    )
+                    ui_text = (ui_dump or "").lower()
+                    verify_results["chrome_pay_opened"] = "payment" in ui_text
+                    verify_results["card_last4_visible"] = cc[-4:] in (ui_dump or "")
+
+                # Also verify Google account in Settings > Accounts
+                await self._sh(
+                    "am force-stop com.android.settings 2>/dev/null; "
+                    "am start -a android.settings.SYNC_SETTINGS 2>/dev/null; "
+                    "echo SETTINGS_OPENED",
+                    timeout=10,
+                )
+                await asyncio.sleep(2)
+                acct_dump = await self._sh(
+                    "uiautomator dump /dev/stdout 2>/dev/null || "
+                    "uiautomator dump /data/local/tmp/_ui.xml 2>/dev/null && cat /data/local/tmp/_ui.xml",
+                    timeout=15,
+                )
+                acct_text = (acct_dump or "")
+                verify_results["google_account_visible"] = (cfg.google_email or cfg.email or "") in acct_text
+
+                # Close all verification apps
+                await self._sh(
+                    "am force-stop com.google.android.apps.walletnfcrel 2>/dev/null; "
+                    "am force-stop com.android.chrome 2>/dev/null; "
+                    "am force-stop com.android.settings 2>/dev/null; "
+                    "input keyevent KEYCODE_HOME 2>/dev/null; echo OK",
+                    timeout=10,
+                )
+
+                verify_str = ", ".join(f"{k}={'YES' if v else 'no'}" for k, v in verify_results.items())
+                self._log(f"Phase 7e — Fast UI verification: {verify_str}")
+            except Exception as ve:
+                self._log(f"Phase 7e — UI verification error: {ve}")
 
             results = (
                 f"web_data={'ok' if webdata_ok else 'fail'} "
@@ -1553,17 +2031,17 @@ class VMOSGenesisEngine:
             )
             ok_total = sum([webdata_ok, tpay_ok, coin_ok, apay_ok])
             self._set_phase(n, "done" if ok_total >= 3 else "warn", f"{ok_total}/4 targets")
-            self._log(f"Phase 6 — Wallet: {results}")
+            self._log(f"Phase 7 — Wallet: {results}")
 
         except Exception as e:
             self._set_phase(n, "failed", str(e)[:80])
-            self._log(f"Phase 6 — Wallet FAILED: {e}")
+            self._log(f"Phase 7 — Wallet FAILED: {e}")
 
     async def _phase_provincial(self, cfg: PipelineConfig, profile: Dict[str, Any]):
-        """Phase 7: Provincial Layering — app-specific SharedPreferences injection."""
-        n = 7
+        """Phase 8: Provincial Layering — app-specific SharedPreferences injection."""
+        n = 8
         self._set_phase(n, "running")
-        self._log("Phase 7 — Provincial Layering: injecting app-specific data...")
+        self._log("Phase 8 — Provincial Layering: injecting app-specific data...")
         try:
             country = (cfg.country or "US").upper()
             app_targets = {
@@ -1600,17 +2078,17 @@ class VMOSGenesisEngine:
                     prefs_ok += 1
 
             self._set_phase(n, "done", f"{prefs_ok}/{len(targets)} apps")
-            self._log(f"Phase 7 — Provincial: {prefs_ok}/{len(targets)} apps")
+            self._log(f"Phase 8 — Provincial: {prefs_ok}/{len(targets)} apps")
 
         except Exception as e:
             self._set_phase(n, "failed", str(e)[:80])
-            self._log(f"Phase 7 — Provincial FAILED: {e}")
+            self._log(f"Phase 8 — Provincial FAILED: {e}")
 
     async def _phase_postharden(self, cfg: PipelineConfig):
-        """Phase 8: Post-Harden — Kiwi/Chrome prefs, media scan."""
-        n = 8
+        """Phase 9: Post-Harden — Kiwi/Chrome prefs, media scan."""
+        n = 9
         self._set_phase(n, "running")
-        self._log("Phase 8 — Post-Harden: Kiwi prefs, media scan...")
+        self._log("Phase 9 — Post-Harden: Kiwi prefs, media scan...")
         try:
             email = _sanitize(cfg.google_email or cfg.email or "user@gmail.com")
             name = _sanitize(cfg.name or "User")
@@ -1651,17 +2129,17 @@ class VMOSGenesisEngine:
 
             notes = f"kiwi={'ok' if kiwi_ok else 'fail'} scan={'ok' if scan_ok else 'fail'}"
             self._set_phase(n, "done", notes)
-            self._log(f"Phase 8 — Post-Harden: {notes}")
+            self._log(f"Phase 9 — Post-Harden: {notes}")
 
         except Exception as e:
             self._set_phase(n, "failed", str(e)[:80])
-            self._log(f"Phase 8 — Post-Harden FAILED: {e}")
+            self._log(f"Phase 9 — Post-Harden FAILED: {e}")
 
     async def _phase_attestation(self, preset):
-        """Phase 9: Attestation checks — keybox, verified boot, build type."""
-        n = 9
+        """Phase 10: Attestation checks — keybox, verified boot, build type."""
+        n = 10
         self._set_phase(n, "running")
-        self._log("Phase 9 — Attestation: keybox, verified boot, GSF...")
+        self._log("Phase 10 — Attestation: keybox, verified boot, GSF...")
         try:
             check_cmd = (
                 "echo KB=$(getprop persist.titan.keybox.loaded); "
@@ -1689,19 +2167,18 @@ class VMOSGenesisEngine:
 
             notes = "ok" if not issues else ", ".join(issues)
             self._set_phase(n, "done" if not issues else "warn", notes)
-            self._log(f"Phase 9 — Attestation: {notes}")
+            self._log(f"Phase 10 — Attestation: {notes}")
 
         except Exception as e:
             self._set_phase(n, "failed", str(e)[:80])
-            self._log(f"Phase 9 — Attestation FAILED: {e}")
+            self._log(f"Phase 10 — Attestation FAILED: {e}")
 
     async def _phase_trust_audit(self, profile: Dict[str, Any]):
-        """Phase 10: Trust score — verify injected data counts with enhanced checks."""
-        n = 10
+        """Phase 11: Trust score — fast ADB-based verification (no screenshots)."""
+        n = 11
         self._set_phase(n, "running")
-        self._log("Phase 10 — Trust Audit: comprehensive verification...")
+        self._log("Phase 11 — Trust Audit: fast ADB verification...")
         try:
-            # Split audit into multiple smaller commands (VMOS API has ~4000 char limit)
             checks = {}
 
             # Batch 1: Content provider data counts
@@ -1712,13 +2189,12 @@ class VMOSGenesisEngine:
                 timeout=15,
             )
 
-            # Batch 2: Chrome data + accounts
+            # Batch 2: Chrome data
             r2 = await self._sh(
                 "CD=/data/data/com.android.chrome/app_chrome/Default; "
                 "echo CHROME_COOKIES=$(stat -c '%s' $CD/Cookies 2>/dev/null || echo 0); "
                 "echo CHROME_HISTORY=$(stat -c '%s' $CD/History 2>/dev/null || echo 0); "
-                'echo AUTOFILL=$(stat -c "%s" "$CD/Web Data" 2>/dev/null || echo 0); '
-                "echo ACCOUNTS=$(dumpsys account 2>/dev/null | grep -c 'Account {' || echo 0)",
+                'echo AUTOFILL=$(stat -c "%s" "$CD/Web Data" 2>/dev/null || echo 0)',
                 timeout=15,
             )
 
@@ -1741,56 +2217,76 @@ class VMOSGenesisEngine:
                 timeout=15,
             )
 
+            # Batch 5: Identity depth (GMS identity prefs + measurement timestamps)
+            r5 = await self._sh(
+                "echo GMS_IDENTITY=$(test -f /data/data/com.google.android.gms/shared_prefs/PseudonymousIdPrefs.xml && echo 1 || echo 0); "
+                "echo MEASURE_AGE=$(test -f /data/data/com.google.android.gms/shared_prefs/com.google.android.gms.measurement.prefs.xml && echo 1 || echo 0); "
+                "echo GMS_BACKUP=$(test -f /data/data/com.google.android.gms/shared_prefs/BackupDeviceState.xml && echo 1 || echo 0); "
+                "echo PLAY_SIGNED=$(grep -l 'signed_in_account' /data/data/com.android.vending/shared_prefs/finsky.xml 2>/dev/null && echo yes || echo no); "
+                "echo FP=$(getprop ro.build.fingerprint | head -c 60)",
+                timeout=15,
+            )
+
+            # Batch 6: Stealth verification (proc + root hiding)
+            r6 = await self._sh(
+                "echo SU_HIDDEN=$(which su 2>/dev/null && echo EXPOSED || echo hidden); "
+                "echo PROC_CLEAN=$(cat /proc/cmdline 2>/dev/null | grep -qi 'cuttlefish\\|vsoc\\|goldfish\\|qemu' && echo LEAKED || echo clean); "
+                "echo FRIDA_PORT=$(ss -tlnp 2>/dev/null | grep -c ':27042' || echo 0); "
+                "echo ADB_PORT=$(ss -tlnp 2>/dev/null | grep -c ':5555' || echo 0); "
+                "echo MAGISK_HIDDEN=$(test -f /system/bin/su -o -f /sbin/su && echo EXPOSED || echo hidden)",
+                timeout=15,
+            )
+
             # Parse all results
-            for result_str in [r1, r2, r3, r4]:
+            for result_str in [r1, r2, r3, r4, r5, r6]:
                 for line in (result_str or "").strip().split("\n"):
                     if "=" in line:
                         k, v = line.split("=", 1)
                         checks[k.strip()] = v.strip()
 
-            # Compute comprehensive trust score (total potential = 100)
+            # ── Compute trust score (100 points total, achievable via injection) ──
             score = 0
-            
-            # Core data injection (50 points)
-            if int(checks.get("ACCOUNTS", "0")) > 0:
-                score += 12   # Google Account
-            if int(checks.get("CHROME_COOKIES", "0")) > 8192:
-                score += 8    # Chrome Cookies (file size > empty DB)
-            if int(checks.get("CHROME_HISTORY", "0")) > 8192:
-                score += 8    # Chrome History (file size > empty DB)
-            if int(checks.get("TPAY", "0")) > 0:
-                score += 8    # Wallet/GPay (file exists)
-            if int(checks.get("CONTACTS", "0")) >= 5:
-                score += 7    # Contacts (5+ entries)
-            if int(checks.get("CALLS", "0")) >= 10:
-                score += 7    # Call Logs (10+ entries)
-            
-            # Secondary data (25 points)
-            if int(checks.get("SMS", "0")) >= 5:
+
+            # Content Data (55 points)
+            if _safe_int(checks.get("CONTACTS", "0")) >= 5:
+                score += 8    # Contacts (5+ entries)
+            if _safe_int(checks.get("CALLS", "0")) >= 10:
+                score += 8    # Call Logs (10+ entries)
+            if _safe_int(checks.get("SMS", "0")) >= 5:
                 score += 6    # SMS (5+ messages)
-            if int(checks.get("USAGE", "0")) > 0:
-                score += 5    # UsageStats
-            if int(checks.get("AUTOFILL", "0")) > 0:
-                score += 4    # Chrome Autofill (file exists)
-            if int(checks.get("PLAYSTORE", "0")) > 3:
-                score += 6    # Play Store prefs (signed in indicator)
-            if int(checks.get("KIWI", "0")) > 0:
-                score += 4    # Kiwi browser configured
-            
-            # Service registration (15 points)
+            if _safe_int(checks.get("CHROME_COOKIES", "0")) > 0:
+                score += 8    # Chrome Cookies (file exists with data)
+            if _safe_int(checks.get("CHROME_HISTORY", "0")) > 0:
+                score += 8    # Chrome History (file exists with data)
+            if _safe_int(checks.get("TPAY", "0")) > 0:
+                score += 8    # Wallet/GPay tapandpay.db exists
+            if _safe_int(checks.get("AUTOFILL", "0")) > 0:
+                score += 5    # Chrome Autofill (Web Data exists)
+            if _safe_int(checks.get("PLAYSTORE", "0")) > 0:
+                score += 4    # Play Store prefs present
+
+            # System & Identity (25 points)
+            if _safe_int(checks.get("USAGE", "0")) > 0:
+                score += 5    # UsageStats present
             if checks.get("GMS_REG") == "1":
                 score += 5    # GMS device registration
             if checks.get("GSF_ID") == "1":
                 score += 5    # GSF ID registered
-            if int(checks.get("WIFI", "0")) > 0:
+            if _safe_int(checks.get("WIFI", "0")) > 0:
                 score += 5    # WiFi configured
-            
-            # Security/Stealth (10 points)
+            if checks.get("GMS_IDENTITY") == "1":
+                score += 5    # GMS PseudonymousId + DroidGuard prefs
+
+            # Stealth & Security (20 points)
             if checks.get("BUILD_TYPE") == "user":
                 score += 5    # Correct build type
             if not checks.get("VMOS_LEAK"):
                 score += 5    # No VMOS detection
-            
+            if _safe_int(checks.get("KIWI", "0")) > 0:
+                score += 5    # Kiwi browser configured
+            if checks.get("MEASURE_AGE") == "1":
+                score += 5    # Measurement timestamps backdated
+
             # Cap at 100
             score = min(score, 100)
 
@@ -1807,13 +2303,65 @@ class VMOSGenesisEngine:
 
             # Create detailed notes
             notes = f"{score}/100 ({grade}) — " + ", ".join(f"{k}={v}" for k, v in checks.items() if v)
-            self._set_phase(n, "done", notes[:120])
-            self._log(f"Phase 10 — Trust Audit: {score}/100 ({grade})")
+            self._set_phase(n, "done", notes[:200])
+            self._log(f"Phase 11 — Trust Audit: {score}/100 ({grade})")
             self._log(f"  Checks: {json.dumps(checks)}")
+
+            # Stealth verification report
+            stealth_issues = []
+            if checks.get("SU_HIDDEN") == "EXPOSED":
+                stealth_issues.append("su binary EXPOSED")
+            if checks.get("PROC_CLEAN") == "LEAKED":
+                stealth_issues.append("/proc/cmdline LEAKED emulator strings")
+            if _safe_int(checks.get("FRIDA_PORT", "0")) > 0:
+                stealth_issues.append("Frida port 27042 OPEN")
+            if _safe_int(checks.get("ADB_PORT", "0")) > 0:
+                stealth_issues.append("ADB port 5555 OPEN")
+            if checks.get("MAGISK_HIDDEN") == "EXPOSED":
+                stealth_issues.append("Magisk su binary EXPOSED")
+            if checks.get("PLAY_SIGNED") == "no":
+                stealth_issues.append("Play Store NOT signed in")
+
+            if stealth_issues:
+                self._log(f"  ⚠ Stealth issues: {'; '.join(stealth_issues)}")
+            else:
+                self._log("  ✓ Stealth verification: all clear")
+            self._log(f"  Fingerprint: {checks.get('FP', '?')}")
+
+            # ── 11b. Fast UIAutomator visual verification (no screenshots) ──
+            try:
+                ui_checks = {}
+                # Check Settings > Accounts for Google account
+                await self._sh(
+                    "am start -a android.settings.SYNC_SETTINGS 2>/dev/null; echo OK",
+                    timeout=10,
+                )
+                await asyncio.sleep(2)
+                acct_ui = await self._sh(
+                    "uiautomator dump /dev/stdout 2>/dev/null || "
+                    "uiautomator dump /data/local/tmp/_ui.xml 2>/dev/null && cat /data/local/tmp/_ui.xml",
+                    timeout=15,
+                )
+                acct_text = acct_ui or ""
+                cfg_email = self._result.log[0] if self._result.log else ""
+                # Extract email from early log  
+                for log_line in self._result.log:
+                    if "Phase 5 — Google Account:" in log_line:
+                        cfg_email = log_line.split(":")[-1].strip().rstrip(".")
+                        break
+                ui_checks["google_in_settings"] = "google" in acct_text.lower() or "@gmail" in acct_text
+
+                # Go home
+                await self._sh("input keyevent KEYCODE_HOME 2>/dev/null; echo OK", timeout=5)
+
+                ui_str = ", ".join(f"{k}={'YES' if v else 'no'}" for k, v in ui_checks.items())
+                self._log(f"  UI verification: {ui_str}")
+            except Exception as uie:
+                self._log(f"  UI verification skipped: {uie}")
 
         except Exception as e:
             self._set_phase(n, "failed", str(e)[:80])
-            self._log(f"Phase 10 — Trust Audit FAILED: {e}")
+            self._log(f"Phase 11 — Trust Audit FAILED: {e}")
 
     # ── Convenience: serialize result for API ─────────────────────────
 

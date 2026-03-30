@@ -195,13 +195,13 @@ class VMOSCloudClient:
     async def modify_android_props(self, pad_codes: list[str], properties: dict) -> dict:
         """Modify Android modification properties (requires restart)."""
         return await self._post("/vcpcloud/api/padApi/updatePadAndroidProp", {
-            "padCodes": pad_codes, **properties,
+            "padCode": pad_codes[0], "props": properties,
         })
 
     async def modify_sim_by_country(self, pad_codes: list[str], country_code: str) -> dict:
         """Modify SIM info based on country code (auto-restart)."""
         return await self._post("/vcpcloud/api/padApi/updateSIM", {
-            "padCodes": pad_codes, "countryCode": country_code,
+            "padCode": pad_codes[0], "countryCode": country_code,
         })
 
     async def stop_streaming(self, pad_codes: list[str]) -> dict:
@@ -229,8 +229,8 @@ class VMOSCloudClient:
         return await self._post("/vcpcloud/api/padApi/notSmartIp", {"padCodes": pad_codes})
 
     async def get_task_status(self, task_no: str) -> dict:
-        """Query smart IP task execution result."""
-        return await self._post("/vcpcloud/api/padApi/getTaskStatus", {"taskNo": task_no})
+        """Query async task execution result."""
+        return await self._post("/vcpcloud/api/padApi/getTaskStatus", {"taskId": task_no})
 
     async def get_installed_apps(self, pad_codes: list[str]) -> dict:
         """Get installed apps for specified instances."""
@@ -280,7 +280,7 @@ class VMOSCloudClient:
     async def update_contacts(self, pad_codes: list[str], contacts: list[dict]) -> dict:
         """Update contacts on instances."""
         return await self._post("/vcpcloud/api/padApi/updateContacts", {
-            "padCodes": pad_codes, "contacts": contacts,
+            "padCodes": pad_codes, "info": contacts,
         })
 
     async def set_proxy(self, pad_codes: list[str], proxy_info: dict) -> dict:
@@ -291,7 +291,7 @@ class VMOSCloudClient:
 
     async def list_installed_apps_realtime(self, pad_code: str) -> dict:
         """Real-time query installed apps list."""
-        return await self._post("/vcpcloud/api/padApi/listInstalledApp", {"padCode": pad_code})
+        return await self._post("/vcpcloud/api/padApi/listInstalledApp", {"padCodes": [pad_code]})
 
     async def set_keep_alive_app(self, pad_codes: list[str], packages: list[str]) -> dict:
         """Set app keep-alive (Android 13/14/15)."""
@@ -363,7 +363,7 @@ class VMOSCloudClient:
     async def import_call_logs(self, pad_codes: list[str], records: list[dict]) -> dict:
         """Import call log data into cloud phone."""
         return await self._post("/vcpcloud/api/padApi/addPhoneRecord", {
-            "padCodes": pad_codes, "records": records,
+            "padCodes": pad_codes, "callRecords": records,
         })
 
     async def input_text(self, pad_code: str, text: str) -> dict:
@@ -378,9 +378,12 @@ class VMOSCloudClient:
             "padCode": pad_code, "phone": phone, "content": content,
         })
 
-    async def reset_gaid(self, pad_codes: list[str]) -> dict:
-        """Reset advertising ID."""
-        return await self._post("/vcpcloud/api/padApi/resetGAID", {"padCodes": pad_codes})
+    async def reset_gaid(self, pad_codes: list[str], reset_gms_type: int = 1) -> dict:
+        """Reset advertising ID. reset_gms_type: 1=GAID."""
+        return await self._post("/vcpcloud/api/padApi/resetGAID", {
+            "padCodes": pad_codes,
+            "resetGmsType": reset_gms_type,
+        })
 
     async def inject_audio(self, pad_code: str, audio_url: str) -> dict:
         """Inject audio file to instance microphone."""
@@ -412,7 +415,7 @@ class VMOSCloudClient:
                                          packages: list[str]) -> dict:
         """Hide accessibility service packages."""
         return await self._post("/vcpcloud/api/padApi/setHideAccessibilityAppList", {
-            "padCodes": pad_codes, "packageNames": packages,
+            "padCodes": pad_codes, "appInfos": [{"packageName": p} for p in packages],
         })
 
     async def modify_real_device_adi_template(self, pad_codes: list[str],
