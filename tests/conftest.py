@@ -12,12 +12,13 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-# ── Path setup — ensure core/ and server/ are importable ──────────────
+# ── Path setup — ensure vmos_titan core/ and api/ are importable ──────
 ROOT = Path(__file__).resolve().parent.parent
-CORE_DIR = ROOT / "core"
-SERVER_DIR = ROOT / "server"
+VMOS_TITAN_DIR = ROOT / "vmos-titan"
+CORE_DIR = VMOS_TITAN_DIR / "vmos_titan" / "core"
+SERVER_DIR = VMOS_TITAN_DIR / "vmos_titan" / "api"
 
-for p in [str(CORE_DIR), str(SERVER_DIR)]:
+for p in [str(CORE_DIR), str(SERVER_DIR), str(VMOS_TITAN_DIR)]:
     if p not in sys.path:
         sys.path.insert(0, p)
 

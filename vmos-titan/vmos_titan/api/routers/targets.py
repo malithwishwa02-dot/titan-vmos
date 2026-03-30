@@ -15,7 +15,7 @@ async def target_analyze(request: Request):
     body = await request.json()
     domain = body.get("domain", "")
     try:
-        from core.ai_intelligence_engine import AIIntelligenceEngine
+        from vmos_titan.core.ai_intelligence_engine import AIIntelligenceEngine
     except ImportError:
         from ai_intelligence_engine import AIIntelligenceEngine
 

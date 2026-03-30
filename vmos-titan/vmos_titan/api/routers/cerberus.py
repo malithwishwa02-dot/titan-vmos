@@ -118,7 +118,7 @@ async def cerberus_bin_lookup(request: Request):
     body = await request.json()
     bin_prefix = body.get("bin", "")
     try:
-        from core.bin_database import BINDatabase
+        from vmos_titan.core.bin_database import BINDatabase
     except ImportError:
         from bin_database import BINDatabase
 
@@ -143,7 +143,7 @@ async def cerberus_intelligence(request: Request):
     except ImportError:
         logger.warning("BIN scanner module unavailable, using BIN database fallback")
         try:
-            from core.bin_database import BINDatabase
+            from vmos_titan.core.bin_database import BINDatabase
         except ImportError:
             from bin_database import BINDatabase
         db = BINDatabase.get() if hasattr(BINDatabase, 'get') else BINDatabase()

@@ -21,7 +21,7 @@ from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
 from circuit_breaker import get_breaker
-import core.auto_env  # Auto-load .env for VASTAI_CODING_* variables
+import vmos_titan.core.auto_env  # Auto-load .env for VASTAI_CODING_* variables
 
 logger = logging.getLogger("titan.ai-intelligence")
 

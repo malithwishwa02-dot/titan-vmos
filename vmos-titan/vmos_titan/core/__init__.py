@@ -3,12 +3,12 @@
 Core package exports for cleaner imports.
 Usage:
     from core import AnomalyPatcher, ProfileInjector, AndroidProfileForge
-    from core.exceptions import TitanError, ADBConnectionError
-    from core.models import PatchPhase, JobStatus, DeviceState
-    from core.vmos_cloud_module import VMOSCloudBridge, VMOSDeviceModifier
+    from vmos_titan.core.exceptions import TitanError, ADBConnectionError
+    from vmos_titan.core.models import PatchPhase, JobStatus, DeviceState
+    from vmos_titan.core.vmos_cloud_module import VMOSCloudBridge, VMOSDeviceModifier
 """
 
-from core.exceptions import (
+from vmos_titan.core.exceptions import (
     ADBCommandError,
     ADBConnectionError,
     DeviceNotFoundError,
@@ -21,7 +21,7 @@ from core.exceptions import (
     TitanError,
     WalletProvisionError,
 )
-from core.vmos_cloud_module import (
+from vmos_titan.core.vmos_cloud_module import (
     VMOSCloudBridge,
     VMOSConfig,
     VMOSDeviceModifier,

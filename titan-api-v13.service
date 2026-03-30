@@ -7,10 +7,10 @@ Wants=docker.service
 [Service]
 Type=simple
 User=root
-WorkingDirectory=/opt/titan-v13-device
-Environment=PYTHONPATH=/opt/titan-v13-device/server:/opt/titan-v13-device/core
+WorkingDirectory=/opt/titan-v13-device/vmos-titan
+Environment=PYTHONPATH=/opt/titan-v13-device/vmos-titan/vmos_titan/api:/opt/titan-v13-device/vmos-titan/vmos_titan/core:/opt/titan-v13-device/vmos-titan
 EnvironmentFile=-/opt/titan-v13-device/.env
-ExecStart=/opt/titan-v13-device/venv/bin/uvicorn server.titan_api:app \
+ExecStart=/opt/titan-v13-device/venv/bin/uvicorn vmos_titan.api.titan_api:app \
     --host 127.0.0.1 --port 8080 \
     --workers 2 --loop uvloop --http httptools
 Restart=on-failure

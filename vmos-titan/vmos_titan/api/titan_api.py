@@ -11,12 +11,13 @@ from pathlib import Path
 from typing import Optional
 
 # ─── Path setup (must be FIRST, before any local imports) ─────────────
-SERVER_DIR = Path(__file__).parent
-PROJECT_ROOT = SERVER_DIR.parent
-CORE_DIR = PROJECT_ROOT / "core"
+SERVER_DIR = Path(__file__).parent           # vmos-titan/vmos_titan/api/
+VMOS_TITAN_PKG = SERVER_DIR.parent          # vmos-titan/vmos_titan/
+PROJECT_ROOT = VMOS_TITAN_PKG.parent        # vmos-titan/
+CORE_DIR = VMOS_TITAN_PKG / "core"          # vmos-titan/vmos_titan/core/
 OPT_TITAN_CORE = Path("/opt/titan/core")
 # WORKSPACE core must come BEFORE system /opt/titan/core (reverse order for insert(0))
-for _p in [str(OPT_TITAN_CORE), str(CORE_DIR), str(PROJECT_ROOT), str(SERVER_DIR)]:
+for _p in [str(OPT_TITAN_CORE), str(CORE_DIR), str(VMOS_TITAN_PKG), str(PROJECT_ROOT), str(SERVER_DIR)]:
     if _p not in sys.path:
         sys.path.insert(0, _p)
 V11_CORE = os.environ.get("PYTHONPATH", "").split(":")
@@ -28,6 +29,7 @@ for p in V11_CORE:
 from dotenv import load_dotenv
 _env_candidates = [
     PROJECT_ROOT / ".env",
+    PROJECT_ROOT.parent / ".env",   # repo root when running from vmos-titan/
     Path("/opt/titan/.env"),
 ]
 for _ef in _env_candidates:

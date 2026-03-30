@@ -3,7 +3,7 @@ import os
 
 import pytest
 
-from core.screen_streamer import ScreenStreamer
+from vmos_titan.core.screen_streamer import ScreenStreamer
 
 
 @pytest.mark.asyncio

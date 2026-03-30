@@ -28,7 +28,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from core.device_state_db import DeviceStateDB
+from vmos_titan.core.device_state_db import DeviceStateDB
 
 logger = logging.getLogger("titan.device-manager")
 
@@ -735,7 +735,7 @@ class DeviceManager:
         self._save_state()
 
         # Resolve device preset for identity props
-        from core.device_presets import DEVICE_PRESETS
+        from vmos_titan.core.device_presets import DEVICE_PRESETS
         preset = DEVICE_PRESETS.get(req.model)
 
         # Generate Cuttlefish JSON config with device identity baked in

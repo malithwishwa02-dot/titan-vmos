@@ -48,12 +48,12 @@
     ],
     "extraResources": [
       {
-        "from": "../server",
+        "from": "./vmos_titan/api",
         "to": "server",
         "filter": ["**/*.py", "**/*.json", "**/*.yaml", "!__pycache__/**"]
       },
       {
-        "from": "../core",
+        "from": "./vmos_titan/core",
         "to": "core", 
         "filter": ["**/*.py", "!__pycache__/**"]
       }
