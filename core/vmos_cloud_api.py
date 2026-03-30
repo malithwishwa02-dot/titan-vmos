@@ -124,17 +124,13 @@ class VMOSCloudClient:
         if not self.ak or not self.sk:
             raise ValueError("VMOS_CLOUD_AK and VMOS_CLOUD_SK must be set")
 
-    async def _post(self, path: str, data: dict[str, Any] | None = None,
-                   timeout_sec: float | None = None) -> dict:
-        """Execute POST request with optional custom timeout."""
+    async def _post(self, path: str, data: dict[str, Any] | None = None) -> dict:
         body = data or {}
         body_json = json.dumps(body, separators=(",", ":"), ensure_ascii=False)
         headers = _build_headers(body_json, self.ak, self.sk)
         url = f"{self.base_url}{path}"
-        # E-06 fix: Allow custom timeout (default 30s, max 120s)
-        timeout = min(max(timeout_sec or _TIMEOUT, 5.0), 120.0)
 
-        async with httpx.AsyncClient(timeout=timeout) as client:
+        async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
             resp = await client.post(url, content=body_json, headers=headers)
             resp.raise_for_status()
             result = resp.json()
@@ -144,16 +140,12 @@ class VMOSCloudClient:
                         path, result.get("code"), result.get("msg"))
         return result
 
-    async def _get(self, path: str, params: dict[str, Any] | None = None,
-                   timeout_sec: float | None = None) -> dict:
-        """Execute GET request with optional custom timeout."""
+    async def _get(self, path: str, params: dict[str, Any] | None = None) -> dict:
         body_json = json.dumps(params or {}, separators=(",", ":"), ensure_ascii=False)
         headers = _build_headers(body_json, self.ak, self.sk)
         url = f"{self.base_url}{path}"
-        # E-06 fix: Allow custom timeout (default 30s, max 120s)
-        timeout = min(max(timeout_sec or _TIMEOUT, 5.0), 120.0)
 
-        async with httpx.AsyncClient(timeout=timeout) as client:
+        async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
             resp = await client.get(url, params=params, headers=headers)
             resp.raise_for_status()
             result = resp.json()
@@ -175,11 +167,7 @@ class VMOSCloudClient:
         })
 
     async def instance_details(self, **kwargs) -> dict:
-        """Query instance details (padCodes, padIps, vmStatus, etc.).
-
-        NOTE: The /padDetails endpoint returns 404. Use instance_list() with
-        specific padCodes filter, or query_instance_properties() instead.
-        """
+        """Query instance details (padCodes, padIps, vmStatus, etc.)."""
         return await self._post("/vcpcloud/api/padApi/padDetails", kwargs)
 
     async def instance_restart(self, pad_codes: list[str]) -> dict:
@@ -311,52 +299,17 @@ class VMOSCloudClient:
             "padCodes": pad_codes, "packageNames": packages,
         })
 
-    async def sync_cmd(self, pad_code: str, command: str, timeout_sec: int = 30) -> dict:
-        """
-        Synchronous shell command execution on instance.
-        
-        This is the preferred method for real-time shell execution as it waits
-        for command completion. Uses syncCmd endpoint which has:
-        - ~4KB command character limit (E-08)
-        - Returns empty string on device offline/error (E-07)
-        - Default 30s timeout (E-06 fix: now configurable)
-        
-        Args:
-            pad_code: Instance ID
-            command: Shell command to execute
-            timeout_sec: Command timeout in seconds (default 30, max 120)
-            
-        Returns:
-            dict with code, data containing taskStatus and errorMsg (stdout)
-        """
-        return await self._post("/vcpcloud/api/padApi/syncCmd", {
-            "padCode": pad_code,
-            "scriptContent": command,
-        }, timeout_sec=timeout_sec)
-
     async def async_adb_cmd(self, pad_codes: list[str], command: str) -> dict:
         """Async execute ADB command on instances."""
         return await self._post("/vcpcloud/api/padApi/asyncCmd", {
             "padCodes": pad_codes, "scriptContent": command,
         })
 
-    async def switch_root(self, pad_codes: list[str], enable: bool = True,
-                           root_type: int = 1, package_name: str = "") -> dict:
-        """Switch root permissions on instances.
-
-        Args:
-            pad_codes: List of instance pad codes.
-            enable: True to enable root, False to disable.
-            root_type: 1 for per-app root (required), 0 for global (broken on API).
-            package_name: Target package for per-app root (required when root_type=1).
-        """
-        body: dict[str, Any] = {
+    async def switch_root(self, pad_codes: list[str], enable: bool = True) -> dict:
+        """Switch root permissions on instances."""
+        return await self._post("/vcpcloud/api/padApi/switchRoot", {
             "padCodes": pad_codes, "rootStatus": 1 if enable else 0,
-            "rootType": root_type,
-        }
-        if package_name:
-            body["packageName"] = package_name
-        return await self._post("/vcpcloud/api/padApi/switchRoot", body)
+        })
 
     async def screenshot(self, pad_codes: list[str]) -> dict:
         """Take local screenshot of instances."""
@@ -393,22 +346,14 @@ class VMOSCloudClient:
         })
 
     async def simulate_click_humanized(self, pad_code: str, x: int, y: int) -> dict:
-        """Generate humanized click trajectory at coordinates.
-
-        WARNING: This endpoint returns 404 — it does not exist on the VMOS Cloud API.
-        Use simulate_touch() instead with humanized position generation.
-        """
+        """Generate humanized click trajectory at coordinates."""
         return await self._post("/vcpcloud/api/openApi/simulateClick", {
             "padCode": pad_code, "x": x, "y": y,
         })
 
     async def simulate_swipe_humanized(self, pad_code: str,
                                        direction: str | None = None, **kwargs) -> dict:
-        """Generate humanized swipe trajectory.
-
-        WARNING: This endpoint likely returns 404 — it may not exist on the VMOS Cloud API.
-        Use simulate_touch() instead with humanized position sequences.
-        """
+        """Generate humanized swipe trajectory."""
         body: dict[str, Any] = {"padCode": pad_code}
         if direction:
             body["direction"] = direction
@@ -440,16 +385,16 @@ class VMOSCloudClient:
             "resetGmsType": reset_gms_type,
         })
 
-    async def inject_audio(self, pad_codes: list[str], audio_url: str) -> dict:
+    async def inject_audio(self, pad_code: str, audio_url: str) -> dict:
         """Inject audio file to instance microphone."""
         return await self._post("/vcpcloud/api/padApi/injectAudioToMic", {
-            "padCodes": pad_codes, "audioUrl": audio_url,
+            "padCode": pad_code, "audioUrl": audio_url,
         })
 
-    async def unmanned_live(self, pad_codes: list[str], video_url: str) -> dict:
+    async def unmanned_live(self, pad_code: str, video_url: str) -> dict:
         """Instance video injection (unmanned live streaming)."""
         return await self._post("/vcpcloud/api/padApi/unmannedLive", {
-            "padCodes": pad_codes, "videoUrl": video_url,
+            "padCode": pad_code, "videoUrl": video_url,
         })
 
     async def upload_user_image(self, **kwargs) -> dict:
@@ -510,29 +455,6 @@ class VMOSCloudClient:
         """Batch get device model information."""
         return await self._post("/vcpcloud/api/padApi/modelInfo", {"modelNames": model_names})
 
-    async def update_android_prop(self, pad_code: str, props: dict[str, str]) -> dict:
-        """Update Android system properties on an instance.
-
-        Confirmed working format: padCode (singular) + props (dict).
-        WARNING: This triggers a device restart (status 14 → 10, ~20 seconds).
-
-        Args:
-            pad_code: Single instance pad code (NOT an array).
-            props: Dict of property key→value pairs, e.g.
-                   {"ro.product.model": "SM-S938U", "ro.product.brand": "samsung"}
-        """
-        return await self._post("/vcpcloud/api/padApi/updatePadAndroidProp", {
-            "padCode": pad_code, "props": props,
-        })
-
-    async def select_brand_list(self) -> dict:
-        """Get all available device brand/model presets (24,000+ entries).
-
-        Returns a list of dicts with: id, brand, displayBrand, deviceDisplayName,
-        model, fingerprint, status.
-        """
-        return await self._post("/vcpcloud/api/vcBrand/selectBrandList", {})
-
     async def set_bandwidth(self, pad_codes: list[str], up: int = 0, down: int = 0) -> dict:
         """Set instance bandwidth. 0=unlimited, -1=block internet."""
         return await self._post("/vcpcloud/api/padApi/setSpeed", {
@@ -565,15 +487,10 @@ class VMOSCloudClient:
         """Clear all processes and return to desktop."""
         return await self._post("/vcpcloud/api/padApi/cleanAppHome", {"padCodes": pad_codes})
 
-    async def inject_picture(self, pad_codes: list[str], inject_url: str) -> dict:
-        """Inject picture into device camera/gallery.
-
-        Args:
-            pad_codes: List of instance pad codes.
-            inject_url: Public URL of the image to inject (parameter name: injectUrl).
-        """
+    async def inject_picture(self, pad_code: str, image_url: str) -> dict:
+        """Inject picture into device camera roll."""
         return await self._post("/vcpcloud/api/padApi/injectPicture", {
-            "padCodes": pad_codes, "injectUrl": inject_url,
+            "padCode": pad_code, "imageUrl": image_url,
         })
 
     # -----------------------------------------------------------------------
