@@ -20,7 +20,10 @@ dependencies = [
     "python-multipart==0.0.22",
     "httpx==0.28.1",
     "pydantic==2.10.4",
-    "gpsoauth>=1.0.0",
+    "gpsoauth>=2.0.0",
+    "python-dotenv>=1.0.0",
+    "requests>=2.31.0",
+    "pycryptodome>=3.19.0",
 ]
 
 [project.optional-dependencies]
