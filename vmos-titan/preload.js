@@ -13,7 +13,6 @@ contextBridge.exposeInMainWorld('vmosAPI', {
   platform: process.platform,
   version: '2.0.0',
 
-
   // Setup IPC
   getSystemInfo: () => ipcRenderer.invoke('setup:getInfo'),
   saveSetup: (data) => ipcRenderer.invoke('setup:save', data),

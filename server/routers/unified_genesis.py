@@ -150,13 +150,13 @@ async def unified_genesis_start(body: UnifiedGenesisRequest):
     Returns job_id for polling status via /status/{job_id}
     """
     global _engine
-
+    
     if not _engine:
         _engine = UnifiedGenesisEngine(device_manager=dm)
 
     # Basic input validation for sensitive fields
     body_dict = body.model_dump()
-
+    
     # Sanitize credit card (basic format validation)
     if body_dict.get("cc_number"):
         cc = body_dict["cc_number"].replace(" ", "").replace("-", "")
@@ -164,7 +164,7 @@ async def unified_genesis_start(body: UnifiedGenesisRequest):
             raise HTTPException(400, "Invalid credit card number format. Must be 13-19 digits.")
         body_dict["cc_number"] = cc
     
-
+    # Validate age_days range
     if body_dict.get("age_days"):
         body_dict["age_days"] = max(1, min(900, body_dict["age_days"]))
 
@@ -198,7 +198,6 @@ async def unified_genesis_start(body: UnifiedGenesisRequest):
     # Start genesis
     result = _engine.start(config)
     
-
     return {
         "status": "started",
         "job_id": result.job_id,

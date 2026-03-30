@@ -185,7 +185,7 @@ class GenesisConfig:
     # VMOSGenesisEngine instead of direct local ADB.
     pad_code: str = ""
     
-
+    # Sub-configurations
     persona: PersonaConfig = field(default_factory=PersonaConfig)
     payment: PaymentConfig = field(default_factory=PaymentConfig)
     google: GoogleConfig = field(default_factory=GoogleConfig)
@@ -893,45 +893,20 @@ class UnifiedGenesisEngine:
         result.profile_id = pipeline_result.profile_id
 
     def _reflect_pipeline_result(self, job_id: str, pipeline_result) -> None:
-        """Copy phase statuses from a VMOSGenesisEngine PipelineResult into our GenesisResult.
+        """Copy phase statuses from VMOSGenesisEngine PipelineResult into GenesisResult.
 
-        The VMOS engine has 11 phases (0-10).  The unified engine has 16 phases
-        (0-15).  We map VMOS phases onto the closest corresponding unified phase
-        slots so the UI shows consistent progress.  Unified-only phases (e.g.
-        Sensor Warmup, Immune Watchdog) that have no VMOS counterpart remain in
-        their current state.
-
-        Phase mapping (VMOS index → unified index):
-          0 Wipe            → 1  Factory Wipe
-          1 Stealth Patch   → 2  Stealth Patch
-          2 Network/Proxy   → 3  Network Config
-          3 Forge Profile   → 4  Forge Profile
-          4 Google Account  → 6  Google Account
-          5 Inject          → 7  Profile Inject
-          6 Wallet/GPay     → 8  Wallet Provision
-          7 Provincial Layer→ 9  App Bypass  (same data-layer seeding concept)
-          8 Post-Harden     → 10 Browser Harden
-          9 Attestation     → 11 Play Integrity
-         10 Trust Audit     → 14 Trust Audit
+        Phase mapping (VMOS index -> unified index):
+          0 Wipe -> 1, 1 Stealth -> 2, 2 Network -> 3, 3 Forge -> 4,
+          4 Google -> 6, 5 Inject -> 7, 6 Wallet -> 8, 7 Provincial -> 9,
+          8 Post-Harden -> 10, 9 Attestation -> 11, 10 Trust Audit -> 14
         """
         result = self._jobs.get(job_id)
         if not result or not pipeline_result:
-            logger.debug("_reflect_pipeline_result: skipped (result=%s, pipeline=%s)", result, pipeline_result)
             return
 
-        # VMOS phase index → unified phase index
         vmos_to_unified = {
-            0: 1,   # Wipe
-            1: 2,   # Stealth Patch
-            2: 3,   # Network/Proxy
-            3: 4,   # Forge Profile
-            4: 6,   # Google Account
-            5: 7,   # Inject
-            6: 8,   # Wallet/GPay
-            7: 9,   # Provincial Layer → App Bypass (both seed app-layer data)
-            8: 10,  # Post-Harden → Browser Harden
-            9: 11,  # Attestation → Play Integrity
-            10: 14, # Trust Audit
+            0: 1, 1: 2, 2: 3, 3: 4, 4: 6, 5: 7, 6: 8,
+            7: 9, 8: 10, 9: 11, 10: 14,
         }
 
         for vmos_phase in pipeline_result.phases:
