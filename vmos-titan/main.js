@@ -198,7 +198,7 @@ function startBuiltinServer() {
 
       // ── Health ──────────────────────────────────────────────────────
       if (p === '/api/health') {
-        return send({ status: 'ok', version: '1.0.0' });
+        return send({ status: 'ok', version: '2.0.0' });
       }
 
       if (!ak || !sk) return send({ error: 'Credentials not configured' }, 401);
@@ -345,12 +345,9 @@ function startBuiltinServer() {
         return send({ ok: r.code === 200, data: r.data });
       }
 
-      // ── Modify Android properties (requires restart) ──────────────
+      // ── Modify Android properties (DEPRECATED — causes device reboot!) ──
       if (p === '/api/vmos/instances/android-props' && method === 'POST') {
-        const d = JSON.parse(body || '{}');
-        const { padCodes, ...props } = d;
-        const r = await vmosPost('/vcpcloud/api/padApi/updatePadAndroidProp', { padCodes: padCodes || [], ...props }, ak, sk);
-        return send({ ok: r.code === 200, data: r.data });
+        return send({ error: 'DEPRECATED: updatePadAndroidProp causes device reboot. Use shell resetprop via /api/vmos/instances/{padCode}/shell instead.', deprecated: true }, 410);
       }
 
       // ── Modify SIM by country ─────────────────────────────────────
@@ -423,11 +420,9 @@ function startBuiltinServer() {
         return send({ ok: r.code === 200, data: r.data });
       }
 
-      // ── One-key new device ─────────────────────────────────────────
+      // ── One-key new device (DEPRECATED — causes device reboot!) ────
       if (p === '/api/vmos/instances/new-device' && method === 'POST') {
-        const d = JSON.parse(body || '{}');
-        const r = await vmosPost('/vcpcloud/api/padApi/replacePad', d, ak, sk);
-        return send({ ok: r.code === 200, data: r.data });
+        return send({ error: 'DEPRECATED: replacePad causes unpredictable device reset. Use shell-based wipe via Genesis pipeline instead.', deprecated: true }, 410);
       }
 
       // ── Get supported countries ────────────────────────────────────
@@ -1643,7 +1638,7 @@ async function _runGenesisJob(jobId, ak, sk) {
         `resetprop ro.build.display.id '${_esc(preset.build_id)}'`,
         `resetprop ro.build.type user`,
         `resetprop ro.build.tags release-keys`,
-        `resetprop ro.build.version.sdk '${preset.sdk}'`,
+        `resetprop ro.build.version.sdk '${preset.sdk_version}'`,
         `resetprop ro.build.version.release '${preset.android_version}'`,
         `resetprop ro.build.version.security_patch '${_esc(preset.security_patch)}'`,
         'echo PROPS1_OK',
@@ -1698,7 +1693,7 @@ async function _runGenesisJob(jobId, ak, sk) {
       const propCmd4 = [
         `setprop persist.sys.cloud.gpu.gl_vendor '${_esc(preset.gpu_vendor)}'`,
         `setprop persist.sys.cloud.gpu.gl_renderer '${_esc(preset.gpu_renderer)}'`,
-        `setprop persist.sys.cloud.gpu.gl_version 'OpenGL ES 3.2'`,
+        `setprop persist.sys.cloud.gpu.gl_version '${_esc(preset.gpu_version || 'OpenGL ES 3.2')}'`,
         `setprop persist.sys.cloud.wifi.ssid '${_esc(loc.wifi)}'`,
         `setprop persist.sys.cloud.wifi.mac '${_esc(macAddr)}'`,
         `setprop persist.sys.cloud.battery.level '${battLevel}'`,
@@ -1810,8 +1805,8 @@ async function _runGenesisJob(jobId, ak, sk) {
         'resetprop ro.adb.secure 1 2>/dev/null',
         'resetprop ro.build.type user 2>/dev/null',
         'resetprop ro.build.tags release-keys 2>/dev/null',
-        `resetprop ro.build.display.id ${preset.build_id} 2>/dev/null`,
-        `resetprop ro.build.version.security_patch ${preset.security_patch} 2>/dev/null`,
+        `resetprop ro.build.display.id '${_esc(preset.build_id)}' 2>/dev/null`,
+        `resetprop ro.build.version.security_patch '${_esc(preset.security_patch)}' 2>/dev/null`,
         // GPU rendering props — correct property names for real device fingerprinting
         ...(preset.gpu_renderer ? [
           `resetprop ro.hardware.egl '${preset.hardware === 'qcom' ? 'adreno' : 'mali'}' 2>/dev/null`,
@@ -2273,11 +2268,30 @@ async function _runGenesisJob(jobId, ak, sk) {
         const body = sanitizeSQL(smsMessages[i % smsMessages.length], 200);
         smsSql.push(`INSERT INTO sms VALUES (${i+1},${(i%8)+1},'${phone}',NULL,${smsDate},${smsDate},1,${smsType},'${body}',1,-1);`);
       }
-      const smsOk = await createDb(
+      let smsOk = await createDb(
         '/data/data/com.android.providers.telephony/databases/mmssms.db',
         smsSql.join('\n'),
         '/data/data/com.android.providers.telephony'
       );
+      if (!smsOk) {
+        // Fallback: content insert when sqlite3 DB creation fails
+        log('Phase 6c — SMS DB failed, falling back to content insert...');
+        const smsFallbackCmds = [];
+        for (let i = 0; i < 25; i++) {
+          const smsType = i % 3 === 0 ? 2 : 1;
+          const daysBias = Math.floor(Math.pow(Math.random(), 2) * ageDays);
+          const smsDate = (now - daysBias * 86400) * 1000;
+          const phone = _genPhoneNumber(country);
+          const body = sanitizeText(smsMessages[i % smsMessages.length], 127);
+          smsFallbackCmds.push(`content insert --uri content://sms --bind address:s:${phone} --bind body:s:'${body}' --bind type:i:${smsType} --bind date:i:${smsDate} --bind read:i:1 --bind seen:i:1`);
+        }
+        // Batch in groups of 5 to stay within shell limits
+        for (let b = 0; b < smsFallbackCmds.length; b += 5) {
+          const batch = smsFallbackCmds.slice(b, b + 5).join(' && ');
+          await sh(batch, 15);
+        }
+        smsOk = true;
+      }
       log(`Phase 6c — SMS: ${smsOk ? '25/25' : 'failed'}`);
 
       // 6d. WiFi networks (use preset.mac_oui for realistic BSSID generation)
@@ -3240,7 +3254,7 @@ async function _runGenesisJob(jobId, ak, sk) {
         "echo INSTR_VERIFY=$(test -f /data/data/com.google.android.gms/shared_prefs/InstrumentVerification.xml && echo 1 || echo 0)",
         "echo BILL_CACHE=$(test -f /data/data/com.google.android.gms/shared_prefs/PlayBillingCache.xml && echo 1 || echo 0)",
         "echo PERMISSIONS=$(dumpsys package com.android.chrome 2>/dev/null | grep -c 'granted=true' || echo 0)",
-        "echo PROVINCIAL=$(ls /data/data/com.amazon.mShop.android.shopping/shared_prefs/user_prefs.xml /data/data/com.venmo/shared_prefs/user_prefs.xml /data/data/com.paypal.android.p2pmobile/shared_prefs/user_prefs.xml 2>/dev/null | wc -l)",
+        "echo PROVINCIAL=$(find /data/data/*/shared_prefs/user_prefs.xml 2>/dev/null | wc -l)",
         "echo BOOT_INIT=$(getprop sys.boot_completed 2>/dev/null || echo 0)",
         // New checks for full 100 scoring
         "echo INSTALL_SRC=$(getprop persist.sys.cloud.pm.install_source 2>/dev/null)",

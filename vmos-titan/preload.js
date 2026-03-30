@@ -11,8 +11,9 @@ const { contextBridge, ipcRenderer } = require('electron');
 contextBridge.exposeInMainWorld('vmosAPI', {
   // Platform info
   platform: process.platform,
-  version: '1.0.0',
-  
+  version: '2.0.0',
+
+
   // Setup IPC
   getSystemInfo: () => ipcRenderer.invoke('setup:getInfo'),
   saveSetup: (data) => ipcRenderer.invoke('setup:save', data),
@@ -39,7 +40,7 @@ contextBridge.exposeInMainWorld('vmosAPI', {
 // Also expose as titanDesktop for compatibility with existing console code
 contextBridge.exposeInMainWorld('titanDesktop', {
   platform: process.platform,
-  version: '1.0.0',
+  version: '2.0.0',
   backend: 'vmos-pro',
   
   // API configuration

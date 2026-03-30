@@ -47,6 +47,7 @@ from __future__ import annotations
 import hashlib
 import hmac as _hmac_mod
 import logging
+import os
 import random
 import secrets
 import sqlite3
@@ -55,6 +56,7 @@ import struct
 import tempfile
 import time
 import uuid
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -1033,3 +1035,145 @@ class VMOSDbBuilder:
             "receipt_subjects": receipt_subjects,
         }
 
+    # ── Chrome Web Data (autofill) — preserved from local codebase ────
+
+    def build_chrome_webdata_db(self,
+                                 cards,
+                                 autofill_profiles=None) -> bytes:
+        """Build Chrome Web Data database for autofill.
+
+        Note: Chrome encrypts card numbers with Android Keystore.
+        We inject masked card data but full numbers won't autofill.
+        """
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as tmp:
+            tmp_path = tmp.name
+
+        try:
+            conn = sqlite3.connect(tmp_path)
+            cursor = conn.cursor()
+
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS credit_cards (
+                    guid TEXT PRIMARY KEY,
+                    name_on_card TEXT,
+                    expiration_month INTEGER,
+                    expiration_year INTEGER,
+                    card_number_encrypted BLOB,
+                    billing_address_id TEXT,
+                    date_modified INTEGER NOT NULL DEFAULT 0,
+                    origin TEXT DEFAULT '',
+                    use_count INTEGER NOT NULL DEFAULT 0,
+                    use_date INTEGER NOT NULL DEFAULT 0,
+                    nickname TEXT DEFAULT ''
+                )
+            """)
+
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS masked_credit_cards (
+                    id TEXT PRIMARY KEY,
+                    status TEXT,
+                    name_on_card TEXT,
+                    network TEXT,
+                    last_four TEXT,
+                    exp_month INTEGER,
+                    exp_year INTEGER,
+                    bank_name TEXT
+                )
+            """)
+
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS autofill_profiles (
+                    guid TEXT PRIMARY KEY,
+                    company_name TEXT,
+                    street_address TEXT,
+                    dependent_locality TEXT,
+                    city TEXT,
+                    state TEXT,
+                    zipcode TEXT,
+                    sorting_code TEXT,
+                    country_code TEXT,
+                    date_modified INTEGER NOT NULL DEFAULT 0,
+                    origin TEXT DEFAULT '',
+                    language_code TEXT DEFAULT '',
+                    use_count INTEGER NOT NULL DEFAULT 0,
+                    use_date INTEGER NOT NULL DEFAULT 0
+                )
+            """)
+
+            for card in cards:
+                guid = f"{secrets.token_hex(4)}-{secrets.token_hex(2)}-{secrets.token_hex(2)}-{secrets.token_hex(2)}-{secrets.token_hex(6)}"
+                cn = getattr(card, "cardholder_name", "") or getattr(card, "cardholder", "")
+                nw = getattr(card, "network", "VISA").upper()
+                last4 = getattr(card, "card_number", "0000")[-4:]
+                em = getattr(card, "exp_month", 12)
+                ey = getattr(card, "exp_year", 2029)
+                iss = getattr(card, "issuer", "Bank")
+
+                cursor.execute("""
+                    INSERT OR REPLACE INTO masked_credit_cards (
+                        id, status, name_on_card, network, last_four,
+                        exp_month, exp_year, bank_name
+                    ) VALUES (?, 'FULL', ?, ?, ?, ?, ?, ?)
+                """, (guid, cn, nw, last4, em, ey, iss))
+
+            if autofill_profiles:
+                for profile in autofill_profiles:
+                    guid = f"{secrets.token_hex(4)}-{secrets.token_hex(2)}-{secrets.token_hex(2)}-{secrets.token_hex(2)}-{secrets.token_hex(6)}"
+                    cursor.execute("""
+                        INSERT OR REPLACE INTO autofill_profiles (
+                            guid, company_name, street_address, city, state,
+                            zipcode, country_code, date_modified
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    """, (
+                        guid,
+                        profile.get("company", ""),
+                        profile.get("street", ""),
+                        profile.get("city", ""),
+                        profile.get("state", ""),
+                        profile.get("zip", ""),
+                        profile.get("country", "US"),
+                        int(time.time()),
+                    ))
+
+            conn.commit()
+            conn.close()
+
+            return Path(tmp_path).read_bytes()
+
+        finally:
+            Path(tmp_path).unlink(missing_ok=True)
+
+
+# ── Backward compatibility aliases ────────────────────────────────────────────
+# Local V3 modules (vmos_nexus_runner, vmos_genesis_v3) import these names.
+
+@dataclass
+class CardData:
+    """Credit card data for wallet injection."""
+    card_number: str
+    exp_month: int
+    exp_year: int
+    cardholder_name: str
+    cvv: str = ""
+    billing_zip: str = ""
+    issuer: str = ""
+    network: str = ""
+
+
+@dataclass
+class PurchaseRecord:
+    """Play Store purchase record."""
+    app_id: str
+    order_id: str
+    purchase_time_ms: int
+    price_micros: int
+    currency: str = "USD"
+    doc_type: int = 1
+
+
+# Class alias: local modules use VMOSDBBuilder (uppercase DB)
+VMOSDBBuilder = VMOSDbBuilder
+
+# Module-level function wrappers for public API
+generate_dpan = _generate_dpan
+generate_order_id = _generate_order_id

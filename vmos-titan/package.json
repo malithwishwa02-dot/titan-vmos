@@ -1,18 +1,22 @@
 {
   "name": "vmos-titan",
-  "version": "1.0.0",
-  "description": "VMOS Titan — Professional Linux desktop application for VMOS Pro cloud device management with Genesis Studio integration",
+  "version": "2.0.0",
+  "description": "VMOS Titan v2 — Professional Linux desktop application for VMOS Pro cloud device management with Genesis Studio integration and ops-web localhost console",
   "main": "main.js",
   "author": "Titan Team",
   "license": "MIT",
   "scripts": {
-    "start": "electron .",
-    "dev": "electron . --enable-logging",
+    "start": "electron . --no-sandbox",
+    "dev": "electron . --no-sandbox --enable-logging",
     "build": "electron-builder --linux",
     "build:deb": "electron-builder --linux deb",
     "build:appimage": "electron-builder --linux AppImage",
     "build:rpm": "electron-builder --linux rpm",
-    "pack": "electron-builder --dir"
+    "build:all": "bash build.sh all",
+    "build:web": "bash build.sh opsweb",
+    "pack": "electron-builder --dir",
+    "ops-web": "node ops-web/server.js",
+    "clean": "bash build.sh clean"
   },
   "build": {
     "appId": "com.titan.vmos",
@@ -35,6 +39,11 @@
       "main.js",
       "preload.js",
       "index.html",
+      "setup.html",
+      "validators.js",
+      "check_device.js",
+      "fix_devices.js",
+      "start_stopped_device.js",
       "assets/**/*"
     ],
     "extraResources": [

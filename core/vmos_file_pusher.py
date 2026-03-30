@@ -1,288 +1,550 @@
 """
-Titan V13.0 — VMOS File Pusher
-================================
-Transfers files (especially SQLite databases) to VMOS Cloud devices using
-chunked base64 encoding over the VMOS ``asyncCmd`` / ``syncCmd`` shell API.
+Titan V13 — VMOS File Pusher
 
-VMOS Cloud devices do not have an ``sqlite3`` binary, so all database
-operations must be performed host-side (see :mod:`vmos_db_builder`) and the
-result pushed as a binary blob via base64.
+Handles file transfer to VMOS Cloud devices via chunked base64 encoding.
+VMOS devices have limited shell capabilities, so we must:
+1. Encode files as base64
+2. Push in chunks (avoid command length limits)
+3. Decode on device
+4. Set correct permissions and SELinux context
 
-Transfer flow
--------------
-1. Encode the binary payload as base64.
-2. Split into chunks ≤ 4 KB (VMOS ``syncCmd`` limit).
-3. Write chunks to a temp file on the device using ``echo -n ... >> /tmp/x.b64``.
-4. Decode on-device: ``base64 -d /tmp/x.b64 > <dest>``.
-5. Remove the temp base64 file.
-6. Set ownership and SELinux context on the destination file.
-
-Usage::
-
-    from vmos_file_pusher import VMOSFilePusher
-
-    pusher = VMOSFilePusher(vmos_client, pad_code="ACP2509244LGV1MV")
-
-    # Async push a database (returns True on success)
-    ok = await pusher.push_bytes(
-        data=db_bytes,
-        remote_path="/data/system_ce/0/accounts_ce.db",
+Usage:
+    pusher = VMOSFilePusher(vmos_api)
+    
+    # Push database file
+    success = await pusher.push_file(
+        db_bytes,
+        "/data/system_ce/0/accounts_ce.db",
         owner="system:system",
         mode="600",
+        selinux_context="u:object_r:accounts_data_file:s0"
     )
 """
 
-from __future__ import annotations
-
 import asyncio
 import base64
+import hashlib
 import logging
-import math
+import os
 import time
-from typing import Optional
+from dataclasses import dataclass
+from typing import Optional, Tuple
 
 logger = logging.getLogger("titan.vmos-file-pusher")
 
-# VMOS syncCmd has a 4 KB payload limit.  We use 3 KB chunks to leave headroom
-# for the surrounding shell command syntax.
-_CHUNK_BYTES = 3072
+CHUNK_SIZE = 4096
+MAX_RETRIES = 3
+COMMAND_DELAY = 3.0  # VMOS requires 3+ seconds between commands
+
+
+@dataclass
+class PushResult:
+    """Result of file push operation."""
+    success: bool = False
+    path: str = ""
+    size: int = 0
+    checksum: str = ""
+    error: str = ""
+    retries: int = 0
 
 
 class VMOSFilePusher:
-    """Push binary files to VMOS Cloud devices via base64-chunked shell commands.
-
-    Args:
-        client: A :class:`~vmos_cloud_api.VMOSCloudClient` instance.
-        pad_code: Target VMOS Cloud device pad code.
-        shell_timeout: Per-command ADB shell timeout in seconds.
-        inter_chunk_delay: Seconds to wait between chunk writes to avoid
-            triggering VMOS rate-limit (error 110031).  Minimum 0.3s
-            enforced internally; the plan warns against rapid-fire commands.
+    """
+    Push files to VMOS Cloud devices via chunked base64.
+    
+    VMOS Cloud devices have specific limitations:
+    - No direct file upload API
+    - Shell commands have length limits (~4KB)
+    - Commands must be spaced 3+ seconds apart
+    - /system is read-only (dm-protected)
     """
 
-    def __init__(
-        self,
-        client,
-        pad_code: str,
-        shell_timeout: int = 30,
-        inter_chunk_delay: float = 0.5,
-    ) -> None:
-        self.client = client
-        self.pad = pad_code
-        self.pads = [pad_code]
-        self.shell_timeout = shell_timeout
-        self.inter_chunk_delay = max(inter_chunk_delay, 0.3)
-    # ── Core push ─────────────────────────────────────────────────────
-
-    async def push_bytes(
-        self,
-        data: bytes,
-        remote_path: str,
-        owner: str = "",
-        mode: str = "644",
-        restorecon: bool = True,
-    ) -> bool:
-        """Push raw bytes to *remote_path* on the VMOS device.
-
-        The transfer uses the ``echo -n | base64 -d`` pipeline to avoid any
-        dependency on ``adb push`` (which is blocked on VMOS Cloud) or
-        ``sqlite3`` (not present on VMOS).
-
+    def __init__(self, vmos_api, pad_code: str):
+        """
+        Initialize file pusher.
+        
         Args:
-            data: Bytes to write.
-            remote_path: Absolute device path for the destination file.
-            owner: Unix owner in ``user:group`` format (e.g. ``system:system``).
-                   If empty, ownership is not changed.
-            mode: Octal permission string (e.g. ``"600"``).
-            restorecon: If True, run ``restorecon`` to restore SELinux context.
-
-        Returns:
-            True if the full transfer and permission-setting succeeded.
+            vmos_api: VMOSCloudAPI instance
+            pad_code: Device PAD code
         """
-        if not data:
-            logger.warning("[%s] push_bytes: empty payload for %s", self.pad, remote_path)
-            return False
+        self.api = vmos_api
+        self.pad_code = pad_code
+        self._last_command_time = 0
 
-        b64 = base64.b64encode(data).decode("ascii")
-        tmp_b64 = f"/sdcard/.titan_push_{int(time.time())}.b64"
-        tmp_dir = remote_path.rsplit("/", 1)[0]
-        total_chunks = math.ceil(len(b64) / _CHUNK_BYTES)
+    async def _wait_for_rate_limit(self):
+        """Ensure minimum delay between commands."""
+        elapsed = time.time() - self._last_command_time
+        if elapsed < COMMAND_DELAY:
+            await asyncio.sleep(COMMAND_DELAY - elapsed)
+        self._last_command_time = time.time()
 
-        logger.info(
-            "[%s] Pushing %d bytes (%d chunks) → %s",
-            self.pad, len(data), total_chunks, remote_path,
-        )
-
-        # ── Step 1: ensure destination directory ──────────────────────
-        ok = await self._sh(f"mkdir -p {tmp_dir} 2>/dev/null && echo OK", marker="OK")
-        if not ok:
-            logger.warning("[%s] Could not create directory %s", self.pad, tmp_dir)
-            # Non-fatal — directory may already exist
-
-        # ── Step 2: remove any stale temp file ────────────────────────
-        await self._sh_fire(f"rm -f {tmp_b64}")
-
-        # ── Step 3: write base64 chunks ───────────────────────────────
-        for i, start in enumerate(range(0, len(b64), _CHUNK_BYTES)):
-            chunk = b64[start:start + _CHUNK_BYTES]
-            # Use printf instead of echo -n for POSIX portability
-            cmd = f"printf '%s' '{chunk}' >> {tmp_b64}"
-            wrote = await self._sh(cmd + " && echo CHUNK_OK", marker="CHUNK_OK")
-            if not wrote:
-                # Retry once before giving up
-                await asyncio.sleep(self.inter_chunk_delay)
-                wrote = await self._sh(cmd + " && echo CHUNK_OK", marker="CHUNK_OK")
-                if not wrote:
-                    logger.error(
-                        "[%s] Chunk %d/%d failed for %s",
-                        self.pad, i + 1, total_chunks, remote_path,
-                    )
-                    await self._sh_fire(f"rm -f {tmp_b64}")
-                    return False
-
-            if i > 0 and i % 10 == 0:
-                logger.debug("[%s] Push progress: %d/%d chunks", self.pad, i + 1, total_chunks)
-
-            # Rate-limit guard — avoid triggering VMOS 110031 cascade
-            await asyncio.sleep(self.inter_chunk_delay)
-
-        # ── Step 4: decode to destination ─────────────────────────────
-        decode_cmd = f"base64 -d {tmp_b64} > {remote_path} && echo DECODE_OK"
-        decoded = await self._sh(decode_cmd, marker="DECODE_OK", timeout=60)
-        await self._sh_fire(f"rm -f {tmp_b64}")
-
-        if not decoded:
-            logger.error("[%s] base64 decode failed for %s", self.pad, remote_path)
-            return False
-
-        # ── Step 5: set permissions ────────────────────────────────────
-        ok = await self._set_permissions(remote_path, owner, mode, restorecon)
-        if not ok:
-            logger.warning(
-                "[%s] Permissions not fully applied on %s (file was written)",
-                self.pad, remote_path,
-            )
-
-        logger.info("[%s] Push complete: %s (%d bytes)", self.pad, remote_path, len(data))
-        return True
-
-    async def push_text(
-        self,
-        content: str,
-        remote_path: str,
-        owner: str = "",
-        mode: str = "644",
-        restorecon: bool = True,
-    ) -> bool:
-        """Push a UTF-8 text string to *remote_path*.
-
-        Convenience wrapper around :meth:`push_bytes`.
-        """
-        return await self.push_bytes(
-            content.encode("utf-8"), remote_path, owner=owner, mode=mode,
-            restorecon=restorecon,
-        )
-
-    # ── XML / SharedPreferences ────────────────────────────────────────
-
-    async def push_xml_pref(
-        self,
-        xml_content: str,
-        remote_path: str,
-        pkg_dir: Optional[str] = None,
-    ) -> bool:
-        """Push a SharedPreferences XML file and apply package-owned permissions.
-
-        Args:
-            xml_content: Raw XML string (``<?xml version='1.0'...``).
-            remote_path: Absolute path on the device (e.g.
-                ``/data/data/com.google.android.gms/shared_prefs/COIN.xml``).
-            pkg_dir: Root directory of the owning app (e.g.
-                ``/data/data/com.google.android.gms``).  If provided, the file
-                ownership is inherited from this directory.
-
-        Returns:
-            True if write + permission set succeeded.
-        """
-        # Write the file
-        ok = await self.push_text(xml_content, remote_path, mode="660", restorecon=True)
-        if not ok:
-            return False
-
-        # Inherit ownership from package directory
-        if pkg_dir:
-            chown_cmd = (
-                f"OWNER=$(stat -c '%u:%g' {pkg_dir} 2>/dev/null); "
-                f"[ -n \"$OWNER\" ] && chown $OWNER {remote_path} 2>/dev/null; "
-                f"echo CHOWN_OK"
-            )
-            await self._sh(chown_cmd, marker="CHOWN_OK")
-
-        return True
-
-    # ── Permissions helper ────────────────────────────────────────────
-
-    async def _set_permissions(
-        self,
-        path: str,
-        owner: str,
-        mode: str,
-        restorecon: bool,
-    ) -> bool:
-        """Set ownership, mode, and SELinux context on *path*."""
-        cmds = []
-        if mode:
-            cmds.append(f"chmod {mode} {path}")
-        if owner:
-            cmds.append(f"chown {owner} {path}")
-        if restorecon:
-            cmds.append(f"restorecon {path} 2>/dev/null")
-        cmds.append("echo PERMS_OK")
-        return await self._sh("; ".join(cmds), marker="PERMS_OK")
-
-    # ── Shell helpers ─────────────────────────────────────────────────
-
-    async def _sh(
-        self,
-        cmd: str,
-        marker: str = "OK",
-        timeout: Optional[int] = None,
-    ) -> bool:
-        """Execute *cmd* via VMOS Cloud API shell and check for *marker* in output."""
+    async def _execute(self, cmd: str, timeout: int = 30) -> Tuple[bool, str]:
+        """Execute shell command on device with rate limiting."""
+        await self._wait_for_rate_limit()
+        
         try:
-            resp = await self.client.async_adb_cmd(self.pads, cmd)
-            if resp.get("code") != 200:
-                return False
-            data = resp.get("data", [])
-            task_id = None
-            if isinstance(data, list) and data:
-                task_id = data[0].get("taskId")
-            elif isinstance(data, dict):
-                task_id = data.get("taskId")
-            if not task_id:
-                return False
+            result = await self.api.async_adb_cmd(self.pad_code, cmd, timeout=timeout)
+            
+            if result.get("status") == -1:
+                logger.warning(f"Command returned status=-1, device may need restart")
+                return False, "Device command failed"
+            
+            output = result.get("data", {}).get("output", "")
+            return True, output
+            
+        except Exception as e:
+            logger.error(f"Command execution failed: {e}")
+            return False, str(e)
 
-            secs = timeout or self.shell_timeout
-            for _ in range(secs):
+    async def push_file(self,
+                        data: bytes,
+                        target_path: str,
+                        owner: str = "system:system",
+                        mode: str = "660",
+                        selinux_context: Optional[str] = None) -> PushResult:
+        """
+        Push file to VMOS device via chunked base64.
+        
+        Args:
+            data: File content as bytes
+            target_path: Absolute path on device
+            owner: Owner in user:group format
+            mode: File permissions (e.g., "660")
+            selinux_context: SELinux context or None for restorecon
+        
+        Returns:
+            PushResult with operation status
+        """
+        result = PushResult(path=target_path, size=len(data))
+        result.checksum = hashlib.md5(data).hexdigest()
+        
+        logger.info(f"Pushing {len(data)} bytes to {target_path}")
+        
+        b64_data = base64.b64encode(data).decode('ascii')
+        
+        staging_path = f"/sdcard/.titan_staging_{hashlib.md5(target_path.encode()).hexdigest()[:8]}"
+        b64_path = f"{staging_path}.b64"
+        
+        ok, _ = await self._execute(f"rm -f {b64_path} {staging_path}")
+        
+        chunks = [b64_data[i:i+CHUNK_SIZE] for i in range(0, len(b64_data), CHUNK_SIZE)]
+        logger.info(f"Transferring {len(chunks)} chunks...")
+        
+        for i, chunk in enumerate(chunks):
+            for retry in range(MAX_RETRIES):
+                ok, output = await self._execute(f"echo -n '{chunk}' >> {b64_path}")
+                if ok:
+                    break
+                logger.warning(f"Chunk {i+1}/{len(chunks)} failed, retry {retry+1}")
+                result.retries += 1
                 await asyncio.sleep(1)
-                detail = await self.client.task_detail([task_id])
-                if detail.get("code") == 200 and detail.get("data"):
-                    items = detail["data"]
-                    if isinstance(items, list) and items:
-                        item = items[0]
-                        st = item.get("taskStatus")
-                        if st == 3:
-                            return marker in (item.get("taskResult") or "")
-                        if st in (-1, -2, -3, -4, -5):
-                            return False
-            return False
-        except Exception as exc:
-            logger.debug("[%s] _sh error: %s", self.pad, exc)
-            return False
-
-    async def _sh_fire(self, cmd: str) -> None:
-        """Fire-and-forget shell command (no result check)."""
+            else:
+                result.error = f"Failed to transfer chunk {i+1}"
+                logger.error(result.error)
+                return result
+            
+            if (i + 1) % 10 == 0:
+                logger.debug(f"Transferred {i+1}/{len(chunks)} chunks")
+        
+        ok, _ = await self._execute(f"base64 -d {b64_path} > {staging_path}")
+        if not ok:
+            result.error = "Base64 decode failed"
+            return result
+        
+        ok, size_output = await self._execute(f"stat -c %s {staging_path} 2>/dev/null || wc -c < {staging_path}")
         try:
-            await self.client.async_adb_cmd(self.pads, cmd)
-        except Exception:
+            actual_size = int(size_output.strip().split()[0])
+            if actual_size != len(data):
+                logger.warning(f"Size mismatch: expected {len(data)}, got {actual_size}")
+        except:
             pass
+        
+        target_dir = os.path.dirname(target_path)
+        await self._execute(f"mkdir -p {target_dir}")
+        
+        ok, _ = await self._execute(f"cp {staging_path} {target_path}")
+        if not ok:
+            result.error = f"Failed to copy to {target_path}"
+            return result
+        
+        await self._execute(f"chown {owner} {target_path}")
+        await self._execute(f"chmod {mode} {target_path}")
+        
+        if selinux_context:
+            await self._execute(f"chcon {selinux_context} {target_path}")
+        else:
+            await self._execute(f"restorecon {target_path}")
+        
+        await self._execute(f"rm -f {b64_path} {staging_path}")
+        
+        result.success = True
+        logger.info(f"Successfully pushed {target_path}")
+        
+        return result
+
+    async def push_xml_file(self,
+                            xml_content: str,
+                            target_path: str,
+                            owner: str = "system:system",
+                            mode: str = "660") -> PushResult:
+        """
+        Push XML shared preferences file.
+        
+        Args:
+            xml_content: XML content as string
+            target_path: Absolute path on device
+            owner: Owner in user:group format
+            mode: File permissions
+        
+        Returns:
+            PushResult with operation status
+        """
+        return await self.push_file(
+            xml_content.encode('utf-8'),
+            target_path,
+            owner=owner,
+            mode=mode
+        )
+
+    async def push_database(self,
+                            db_bytes: bytes,
+                            target_path: str,
+                            app_uid: str = "system") -> PushResult:
+        """
+        Push SQLite database file with correct permissions.
+        
+        Args:
+            db_bytes: Database file bytes
+            target_path: Absolute path on device
+            app_uid: App UID (e.g., "u0_a36" for GMS)
+        
+        Returns:
+            PushResult with operation status
+        """
+        selinux_map = {
+            "accounts_ce.db": "u:object_r:accounts_data_file:s0",
+            "accounts_de.db": "u:object_r:accounts_data_file:s0",
+            "tapandpay.db": "u:object_r:app_data_file:s0",
+            "library.db": "u:object_r:app_data_file:s0",
+        }
+        
+        filename = os.path.basename(target_path)
+        selinux_context = selinux_map.get(filename)
+        
+        if "system_ce" in target_path or "system_de" in target_path:
+            owner = "system:system"
+            mode = "600"
+        else:
+            owner = f"{app_uid}:{app_uid}"
+            mode = "660"
+        
+        result = await self.push_file(
+            db_bytes,
+            target_path,
+            owner=owner,
+            mode=mode,
+            selinux_context=selinux_context
+        )
+        
+        if result.success:
+            wal_path = f"{target_path}-wal"
+            shm_path = f"{target_path}-shm"
+            await self._execute(f"rm -f {wal_path} {shm_path}")
+        
+        return result
+
+    async def verify_file(self, path: str, expected_checksum: str) -> bool:
+        """
+        Verify file exists and matches expected checksum.
+        
+        Args:
+            path: File path on device
+            expected_checksum: Expected MD5 checksum
+        
+        Returns:
+            True if file exists and checksum matches
+        """
+        ok, output = await self._execute(f"md5sum {path} 2>/dev/null | cut -d' ' -f1")
+        if ok and output.strip() == expected_checksum:
+            return True
+        return False
+
+    async def backup_file(self, path: str) -> Optional[str]:
+        """
+        Create backup of existing file.
+        
+        Args:
+            path: File path to backup
+        
+        Returns:
+            Backup path or None if backup failed
+        """
+        backup_path = f"{path}.titan_backup_{int(time.time())}"
+        ok, _ = await self._execute(f"cp {path} {backup_path} 2>/dev/null")
+        if ok:
+            return backup_path
+        return None
+
+
+class SyncVMOSFilePusher:
+    """
+    Synchronous wrapper for VMOSFilePusher.
+    
+    Use this when you can't use async/await.
+    """
+
+    def __init__(self, vmos_api, pad_code: str):
+        self._async_pusher = VMOSFilePusher(vmos_api, pad_code)
+        self._loop = None
+
+    def _get_loop(self):
+        if self._loop is None:
+            try:
+                self._loop = asyncio.get_event_loop()
+            except RuntimeError:
+                self._loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(self._loop)
+        return self._loop
+
+    def push_file(self, *args, **kwargs) -> PushResult:
+        """Synchronous push_file."""
+        return self._get_loop().run_until_complete(
+            self._async_pusher.push_file(*args, **kwargs)
+        )
+
+    def push_database(self, *args, **kwargs) -> PushResult:
+        """Synchronous push_database."""
+        return self._get_loop().run_until_complete(
+            self._async_pusher.push_database(*args, **kwargs)
+        )
+
+    def push_xml_file(self, *args, **kwargs) -> PushResult:
+        """Synchronous push_xml_file."""
+        return self._get_loop().run_until_complete(
+            self._async_pusher.push_xml_file(*args, **kwargs)
+        )
+
+
+def build_shared_prefs_xml(prefs: dict, package: str = "") -> str:
+    """
+    Build Android SharedPreferences XML from dict.
+    
+    Args:
+        prefs: Dictionary of preferences
+        package: Package name (optional, for header)
+    
+    Returns:
+        XML string
+    """
+    lines = ["<?xml version='1.0' encoding='utf-8' standalone='yes' ?>"]
+    lines.append("<map>")
+    
+    for key, value in prefs.items():
+        if isinstance(value, bool):
+            lines.append(f'    <boolean name="{key}" value="{str(value).lower()}" />')
+        elif isinstance(value, int):
+            lines.append(f'    <int name="{key}" value="{value}" />')
+        elif isinstance(value, float):
+            lines.append(f'    <float name="{key}" value="{value}" />')
+        elif isinstance(value, (list, set)):
+            lines.append(f'    <set name="{key}">')
+            for item in value:
+                lines.append(f'        <string>{item}</string>')
+            lines.append('    </set>')
+        else:
+            escaped = str(value).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+            lines.append(f'    <string name="{key}">{escaped}</string>')
+    
+    lines.append("</map>")
+    return "\n".join(lines)
+
+
+def build_coin_xml(email: str, card_last_four: str = "") -> str:
+    """
+    Build COIN.xml for Google Pay zero-auth configuration.
+    
+    Implements the 8-Flag Zero-Auth Bitmask from V3 Nexus blueprint:
+    - purchase_requires_auth: false
+    - require_purchase_auth: false
+    - one_touch_enabled: true
+    - biometric_payment_enabled: true
+    - PAYMENTS_ZERO_AUTH_ENABLED: true
+    + 3 additional coherence flags
+    
+    Args:
+        email: Google account email
+        card_last_four: Last 4 digits of card (optional)
+    
+    Returns:
+        XML string
+    """
+    prefs = {
+        # === 8-FLAG ZERO-AUTH BITMASK (V3 Nexus) ===
+        "purchase_requires_auth": False,           # Flag 1: Skip purchase auth
+        "require_purchase_auth": False,            # Flag 2: Redundant auth bypass
+        "one_touch_enabled": True,                 # Flag 3: One-tap purchasing
+        "biometric_payment_enabled": True,         # Flag 4: Biometric bypass
+        "PAYMENTS_ZERO_AUTH_ENABLED": True,        # Flag 5: Master zero-auth flag
+        "device_auth_not_required": True,          # Flag 6: Device auth bypass
+        "skip_challenge_on_payment": True,         # Flag 7: Skip 3DS challenge
+        "frictionless_checkout_enabled": True,     # Flag 8: Frictionless checkout
+        
+        # === PAYMENT STATE FLAGS ===
+        "PAYMENTS_DEVICE_AUTHENTICATOR_ENABLED": False,
+        "GPay_SecureElement_Check": False,
+        "PAYMENTS_CARD_TOKEN_LAST_REFRESH": "0",
+        "PAYMENTS_CARD_TOKEN_COUNT": 1 if card_last_four else 0,
+        
+        # === ACCOUNT BINDING ===
+        "account_name": email,
+        "billing_user_consent": True,
+        "billing_setup_complete": True,
+        "play_billing_v2_enabled": True,
+        "zero_auth_opt_in": True,
+        "wallet_provisioned": True,
+        "payment_method_synced": True,
+    }
+    
+    if card_last_four:
+        prefs["default_instrument_last_four"] = card_last_four
+        prefs["has_default_instrument"] = True
+        prefs["default_payment_instrument_token"] = f"token_{card_last_four}"
+    
+    return build_shared_prefs_xml(prefs)
+
+
+def build_finsky_xml(email: str) -> str:
+    """
+    Build finsky.xml for Play Store account binding.
+    
+    Args:
+        email: Google account email
+    
+    Returns:
+        XML string
+    """
+    prefs = {
+        "setup_done": True,
+        "setup_wizard_has_run": True,
+        "account": email,
+        "logged_in": True,
+        "auto_update_enabled": True,
+        "content_rating": "PEGI 18",
+        "download_preferred_network_type": 0,  # Any network
+        "first_account_name": email,
+        "gls_logged_in": True,
+    }
+    return build_shared_prefs_xml(prefs)
+
+
+def build_billing_xml(email: str) -> str:
+    """
+    Build billing.xml for Play Store billing state.
+    
+    Args:
+        email: Google account email
+    
+    Returns:
+        XML string
+    """
+    prefs = {
+        "billing_account": email,
+        "billing_enabled": True,
+        "zero_auth_enabled": True,
+        "device_auth_required": False,
+        "fingerprint_auth_enabled": False,
+        "last_billing_refresh": int(time.time() * 1000),
+    }
+    return build_shared_prefs_xml(prefs)
+
+
+def build_gmail_xml(email: str, order_ids: list = None) -> str:
+    """
+    Build Gmail SharedPreferences for receipt coherence.
+    
+    Cross-Store Coherence (V3 Nexus Blueprint Section 4):
+    Receipts: Email metadata referencing Order IDs (GPA.XXXX-XXXX-XXXX-XXXXX)
+    
+    Args:
+        email: Google account email
+        order_ids: List of Play Store order IDs for receipt coherence
+    
+    Returns:
+        XML string
+    """
+    import secrets
+    
+    now_ms = int(time.time() * 1000)
+    
+    prefs = {
+        # Account binding
+        "account_name": email,
+        "account_type": "com.google",
+        "sync_enabled": True,
+        "last_sync_time": now_ms,
+        
+        # Gmail state
+        "gmail_version": "2024.03.10.624953426",
+        "inbox_unread_count": 0,
+        "last_notification_id": secrets.token_hex(8),
+        
+        # Receipt coherence - cached email subjects
+        "cached_email_count": len(order_ids) if order_ids else 0,
+        "has_purchase_receipts": bool(order_ids),
+    }
+    
+    # Add order ID references for coherence
+    if order_ids:
+        for i, order_id in enumerate(order_ids[:10]):  # Max 10 receipts
+            prefs[f"receipt_order_{i}"] = order_id
+            prefs[f"receipt_subject_{i}"] = f"Your Google Play Order Receipt ({order_id})"
+        prefs["receipt_count"] = len(order_ids[:10])
+    
+    return build_shared_prefs_xml(prefs)
+
+
+def build_chrome_history_coherence_xml(merchants: list = None) -> str:
+    """
+    Build Chrome SharedPreferences for browsing coherence.
+    
+    Cross-Store Coherence (V3 Nexus Blueprint Section 4):
+    Browsing: History and Cookies for merchant domains.
+    
+    Args:
+        merchants: List of merchant domains visited
+    
+    Returns:
+        XML string
+    """
+    default_merchants = [
+        "amazon.com", "starbucks.com", "target.com", 
+        "netflix.com", "uber.com", "doordash.com"
+    ]
+    
+    merchant_list = merchants or default_merchants
+    now_ms = int(time.time() * 1000)
+    
+    prefs = {
+        "browsing_history_enabled": True,
+        "cookies_enabled": True,
+        "last_sync_time": now_ms,
+        "visited_domains_count": len(merchant_list),
+    }
+    
+    # Add merchant domain references
+    for i, domain in enumerate(merchant_list):
+        prefs[f"visited_domain_{i}"] = domain
+        prefs[f"last_visit_{i}"] = now_ms - (i * 86400000)  # Staggered visits
+    
+    return build_shared_prefs_xml(prefs)
+
+
+if __name__ == "__main__":
+    coin_xml = build_coin_xml("test@gmail.com", "4242")
+    print("COIN.xml:")
+    print(coin_xml)
+    print()
+    
+    finsky_xml = build_finsky_xml("test@gmail.com")
+    print("finsky.xml:")
+    print(finsky_xml)

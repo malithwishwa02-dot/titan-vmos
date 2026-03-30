@@ -184,8 +184,8 @@ class GenesisConfig:
     # VMOS Cloud device code — when set, the engine runs in cloud mode via
     # VMOSGenesisEngine instead of direct local ADB.
     pad_code: str = ""
+    
 
-    # Sub-configurations
     persona: PersonaConfig = field(default_factory=PersonaConfig)
     payment: PaymentConfig = field(default_factory=PaymentConfig)
     google: GoogleConfig = field(default_factory=GoogleConfig)
@@ -758,9 +758,7 @@ class UnifiedGenesisEngine:
 
         When ``config.cloud_mode`` is True the entire pipeline is delegated to
         :class:`VMOSGenesisEngine` which routes every operation through the
-        VMOS Cloud OpenAPI instead of local ADB.  The resulting
-        :class:`~vmos_genesis_engine.PipelineResult` is then reflected back
-        into the :class:`GenesisResult` stored in ``self._jobs``.
+        VMOS Cloud OpenAPI instead of local ADB.
         """
         if config.cloud_mode:
             await self._run_cloud_pipeline(job_id, config)
@@ -842,13 +840,7 @@ class UnifiedGenesisEngine:
     # ═══════════════════════════════════════════════════════════════════
 
     async def _run_cloud_pipeline(self, job_id: str, config: GenesisConfig):
-        """Delegate the full pipeline to VMOSGenesisEngine (VMOS Cloud API).
-
-        Translates :class:`GenesisConfig` into a :class:`PipelineConfig`,
-        runs all 11 cloud phases via VMOS OpenAPI, then reflects every phase
-        result and final scores back into the :class:`GenesisResult` stored in
-        ``self._jobs[job_id]`` so callers see a uniform status structure.
-        """
+        """Delegate the full pipeline to VMOSGenesisEngine (VMOS Cloud API)."""
         if not _VMOS_AVAILABLE:
             raise RuntimeError(
                 "VMOS Cloud stack not available — install vmos_genesis_engine dependencies"
@@ -857,7 +849,6 @@ class UnifiedGenesisEngine:
         result = self._jobs[job_id]
         self._log(job_id, f"Cloud mode — delegating to VMOSGenesisEngine for pad={config.pad_code}")
 
-        # Build VMOS PipelineConfig from unified GenesisConfig
         vmos_cfg = _VMOSPipelineConfig(
             name=config.persona.name,
             email=config.persona.email,
@@ -891,7 +882,6 @@ class UnifiedGenesisEngine:
         engine = _VMOSGenesisEngine(config.pad_code)
 
         def _on_update(pipeline_result):
-            """Mirror live phase updates into the unified GenesisResult."""
             try:
                 self._reflect_pipeline_result(job_id, pipeline_result)
             except Exception as _e:
@@ -899,7 +889,6 @@ class UnifiedGenesisEngine:
 
         pipeline_result = await engine.run_pipeline(vmos_cfg, job_id=job_id, on_update=_on_update)
 
-        # Final reflection after completion
         self._reflect_pipeline_result(job_id, pipeline_result)
         result.profile_id = pipeline_result.profile_id
 
@@ -955,7 +944,6 @@ class UnifiedGenesisEngine:
                     unified_phase.notes = vmos_phase.notes
                     break
 
-        # Propagate scalar scores
         result.trust_score = pipeline_result.trust_score
         result.trust_grade = getattr(pipeline_result, "grade", "")
         if pipeline_result.status == "completed":

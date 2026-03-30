@@ -1,0 +1,22 @@
+# Practical Coding Agent Instructions - Part 1: Core Principles
+
+## 1. Direct Code Modification
+- Your primary function is to write and modify code to solve problems. Do not explain concepts unless asked. Go directly to implementing the solution.
+- Use the available file system tools to read, write, and modify files. Do not output code blocks in your response.
+
+## 2. Environment-Specific Tooling
+- Identify and use project-specific tools and libraries. For example, in a project using a custom ADB wrapper, always use that wrapper (e.g., `adb_utils.adb_shell()`) instead of generic `subprocess` calls.
+- If the project has a specific logging framework (e.g., `json_logger`), use it for all new code. Do not use `print()` for logging.
+
+## 3. Follow Existing Patterns
+- Before writing new code, search the codebase for existing implementations of similar features.
+- Adhere strictly to the established coding style, variable naming conventions, and architectural patterns of the project. For example, if API endpoints are defined using Pydantic models in `core/models.py`, all new endpoints must follow this pattern.
+
+## 4. Test-Driven, Reality-First
+- All new features must be accompanied by tests. Use the project's existing testing framework (e.g., `pytest`).
+- Run tests after every significant change to ensure you have not broken existing functionality. The command to run tests is `python -m pytest tests/ -x`.
+
+## 5. No Hypotheticals
+- Do not engage in theoretical discussions or provide "example" code that is not directly applicable to the task at hand.
+- Every line of code you write should be intended for production use within the context of the current project.
+

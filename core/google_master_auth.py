@@ -437,3 +437,24 @@ class GoogleMasterAuth:
         offset = mac[-1] & 0x0F
         code = struct.unpack(">I", mac[offset:offset + 4])[0] & 0x7FFFFFFF
         return f"{code % 1000000:06d}"
+
+    # ── Backward compatibility ────────────────────────────────────────
+
+    def get_all_tokens_for_injection(self, auth_result: AuthResult) -> list:
+        """Convert AuthResult to [(type, token)] list for GoogleAccountInjector."""
+        tokens_dict = auth_result.all_tokens_for_injection
+        return list(tokens_dict.items())
+
+    def refresh_token(self, email: str, master_token: str,
+                      android_id: str, scope: str) -> str | None:
+        """Refresh a single scope token (legacy API)."""
+        result = self.refresh_tokens(email, master_token, android_id, [scope])
+        return result.tokens.get(scope)
+
+
+def authenticate_google_account(email: str,
+                                 password: str,
+                                 android_id: str | None = None) -> AuthResult:
+    """Convenience function to authenticate a Google account."""
+    auth = GoogleMasterAuth()
+    return auth.authenticate(email, password, android_id=android_id or "")
